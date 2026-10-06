@@ -1,947 +1,410 @@
-const jwt =
-  require("jsonwebtoken");
+const crypto = require("node:crypto");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
+const { sendEmail } = require("../utils/sendEmail");
 
-const User =
-  require("../models/User");
+const RESET_MESSAGE =
+  "If an active account exists for this email, a password-reset link will be sent.";
 
+const cleanEmail = (value) =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
 
-// ======================================================
-// CREATE JWT
-// ======================================================
+const cleanPhone = (value) => String(value ?? "").replace(/\D/g, "");
 
-function generateToken(
-  userId
-) {
-  if (
-    !process.env.JWT_SECRET
-  ) {
-    throw new Error(
-      "JWT_SECRET is missing from backend/.env"
-    );
+function validEmail(email) {
+  return (
+    email.length <= 150 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  );
+}
+
+function passwordError(password) {
+  if (typeof password !== "string" || password.length < 8) {
+    return "Password must contain at least 8 characters.";
   }
 
+  if (Buffer.byteLength(password, "utf8") > 72) {
+    return "Password cannot exceed 72 UTF-8 bytes.";
+  }
+
+  return "";
+}
+
+function safeUser(user) {
+  return {
+    id: String(user._id),
+    name: user.name,
+    email: user.email,
+    phone: user.phone || "",
+    role: user.role,
+    isActive: user.isActive,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+}
+
+function generateToken(user) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is missing.");
+  }
 
   return jwt.sign(
     {
-      userId,
+      userId: String(user._id),
+      authVersion: user.authVersion ?? 0,
     },
-
     process.env.JWT_SECRET,
-
     {
-      expiresIn:
-        process.env.JWT_EXPIRES_IN ||
-        "7d",
+      algorithm: "HS256",
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
     }
   );
 }
 
-
-// ======================================================
-// SAFE USER RESPONSE
-// ======================================================
-
-function safeUser(
-  user
-) {
-  return {
-    id:
-      user._id,
-
-    name:
-      user.name,
-
-    email:
-      user.email,
-
-    phone:
-      user.phone ||
-      "",
-
-    role:
-      user.role,
-
-    isActive:
-      user.isActive,
-
-    createdAt:
-      user.createdAt,
-
-    updatedAt:
-      user.updatedAt,
-  };
+function fail(res, status, message) {
+  return res.status(status).json({ success: false, message });
 }
 
+function handleError(res, error, message) {
+  if (error.code === 11000) {
+    return fail(res, 409, "This email is already registered.");
+  }
 
-// ======================================================
-// CLEAN PHONE
-// ======================================================
+  if (error.name === "ValidationError") {
+    const first = Object.values(error.errors || {})[0];
+    return fail(res, 400, first?.message || "Check your information.");
+  }
 
-function cleanPhone(
-  value
-) {
-  return String(
-    value ?? ""
-  ).replace(
-    /\D/g,
-    ""
-  );
+  // Never log passwords, reset links, tokens or request bodies.
+  console.error("Authentication operation failed:", error.name || "Error");
+  return fail(res, 500, message);
 }
 
+function sendSession(res, user, message, status = 200) {
+  return res.status(status).json({
+    success: true,
+    message,
+    token: generateToken(user),
+    user: safeUser(user),
+  });
+}
 
-// ======================================================
-// ERROR HELPER
-// ======================================================
+async function register(req, res) {
+  try {
+    const name =
+      typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const email = cleanEmail(req.body?.email);
+    const phone = cleanPhone(req.body?.phone);
+    const password = req.body?.password;
 
-function sendUserError(
-  res,
-  error,
-  fallbackMessage
-) {
-  if (
-    error?.code ===
-    11000
-  ) {
-    return res
-      .status(409)
-      .json({
-        success:
-          false,
+    if (name.length < 2 || name.length > 60) {
+      return fail(res, 400, "Name must contain 2–60 characters.");
+    }
 
-        message:
-          "An account with this email already exists.",
-      });
+    if (!validEmail(email)) {
+      return fail(res, 400, "Please enter a valid email address.");
+    }
+
+    const message = passwordError(password);
+    if (message) return fail(res, 400, message);
+
+    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
+      return fail(res, 400, "Please enter a valid 10-digit mobile number.");
+    }
+
+    if (await User.exists({ email })) {
+      return fail(res, 409, "This email is already registered.");
+    }
+
+    const user = await User.create({ name, email, phone, password });
+    return sendSession(res, user, "Account created successfully.", 201);
+  } catch (error) {
+    return handleError(res, error, "Registration could not be completed.");
+  }
+}
+
+async function login(req, res) {
+  try {
+    const email = cleanEmail(req.body?.email);
+    const password = req.body?.password;
+
+    if (!validEmail(email) || typeof password !== "string" || !password) {
+      return fail(res, 400, "Enter your email and password.");
+    }
+
+    const user = await User.findOne({ email }).select(
+      "+password +authVersion"
+    );
+
+    if (!user || !(await user.comparePassword(password))) {
+      return fail(res, 401, "Invalid email or password.");
+    }
+
+    if (user.isActive === false) {
+      return fail(res, 403, "This account is disabled.");
+    }
+
+    return sendSession(res, user, "Signed in successfully.");
+  } catch (error) {
+    return handleError(res, error, "Login could not be completed.");
+  }
+}
+
+async function getMe(req, res) {
+  if (!req.user) {
+    return fail(res, 401, "Authentication required.");
   }
 
+  return res.json({ success: true, user: safeUser(req.user) });
+}
 
-  if (
-    error?.name ===
-    "ValidationError"
-  ) {
-    const message =
-      Object.values(
-        error.errors ||
-          {}
-      )[0]?.message ||
-      "Invalid user information.";
+async function updateProfile(req, res) {
+  try {
+    const body = req.body || {};
+    const hasName = Object.prototype.hasOwnProperty.call(body, "name");
+    const hasPhone = Object.prototype.hasOwnProperty.call(body, "phone");
 
+    if (!hasName && !hasPhone) {
+      return fail(res, 400, "No profile changes were provided.");
+    }
 
-    return res
-      .status(400)
-      .json({
-        success:
-          false,
+    const updates = {};
 
-        message,
-      });
-  }
+    if (hasName) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (name.length < 2 || name.length > 60) {
+        return fail(res, 400, "Name must contain 2–60 characters.");
+      }
+      updates.name = name;
+    }
 
+    if (hasPhone) {
+      const phone = cleanPhone(body.phone);
+      if (phone && !/^[6-9]\d{9}$/.test(phone)) {
+        return fail(res, 400, "Please enter a valid 10-digit mobile number.");
+      }
+      updates.phone = phone;
+    }
 
-  return res
-    .status(500)
-    .json({
-      success:
-        false,
+    const user = await User.findOneAndUpdate(
+      { _id: req.user._id, isActive: { $ne: false } },
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
 
-      message:
-        fallbackMessage,
+    if (!user) return fail(res, 403, "Account is unavailable.");
+
+    return res.json({
+      success: true,
+      message: "Profile updated successfully.",
+      user: safeUser(user),
     });
+  } catch (error) {
+    return handleError(res, error, "Profile could not be updated.");
+  }
 }
 
+async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const message = passwordError(newPassword);
 
-// ======================================================
-// REGISTER
-// POST /api/auth/register
-// ======================================================
+    if (typeof currentPassword !== "string" || !currentPassword) {
+      return fail(res, 400, "Current password is required.");
+    }
 
-const register =
-  async (
-    req,
-    res
-  ) => {
+    if (message) return fail(res, 400, message);
+
+    const user = await User.findById(req.user._id).select(
+      "+password +authVersion"
+    );
+
+    if (!user || user.isActive === false) {
+      return fail(res, 403, "Account is unavailable.");
+    }
+
+    if (!(await user.comparePassword(currentPassword))) {
+      return fail(res, 401, "Current password is incorrect.");
+    }
+
+    if (await user.comparePassword(newPassword)) {
+      return fail(res, 400, "Choose a different new password.");
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Matching the current hash prevents concurrent password changes.
+    const updated = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        password: user.password,
+        isActive: { $ne: false },
+      },
+      {
+        $set: { password: passwordHash },
+        $unset: {
+          passwordResetToken: "",
+          passwordResetExpires: "",
+        },
+        $inc: { authVersion: 1 },
+      },
+      { new: true }
+    ).select("+authVersion");
+
+    if (!updated) {
+      return fail(res, 409, "Your account changed. Sign in and try again.");
+    }
+
+    return sendSession(
+      res,
+      updated,
+      "Password changed successfully. Other login sessions have expired."
+    );
+  } catch (error) {
+    return handleError(res, error, "Password could not be changed.");
+  }
+}
+
+async function forgotPassword(req, res) {
+  try {
+    const email = cleanEmail(req.body?.email);
+
+    if (!validEmail(email)) {
+      return fail(res, 400, "Please enter a valid email address.");
+    }
+
+    let site;
     try {
-      const {
-        name,
+      site = new URL(process.env.FRONTEND_URL);
+      if (
+        !["https:", "http:"].includes(site.protocol) ||
+        site.username ||
+        site.password
+      ) {
+        throw new Error("Invalid frontend URL.");
+      }
+    } catch {
+      return fail(res, 503, "Password recovery is temporarily unavailable.");
+    }
+
+    const token = crypto.randomBytes(32).toString("hex");
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const now = new Date();
+
+    // Only one request per account per two minutes.
+    const user = await User.findOneAndUpdate(
+      {
         email,
-        password,
-        phone,
-      } =
-        req.body || {};
+        isActive: { $ne: false },
+        $or: [
+          { passwordResetRequestedAt: { $exists: false } },
+          { passwordResetRequestedAt: null },
+          {
+            passwordResetRequestedAt: {
+              $lte: new Date(now.getTime() - 120000),
+            },
+          },
+        ],
+      },
+      {
+        $set: {
+          passwordResetToken: hash,
+          passwordResetExpires: new Date(now.getTime() + 15 * 60000),
+          passwordResetRequestedAt: now,
+        },
+      },
+      { new: true }
+    );
 
+    if (user) {
+      const link = new URL("/reset-password", site.origin);
+      link.hash = `token=${token}`;
 
-      if (
-        !name ||
-        !email ||
-        !password
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Name, email and password are required.",
-          });
-      }
-
-
-      const cleanEmail =
-        String(
-          email
-        )
-          .trim()
-          .toLowerCase();
-
-
-      const cleanName =
-        String(
-          name
-        ).trim();
-
-
-      const cleanMobile =
-        cleanPhone(
-          phone
+      try {
+        await sendEmail({
+          to: user.email,
+          subject: "Reset your GymDrobe password",
+          text: [
+            "You requested a password reset for your GymDrobe account.",
+            "",
+            "Open this link to choose a new password:",
+            link.href,
+            "",
+            "This link expires in 15 minutes and can be used once.",
+            "If you did not request this, ignore this email.",
+            "",
+            "GymDrobe",
+            "support@gymdrobe.com",
+          ].join("\n"),
+        });
+      } catch (error) {
+        // Remove only this request; do not erase a newer reset token.
+        await User.updateOne(
+          { _id: user._id, passwordResetToken: hash },
+          {
+            $unset: {
+              passwordResetToken: "",
+              passwordResetExpires: "",
+            },
+          }
         );
 
-
-      if (
-        cleanName.length <
-        2
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Name must contain at least 2 characters.",
-          });
+        console.error("Reset email failed:", error.code || "EMAIL_FAILED");
       }
-
-
-      if (
-        cleanMobile &&
-        !/^[6-9]\d{9}$/.test(
-          cleanMobile
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Please enter a valid 10-digit mobile number.",
-          });
-      }
-
-
-      const existingUser =
-        await User.findOne({
-          email:
-            cleanEmail,
-        });
-
-
-      if (
-        existingUser
-      ) {
-        return res
-          .status(409)
-          .json({
-            success:
-              false,
-
-            message:
-              "An account with this email already exists.",
-          });
-      }
-
-
-      const user =
-        await User.create({
-          name:
-            cleanName,
-
-          email:
-            cleanEmail,
-
-          phone:
-            cleanMobile,
-
-          password,
-        });
-
-
-      const token =
-        generateToken(
-          user._id
-        );
-
-
-      return res
-        .status(201)
-        .json({
-          success:
-            true,
-
-          message:
-            "Account created successfully.",
-
-          token,
-
-          user:
-            safeUser(
-              user
-            ),
-        });
-
-    } catch (
-      error
-    ) {
-      console.error(
-        "Register error:",
-        error
-      );
-
-
-      return sendUserError(
-        res,
-        error,
-        "Unable to create account."
-      );
-    }
-  };
-
-
-// ======================================================
-// LOGIN
-// POST /api/auth/login
-// ======================================================
-
-const login =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        email,
-        password,
-      } =
-        req.body || {};
-
-
-      if (
-        !email ||
-        !password
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Email and password are required.",
-          });
-      }
-
-
-      const cleanEmail =
-        String(
-          email
-        )
-          .trim()
-          .toLowerCase();
-
-
-      const user =
-        await User.findOne({
-          email:
-            cleanEmail,
-        }).select(
-          "+password"
-        );
-
-
-      if (
-        !user
-      ) {
-        return res
-          .status(401)
-          .json({
-            success:
-              false,
-
-            message:
-              "Invalid email or password.",
-          });
-      }
-
-
-      if (
-        user.isActive ===
-        false
-      ) {
-        return res
-          .status(403)
-          .json({
-            success:
-              false,
-
-            message:
-              "This account is currently disabled.",
-          });
-      }
-
-
-      const passwordMatches =
-        await user.comparePassword(
-          password
-        );
-
-
-      if (
-        !passwordMatches
-      ) {
-        return res
-          .status(401)
-          .json({
-            success:
-              false,
-
-            message:
-              "Invalid email or password.",
-          });
-      }
-
-
-      const token =
-        generateToken(
-          user._id
-        );
-
-
-      return res
-        .status(200)
-        .json({
-          success:
-            true,
-
-          message:
-            "Login successful.",
-
-          token,
-
-          user:
-            safeUser(
-              user
-            ),
-        });
-
-    } catch (
-      error
-    ) {
-      console.error(
-        "Login error:",
-        error
-      );
-
-
-      return res
-        .status(500)
-        .json({
-          success:
-            false,
-
-          message:
-            "Unable to login.",
-        });
-    }
-  };
-
-
-// ======================================================
-// CURRENT USER
-// GET /api/auth/me
-// ======================================================
-
-const getMe =
-  async (
-    req,
-    res
-  ) => {
-    if (
-      !req.user
-    ) {
-      return res
-        .status(401)
-        .json({
-          success:
-            false,
-
-          message:
-            "Authentication required.",
-        });
     }
 
+    // Same response for missing, disabled and existing accounts.
+    return res.json({ success: true, message: RESET_MESSAGE });
+  } catch (error) {
+    return handleError(res, error, "Password recovery is unavailable.");
+  }
+}
 
-    return res
-      .status(200)
-      .json({
-        success:
-          true,
+async function resetPassword(req, res) {
+  try {
+    const { token, newPassword } = req.body || {};
 
-        user:
-          safeUser(
-            req.user
-          ),
-      });
-  };
-
-
-// ======================================================
-// UPDATE PROFILE
-// PUT /api/auth/profile
-// ======================================================
-
-const updateProfile =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      if (
-        !req.user
-      ) {
-        return res
-          .status(401)
-          .json({
-            success:
-              false,
-
-            message:
-              "Authentication required.",
-          });
-      }
-
-
-      const body =
-        req.body || {};
-
-
-      const hasName =
-        Object.prototype.hasOwnProperty.call(
-          body,
-          "name"
-        );
-
-
-      const hasPhone =
-        Object.prototype.hasOwnProperty.call(
-          body,
-          "phone"
-        );
-
-
-      if (
-        !hasName &&
-        !hasPhone
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Provide a name or mobile number to update.",
-          });
-      }
-
-
-      const user =
-        await User.findById(
-          req.user._id
-        );
-
-
-      if (
-        !user
-      ) {
-        return res
-          .status(404)
-          .json({
-            success:
-              false,
-
-            message:
-              "User account not found.",
-          });
-      }
-
-
-      if (
-        user.isActive ===
-        false
-      ) {
-        return res
-          .status(403)
-          .json({
-            success:
-              false,
-
-            message:
-              "This account is currently disabled.",
-          });
-      }
-
-
-      if (
-        hasName
-      ) {
-        const cleanName =
-          String(
-            body.name ??
-              ""
-          ).trim();
-
-
-        if (
-          cleanName.length <
-          2
-        ) {
-          return res
-            .status(400)
-            .json({
-              success:
-                false,
-
-              message:
-                "Name must contain at least 2 characters.",
-            });
-        }
-
-
-        if (
-          cleanName.length >
-          60
-        ) {
-          return res
-            .status(400)
-            .json({
-              success:
-                false,
-
-              message:
-                "Name cannot exceed 60 characters.",
-            });
-        }
-
-
-        user.name =
-          cleanName;
-      }
-
-
-      if (
-        hasPhone
-      ) {
-        const phone =
-          cleanPhone(
-            body.phone
-          );
-
-
-        if (
-          phone &&
-          !/^[6-9]\d{9}$/.test(
-            phone
-          )
-        ) {
-          return res
-            .status(400)
-            .json({
-              success:
-                false,
-
-              message:
-                "Please enter a valid 10-digit mobile number.",
-            });
-        }
-
-
-        user.phone =
-          phone;
-      }
-
-
-      await user.save();
-
-
-      return res
-        .status(200)
-        .json({
-          success:
-            true,
-
-          message:
-            "Profile updated successfully.",
-
-          user:
-            safeUser(
-              user
-            ),
-        });
-
-    } catch (
-      error
-    ) {
-      console.error(
-        "Update profile error:",
-        error
-      );
-
-
-      return sendUserError(
-        res,
-        error,
-        "Unable to update profile."
-      );
+    if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) {
+      return fail(res, 400, "This reset link is invalid or has expired.");
     }
-  };
 
+    const message = passwordError(newPassword);
+    if (message) return fail(res, 400, message);
 
-// ======================================================
-// CHANGE PASSWORD
-// PUT /api/auth/password
-//
-// Requires:
-// - currentPassword
-// - newPassword
-//
-// Password itself is never returned.
-// ======================================================
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const passwordHash = await bcrypt.hash(newPassword, 12);
 
-const changePassword =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      if (
-        !req.user
-      ) {
-        return res
-          .status(401)
-          .json({
-            success:
-              false,
+    // Consume the token and update the password in one atomic operation.
+    const user = await User.findOneAndUpdate(
+      {
+        passwordResetToken: hash,
+        passwordResetExpires: { $gt: new Date() },
+        isActive: { $ne: false },
+      },
+      {
+        $set: { password: passwordHash },
+        $unset: {
+          passwordResetToken: "",
+          passwordResetExpires: "",
+        },
+        $inc: { authVersion: 1 },
+      },
+      { new: true }
+    );
 
-            message:
-              "Authentication required.",
-          });
-      }
-
-
-      const {
-        currentPassword,
-        newPassword,
-      } =
-        req.body || {};
-
-
-      if (
-        !currentPassword ||
-        !newPassword
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Current password and new password are required.",
-          });
-      }
-
-
-      const cleanCurrent =
-        String(
-          currentPassword
-        );
-
-
-      const cleanNew =
-        String(
-          newPassword
-        );
-
-
-      if (
-        cleanNew.length <
-        8
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "New password must contain at least 8 characters.",
-          });
-      }
-
-
-      if (
-        cleanNew.length >
-        128
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "New password cannot exceed 128 characters.",
-          });
-      }
-
-
-      if (
-        cleanCurrent ===
-        cleanNew
-      ) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            message:
-              "Choose a new password that is different from your current password.",
-          });
-      }
-
-
-      /*
-        password uses select:false,
-        therefore we must explicitly request it.
-      */
-
-      const user =
-        await User.findById(
-          req.user._id
-        ).select(
-          "+password"
-        );
-
-
-      if (
-        !user
-      ) {
-        return res
-          .status(404)
-          .json({
-            success:
-              false,
-
-            message:
-              "User account not found.",
-          });
-      }
-
-
-      if (
-        user.isActive ===
-        false
-      ) {
-        return res
-          .status(403)
-          .json({
-            success:
-              false,
-
-            message:
-              "This account is currently disabled.",
-          });
-      }
-
-
-      const matches =
-        await user.comparePassword(
-          cleanCurrent
-        );
-
-
-      if (
-        !matches
-      ) {
-        return res
-          .status(401)
-          .json({
-            success:
-              false,
-
-            message:
-              "Current password is incorrect.",
-          });
-      }
-
-
-      /*
-        Assigning the plain new password here is correct.
-
-        User.js has a pre-save hook that hashes it before
-        MongoDB stores it.
-      */
-
-      user.password =
-        cleanNew;
-
-
-      await user.save();
-
-
-      return res
-        .status(200)
-        .json({
-          success:
-            true,
-
-          message:
-            "Password changed successfully.",
-        });
-
-    } catch (
-      error
-    ) {
-      console.error(
-        "Change password error:",
-        error
-      );
-
-
-      return sendUserError(
-        res,
-        error,
-        "Unable to change password."
-      );
+    if (!user) {
+      return fail(res, 400, "This reset link is invalid or has expired.");
     }
-  };
 
-
-// ======================================================
-// EXPORTS
-// ======================================================
+    return res.json({
+      success: true,
+      message: "Password reset successfully. Sign in with your new password.",
+    });
+  } catch (error) {
+    return handleError(res, error, "Password could not be reset.");
+  }
+}
 
 module.exports = {
   register,
@@ -949,4 +412,6 @@ module.exports = {
   getMe,
   updateProfile,
   changePassword,
+  forgotPassword,
+  resetPassword,
 };

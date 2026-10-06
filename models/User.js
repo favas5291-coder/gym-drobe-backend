@@ -1,364 +1,152 @@
-const mongoose =
-  require("mongoose");
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
-const bcrypt =
-  require("bcryptjs");
+function removePrivateFields(doc, ret) {
+  delete ret.password;
+  delete ret.passwordResetToken;
+  delete ret.passwordResetExpires;
+  delete ret.passwordResetRequestedAt;
+  delete ret.authVersion;
+  delete ret.__v;
 
+  return ret;
+}
 
-// ======================================================
-// USER SCHEMA
-// ======================================================
+const userSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: [true, "Name is required"],
+      trim: true,
+      minlength: [2, "Name must contain at least 2 characters"],
+      maxlength: [60, "Name cannot exceed 60 characters"],
+    },
 
-const userSchema =
-  new mongoose.Schema(
-    {
-      // ==================================================
-      // NAME
-      // ==================================================
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      unique: true,
+      lowercase: true,
+      trim: true,
+      maxlength: 150,
+      match: [
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+        "Please enter a valid email address",
+      ],
+    },
 
-      name: {
-        type:
-          String,
-
-        required: [
-          true,
-          "Name is required",
-        ],
-
-        trim:
-          true,
-
-        minlength: [
-          2,
-          "Name must contain at least 2 characters",
-        ],
-
-        maxlength: [
-          60,
-          "Name cannot exceed 60 characters",
-        ],
-      },
-
-
-      // ==================================================
-      // EMAIL
-      // ==================================================
-
-      email: {
-        type:
-          String,
-
-        required: [
-          true,
-          "Email is required",
-        ],
-
-        unique:
-          true,
-
-        lowercase:
-          true,
-
-        trim:
-          true,
-
-        maxlength:
-          150,
-
-        match: [
-          /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-          "Please enter a valid email address",
-        ],
-      },
-
-
-      // ==================================================
-      // MOBILE NUMBER
-      //
-      // Optional.
-      //
-      // Current GymDrobe validation uses Indian
-      // 10-digit mobile numbers beginning with 6–9.
-      // ==================================================
-
-      phone: {
-        type:
-          String,
-
-        default:
-          "",
-
-        trim:
-          true,
-
-        maxlength:
-          10,
-
-        validate: {
-          validator(
-            value
-          ) {
-            /*
-              Empty phone number is allowed.
-
-              If supplied:
-              - exactly 10 digits
-              - starts with 6, 7, 8 or 9
-            */
-
-            if (
-              !value
-            ) {
-              return true;
-            }
-
-
-            return /^[6-9]\d{9}$/.test(
-              value
-            );
-          },
-
-          message:
-            "Please enter a valid 10-digit mobile number",
+    phone: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 10,
+      validate: {
+        validator(value) {
+          return !value || /^[6-9]\d{9}$/.test(value);
         },
-      },
-
-
-      // ==================================================
-      // PASSWORD
-      // ==================================================
-
-      password: {
-        type:
-          String,
-
-        required: [
-          true,
-          "Password is required",
-        ],
-
-        minlength: [
-          8,
-          "Password must contain at least 8 characters",
-        ],
-
-        /*
-          Password hashes must never be returned through
-          normal User queries.
-        */
-
-        select:
-          false,
-      },
-
-
-      // ==================================================
-      // USER ROLE
-      // ==================================================
-
-      role: {
-        type:
-          String,
-
-        enum: [
-          "customer",
-          "admin",
-        ],
-
-        default:
-          "customer",
-
-        index:
-          true,
-      },
-
-
-      // ==================================================
-      // ACCOUNT STATUS
-      // ==================================================
-
-      isActive: {
-        type:
-          Boolean,
-
-        default:
-          true,
-
-        index:
-          true,
+        message: "Please enter a valid 10-digit mobile number",
       },
     },
 
-    {
-      timestamps:
-        true,
+    password: {
+      type: String,
+      required: [true, "Password is required"],
+      minlength: [8, "Password must contain at least 8 characters"],
+      select: false,
+    },
 
-      /*
-        We also remove the password if a query ever
-        explicitly selected it and then converted the
-        user to JSON.
-      */
+    role: {
+      type: String,
+      enum: ["customer", "admin"],
+      default: "customer",
+      index: true,
+    },
 
-      toJSON: {
-        transform(
-          doc,
-          ret
-        ) {
-          delete ret.password;
-          delete ret.__v;
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
 
-          return ret;
-        },
-      },
+    // Incremented when passwords change to invalidate old tokens.
+    authVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+      select: false,
+    },
 
-      toObject: {
-        transform(
-          doc,
-          ret
-        ) {
-          delete ret.password;
-          delete ret.__v;
+    // Stores only the SHA-256 hash of the reset token.
+    passwordResetToken: {
+      type: String,
+      select: false,
+    },
 
-          return ret;
-        },
-      },
-    }
-  );
+    passwordResetExpires: {
+      type: Date,
+      select: false,
+    },
 
-
-// ======================================================
-// NORMALIZE USER BEFORE VALIDATION
-// ======================================================
-
-userSchema.pre(
-  "validate",
-
-  function () {
-    if (
-      typeof this.name ===
-      "string"
-    ) {
-      this.name =
-        this.name.trim();
-    }
-
-
-    if (
-      typeof this.email ===
-      "string"
-    ) {
-      this.email =
-        this.email
-          .trim()
-          .toLowerCase();
-    }
-
-
-    if (
-      typeof this.phone ===
-      "string"
-    ) {
-      /*
-        Store phone number as digits only.
-
-        Example:
-
-        "98765 43210"
-        becomes
-        "9876543210"
-      */
-
-      this.phone =
-        this.phone.replace(
-          /\D/g,
-          ""
-        );
-    }
+    // Used to limit repeated reset-email requests.
+    passwordResetRequestedAt: {
+      type: Date,
+      select: false,
+    },
+  },
+  {
+    timestamps: true,
+    toJSON: {
+      transform: removePrivateFields,
+    },
+    toObject: {
+      transform: removePrivateFields,
+    },
   }
 );
 
-
-// ======================================================
-// HASH PASSWORD BEFORE SAVING
-// ======================================================
-
-userSchema.pre(
-  "save",
-
-  async function () {
-    /*
-      Do not hash password again when only changing
-      profile information such as name or phone.
-    */
-
-    if (
-      !this.isModified(
-        "password"
-      )
-    ) {
-      return;
-    }
-
-
-    const salt =
-      await bcrypt.genSalt(
-        12
-      );
-
-
-    this.password =
-      await bcrypt.hash(
-        this.password,
-        salt
-      );
+userSchema.pre("validate", function () {
+  if (typeof this.name === "string") {
+    this.name = this.name.trim();
   }
-);
 
+  if (typeof this.email === "string") {
+    this.email = this.email.trim().toLowerCase();
+  }
 
-// ======================================================
-// COMPARE LOGIN PASSWORD
-// ======================================================
+  if (typeof this.phone === "string") {
+    this.phone = this.phone.replace(/\D/g, "");
+  }
+});
 
-userSchema.methods.comparePassword =
-  async function (
-    enteredPassword
+userSchema.pre("save", async function () {
+  if (!this.isModified("password")) {
+    return;
+  }
+
+  // bcrypt processes a maximum of 72 UTF-8 bytes.
+  // Check plaintext before hashing to prevent silent truncation.
+  if (
+    typeof this.password !== "string" ||
+    Buffer.byteLength(this.password, "utf8") > 72
   ) {
-    /*
-      Login queries must explicitly request:
+    throw new Error("Password cannot exceed 72 UTF-8 bytes.");
+  }
 
-      .select("+password")
+  this.password = await bcrypt.hash(this.password, 12);
+});
 
-      because password uses select: false.
-    */
+userSchema.methods.comparePassword = async function (enteredPassword) {
+  if (
+    !this.password ||
+    typeof enteredPassword !== "string" ||
+    !enteredPassword
+  ) {
+    return false;
+  }
 
-    if (
-      !this.password
-    ) {
-      return false;
-    }
+  return bcrypt.compare(enteredPassword, this.password);
+};
 
+const User = mongoose.models.User || mongoose.model("User", userSchema);
 
-    return bcrypt.compare(
-      String(
-        enteredPassword ||
-          ""
-      ),
-
-      this.password
-    );
-  };
-
-
-// ======================================================
-// MODEL
-// ======================================================
-
-const User =
-  mongoose.model(
-    "User",
-    userSchema
-  );
-
-
-module.exports =
-  User;
+module.exports = User;

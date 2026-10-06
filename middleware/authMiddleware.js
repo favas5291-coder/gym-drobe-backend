@@ -1,201 +1,83 @@
 const jwt = require("jsonwebtoken");
-
+const mongoose = require("mongoose");
 const User = require("../models/User");
 
+function deny(res, status, message) {
+  return res.status(status).json({ success: false, message });
+}
 
-// ======================================================
-// PROTECT PRIVATE ROUTES
-// ======================================================
+async function protect(req, res, next) {
+  const authorization = req.headers.authorization;
+  const match =
+    typeof authorization === "string"
+      ? /^Bearer\s+(\S+)$/i.exec(authorization)
+      : null;
 
-const protect = async (
-  req,
-  res,
-  next
-) => {
+  if (!match) {
+    return deny(res, 401, "Authentication required.");
+  }
+
+  if (!process.env.JWT_SECRET) {
+    return deny(res, 503, "Authentication is temporarily unavailable.");
+  }
+
   try {
-    let token;
-
-    const authorization =
-      req.headers.authorization;
-
-
-    // Expected:
-    // Authorization: Bearer TOKEN
+    const decoded = jwt.verify(match[1], process.env.JWT_SECRET, {
+      algorithms: ["HS256"],
+    });
 
     if (
-      authorization &&
-      authorization.startsWith(
-        "Bearer "
-      )
+      !decoded ||
+      typeof decoded !== "object" ||
+      typeof decoded.userId !== "string" ||
+      !mongoose.isObjectIdOrHexString(decoded.userId)
     ) {
-      token =
-        authorization.split(
-          " "
-        )[1];
+      return deny(res, 401, "Invalid login session.");
     }
 
-
-    if (!token) {
-      return res
-        .status(401)
-        .json({
-          success: false,
-
-          message:
-            "Authentication required.",
-        });
-    }
-
-
-    if (
-      !process.env.JWT_SECRET
-    ) {
-      throw new Error(
-        "JWT_SECRET is missing."
-      );
-    }
-
-
-    const decoded =
-      jwt.verify(
-        token,
-        process.env.JWT_SECRET
-      );
-
-
-    const user =
-      await User.findById(
-        decoded.userId
-      );
-
+    const user = await User.findById(decoded.userId).select("+authVersion");
 
     if (!user) {
-      return res
-        .status(401)
-        .json({
-          success: false,
-
-          message:
-            "User account no longer exists.",
-        });
+      return deny(res, 401, "User account no longer exists.");
     }
 
-
-    if (
-      user.isActive ===
-      false
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-
-          message:
-            "This account is disabled.",
-        });
+    if (user.isActive === false) {
+      return deny(res, 403, "This account is disabled.");
     }
 
+    // Older tokens without a version are treated as version zero.
+    if ((decoded.authVersion ?? 0) !== (user.authVersion ?? 0)) {
+      return deny(res, 401, "Your session expired. Please sign in again.");
+    }
 
-    req.user =
-      user;
-
-
-    next();
-
+    req.user = user;
+    return next();
   } catch (error) {
-    console.error(
-      "Authentication error:",
-      error.message
-    );
-
-
     if (
-      error.name ===
-        "JsonWebTokenError" ||
-      error.name ===
-        "TokenExpiredError"
+      ["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(
+        error.name
+      )
     ) {
-      return res
-        .status(401)
-        .json({
-          success: false,
-
-          message:
-            "Invalid or expired login session.",
-        });
+      return deny(res, 401, "Invalid or expired login session.");
     }
 
+    console.error("Authentication service error:", error.name || "Error");
 
-    return res
-      .status(401)
-      .json({
-        success: false,
-
-        message:
-          "Authentication failed.",
-      });
+    // A database outage should not be mistaken for an invalid token.
+    return deny(res, 503, "Authentication is temporarily unavailable.");
   }
-};
+}
 
-
-// ======================================================
-// ADMIN ONLY
-//
-// Must be used AFTER protect.
-//
-// Example:
-//
-// router.get(
-//   "/admin/orders",
-//   protect,
-//   adminOnly,
-//   controller
-// );
-// ======================================================
-
-const adminOnly = (
-  req,
-  res,
-  next
-) => {
-  if (
-    !req.user
-  ) {
-    return res
-      .status(401)
-      .json({
-        success: false,
-
-        message:
-          "Authentication required.",
-      });
+function adminOnly(req, res, next) {
+  if (!req.user) {
+    return deny(res, 401, "Authentication required.");
   }
 
-
-  if (
-    req.user.role !==
-    "admin"
-  ) {
-    return res
-      .status(403)
-      .json({
-        success: false,
-
-        message:
-          "Admin access required.",
-      });
+  if (req.user.role !== "admin") {
+    return deny(res, 403, "Admin access required.");
   }
 
+  return next();
+}
 
-  next();
-};
-
-
-// ======================================================
-// EXPORTS
-// ======================================================
-
-module.exports = {
-  protect,
-  adminOnly,
-};
+module.exports = { protect, adminOnly };
