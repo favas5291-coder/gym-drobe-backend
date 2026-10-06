@@ -145,10 +145,13 @@ async function startServer() {
         `GymDrobe server running on http://localhost:${PORT}`,
       );
     });
-  } catch {
+    } catch (error) {
     console.error(
-      "Server startup failed. Check MongoDB connectivity and support index permissions.",
+      "Server startup failed:",
+      error.message,
     );
+
+    console.error(error);
 
     process.exit(1);
   }
