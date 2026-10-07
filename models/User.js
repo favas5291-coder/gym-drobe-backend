@@ -3,12 +3,12 @@ const bcrypt = require("bcryptjs");
 
 function removePrivateFields(doc, ret) {
   delete ret.password;
+  delete ret.googleId;
   delete ret.passwordResetToken;
   delete ret.passwordResetExpires;
   delete ret.passwordResetRequestedAt;
   delete ret.authVersion;
   delete ret.__v;
-
   return ret;
 }
 
@@ -16,22 +16,22 @@ const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: [true, "Name is required"],
+      required: true,
       trim: true,
-      minlength: [2, "Name must contain at least 2 characters"],
-      maxlength: [60, "Name cannot exceed 60 characters"],
+      minlength: 2,
+      maxlength: 60,
     },
 
     email: {
       type: String,
-      required: [true, "Email is required"],
+      required: true,
       unique: true,
       lowercase: true,
       trim: true,
       maxlength: 150,
       match: [
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-        "Please enter a valid email address",
+        "Please enter a valid email address.",
       ],
     },
 
@@ -44,15 +44,23 @@ const userSchema = new mongoose.Schema(
         validator(value) {
           return !value || /^[6-9]\d{9}$/.test(value);
         },
-        message: "Please enter a valid 10-digit mobile number",
+        message: "Please enter a valid 10-digit mobile number.",
       },
     },
 
+    // Existing password hashes remain stored.
+    // New Google accounts do not need a password.
     password: {
       type: String,
-      required: [true, "Password is required"],
-      minlength: [8, "Password must contain at least 8 characters"],
+      minlength: 8,
       select: false,
+    },
+
+    // Google's permanent account identifier.
+    googleId: {
+      type: String,
+      select: false,
+      maxlength: 255,
     },
 
     role: {
@@ -68,7 +76,6 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Incremented when passwords change to invalidate old tokens.
     authVersion: {
       type: Number,
       default: 0,
@@ -76,7 +83,7 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
-    // Stores only the SHA-256 hash of the reset token.
+    // Retained for compatibility with existing records.
     passwordResetToken: {
       type: String,
       select: false,
@@ -87,7 +94,6 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
-    // Used to limit repeated reset-email requests.
     passwordResetRequestedAt: {
       type: Date,
       select: false,
@@ -95,11 +101,17 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    toJSON: {
-      transform: removePrivateFields,
-    },
-    toObject: {
-      transform: removePrivateFields,
+    toJSON: { transform: removePrivateFields },
+    toObject: { transform: removePrivateFields },
+  }
+);
+
+userSchema.index(
+  { googleId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      googleId: { $type: "string" },
     },
   }
 );
@@ -116,15 +128,17 @@ userSchema.pre("validate", function () {
   if (typeof this.phone === "string") {
     this.phone = this.phone.replace(/\D/g, "");
   }
+
+  if (this.isNew && !this.password && !this.googleId) {
+    this.invalidate("googleId", "A sign-in method is required.");
+  }
 });
 
 userSchema.pre("save", async function () {
-  if (!this.isModified("password")) {
+  if (!this.isModified("password") || !this.password) {
     return;
   }
 
-  // bcrypt processes a maximum of 72 UTF-8 bytes.
-  // Check plaintext before hashing to prevent silent truncation.
   if (
     typeof this.password !== "string" ||
     Buffer.byteLength(this.password, "utf8") > 72
@@ -139,7 +153,8 @@ userSchema.methods.comparePassword = async function (enteredPassword) {
   if (
     !this.password ||
     typeof enteredPassword !== "string" ||
-    !enteredPassword
+    !enteredPassword ||
+    Buffer.byteLength(enteredPassword, "utf8") > 72
   ) {
     return false;
   }
@@ -147,6 +162,5 @@ userSchema.methods.comparePassword = async function (enteredPassword) {
   return bcrypt.compare(enteredPassword, this.password);
 };
 
-const User = mongoose.models.User || mongoose.model("User", userSchema);
-
-module.exports = User;
+module.exports =
+  mongoose.models.User || mongoose.model("User", userSchema);

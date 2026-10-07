@@ -1,28 +1,28 @@
 const express = require("express");
 
 const {
-  register,
-  login,
+  googleChallenge,
+  googleLogin,
   getMe,
   updateProfile,
-  changePassword,
-  forgotPassword,
-  resetPassword,
 } = require("../controllers/authController");
 
 const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Per-process protection for public authentication endpoints.
-// For multiple backend instances, use a shared rate-limit store.
+// Limits are stored in this backend process.
+// Multiple instances require a shared rate-limit store.
 function rateLimit(maximum, windowMs) {
   const buckets = new Map();
 
   const cleanup = setInterval(() => {
     const now = Date.now();
+
     for (const [key, bucket] of buckets) {
-      if (bucket.expiresAt <= now) buckets.delete(key);
+      if (bucket.expiresAt <= now) {
+        buckets.delete(key);
+      }
     }
   }, 60000);
 
@@ -31,10 +31,10 @@ function rateLimit(maximum, windowMs) {
   return (req, res, next) => {
     const key = req.ip || req.socket.remoteAddress || "unknown";
     const now = Date.now();
+
     let bucket = buckets.get(key);
 
     if (!bucket || bucket.expiresAt <= now) {
-      // Keep memory bounded.
       if (!bucket && buckets.size >= 10000) {
         return res.status(503).json({
           success: false,
@@ -42,17 +42,23 @@ function rateLimit(maximum, windowMs) {
         });
       }
 
-      bucket = { count: 0, expiresAt: now + windowMs };
+      bucket = {
+        count: 0,
+        expiresAt: now + windowMs,
+      };
+
       buckets.set(key, bucket);
     }
 
     bucket.count += 1;
 
     if (bucket.count > maximum) {
-      res.set(
-        "Retry-After",
-        String(Math.max(1, Math.ceil((bucket.expiresAt - now) / 1000)))
+      const retryAfter = Math.max(
+        1,
+        Math.ceil((bucket.expiresAt - now) / 1000)
       );
+
+      res.set("Retry-After", String(retryAfter));
 
       return res.status(429).json({
         success: false,
@@ -64,28 +70,44 @@ function rateLimit(maximum, windowMs) {
   };
 }
 
+// Authentication responses must not be cached.
 router.use((req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
 });
 
-router.post("/register", rateLimit(10, 15 * 60000), register);
-router.post("/login", rateLimit(30, 15 * 60000), login);
-
-router.post(
-  "/forgot-password",
-  rateLimit(5, 15 * 60000),
-  forgotPassword
+// Start a Google sign-in attempt.
+router.get(
+  "/google/challenge",
+  rateLimit(60, 15 * 60000),
+  googleChallenge
 );
 
+// Verify Google credentials and create a GymDrobe session.
 router.post(
-  "/reset-password",
-  rateLimit(10, 15 * 60000),
-  resetPassword
+  "/google",
+  rateLimit(30, 15 * 60000),
+  googleLogin
 );
 
+// Current account.
 router.get("/me", protect, getMe);
+
+// Update customer name and mobile number.
 router.put("/profile", protect, updateProfile);
-router.put("/password", protect, changePassword);
+
+// Old password routes return a clear message.
+function googleOnly(req, res) {
+  return res.status(410).json({
+    success: false,
+    message: "Please use Continue with Google to access your account.",
+  });
+}
+
+router.post("/register", googleOnly);
+router.post("/login", googleOnly);
+router.post("/forgot-password", googleOnly);
+router.post("/reset-password", googleOnly);
+router.put("/password", protect, googleOnly);
 
 module.exports = router;
