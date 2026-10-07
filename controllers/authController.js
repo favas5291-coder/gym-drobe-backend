@@ -6,11 +6,28 @@ const User = require("../models/User");
 
 const googleClient = new OAuth2Client();
 
-function fail(res, status, message) {
+function fail(res, status, code, message) {
   return res.status(status).json({
     success: false,
+    code,
     message,
   });
+}
+
+function configured() {
+  return Boolean(
+    process.env.JWT_SECRET?.trim() &&
+    process.env.GOOGLE_CLIENT_ID?.trim()
+  );
+}
+
+function unavailable(res) {
+  return fail(
+    res,
+    503,
+    "LOGIN_UNAVAILABLE",
+    "Google sign-in is temporarily unavailable. Please try again later or contact GymDrobe support."
+  );
 }
 
 function safeUser(user) {
@@ -39,6 +56,8 @@ function sendSession(res, user) {
     }
   );
 
+  res.set("Cache-Control", "no-store");
+
   return res.json({
     success: true,
     message: "Signed in successfully.",
@@ -52,21 +71,27 @@ function handleError(res, error, message) {
     return fail(
       res,
       409,
-      "An account changed during sign-in. Please try again."
+      "ACCOUNT_CHANGED",
+      "Your account was updated during sign-in. Please start Google sign-in again."
     );
   }
 
   if (error.name === "ValidationError") {
-    const first = Object.values(error.errors || {})[0];
-    return fail(res, 400, first?.message || "Check your information.");
+    return fail(
+      res,
+      400,
+      "ACCOUNT_DATA_INVALID",
+      "Your account information could not be saved. Please contact GymDrobe support."
+    );
   }
 
+  // Do not log credentials, tokens, passwords or full provider responses.
   console.error(
     "Authentication operation failed:",
     error.name || "Error"
   );
 
-  return fail(res, 500, message);
+  return fail(res, 503, "SERVICE_UNAVAILABLE", message);
 }
 
 function validEmail(email) {
@@ -77,12 +102,33 @@ function validEmail(email) {
   );
 }
 
-// The frontend obtains this before opening Google sign-in.
-// The nonce connects Google's response to this sign-in attempt.
+function accountDisabled(res) {
+  return fail(
+    res,
+    403,
+    "ACCOUNT_DISABLED",
+    "This GymDrobe account is disabled. Contact support for help."
+  );
+}
+
+function providerUnavailable(error) {
+  const status = Number(error.response?.status);
+
+  return (
+    [
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "ENOTFOUND",
+      "ETIMEDOUT",
+      "EAI_AGAIN",
+    ].includes(error.code) ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
 async function googleChallenge(req, res) {
-  if (!process.env.JWT_SECRET || !process.env.GOOGLE_CLIENT_ID) {
-    return fail(res, 503, "Google sign-in is not configured yet.");
-  }
+  if (!configured()) return unavailable(res);
 
   try {
     const nonce = crypto.randomBytes(32).toString("hex");
@@ -105,28 +151,36 @@ async function googleChallenge(req, res) {
       challenge,
     });
   } catch (error) {
-    return handleError(res, error, "Google sign-in could not start.");
+    return handleError(
+      res,
+      error,
+      "Google sign-in could not start. Please try again later."
+    );
   }
 }
 
 async function googleLogin(req, res) {
-  if (!process.env.JWT_SECRET || !process.env.GOOGLE_CLIENT_ID) {
-    return fail(res, 503, "Google sign-in is not configured yet.");
-  }
+  if (!configured()) return unavailable(res);
 
   const { credential, challenge, existingPassword } = req.body || {};
 
   if (
     typeof credential !== "string" ||
+    !credential ||
     credential.length > 12000 ||
     typeof challenge !== "string" ||
+    !challenge ||
     challenge.length > 2000
   ) {
-    return fail(res, 400, "Please start Google sign-in again.");
+    return fail(
+      res,
+      400,
+      "SIGNIN_RESTART_REQUIRED",
+      "The sign-in request is incomplete. Please start Google sign-in again."
+    );
   }
 
   let attempt;
-  let payload;
 
   try {
     attempt = jwt.verify(challenge, process.env.JWT_SECRET, {
@@ -134,29 +188,84 @@ async function googleLogin(req, res) {
       audience: "gymdrobe-google-login",
     });
 
+    if (
+      !attempt ||
+      typeof attempt !== "object" ||
+      typeof attempt.nonce !== "string"
+    ) {
+      return fail(
+        res,
+        401,
+        "SIGNIN_RESTART_REQUIRED",
+        "This sign-in attempt is invalid. Please start again."
+      );
+    }
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      return fail(
+        res,
+        401,
+        "SIGNIN_EXPIRED",
+        "This Google sign-in attempt has expired. Please start again."
+      );
+    }
+
+    return fail(
+      res,
+      401,
+      "SIGNIN_RESTART_REQUIRED",
+      "This sign-in attempt could not be verified. Please start again."
+    );
+  }
+
+  let payload;
+
+  try {
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
       audience: process.env.GOOGLE_CLIENT_ID.trim(),
     });
 
     payload = ticket.getPayload();
-
-    if (
-      !payload ||
-      typeof attempt.nonce !== "string" ||
-      payload.nonce !== attempt.nonce ||
-      typeof payload.sub !== "string" ||
-      !payload.sub ||
-      payload.sub.length > 255 ||
-      payload.email_verified !== true
-    ) {
-      return fail(res, 401, "Google sign-in could not be verified.");
+  } catch (error) {
+    if (providerUnavailable(error)) {
+      return fail(
+        res,
+        503,
+        "GOOGLE_UNAVAILABLE",
+        "GymDrobe could not contact Google's verification service. Please try again later."
+      );
     }
-  } catch {
+
     return fail(
       res,
       401,
-      "Google sign-in expired or could not be verified. Please try again."
+      "GOOGLE_VERIFICATION_FAILED",
+      "Google sign-in could not be verified. Please start again and select your account."
+    );
+  }
+
+  if (
+    !payload ||
+    payload.nonce !== attempt.nonce ||
+    typeof payload.sub !== "string" ||
+    !payload.sub ||
+    payload.sub.length > 255
+  ) {
+    return fail(
+      res,
+      401,
+      "GOOGLE_VERIFICATION_FAILED",
+      "Google sign-in could not be verified. Please start again."
+    );
+  }
+
+  if (payload.email_verified !== true) {
+    return fail(
+      res,
+      400,
+      "GOOGLE_EMAIL_UNVERIFIED",
+      "Google has not verified this email address. Use a verified Google account."
     );
   }
 
@@ -166,7 +275,12 @@ async function googleLogin(req, res) {
       : "";
 
   if (!validEmail(email)) {
-    return fail(res, 400, "Google did not provide a valid email address.");
+    return fail(
+      res,
+      400,
+      "GOOGLE_EMAIL_INVALID",
+      "Google did not provide a usable email address. Please choose another Google account."
+    );
   }
 
   try {
@@ -175,10 +289,7 @@ async function googleLogin(req, res) {
     }).select("+googleId +authVersion");
 
     if (user) {
-      if (user.isActive === false) {
-        return fail(res, 403, "This account is disabled.");
-      }
-
+      if (user.isActive === false) return accountDisabled(res);
       return sendSession(res, user);
     }
 
@@ -187,33 +298,43 @@ async function googleLogin(req, res) {
     );
 
     if (user) {
-      if (user.isActive === false) {
-        return fail(res, 403, "This account is disabled.");
-      }
+      if (user.isActive === false) return accountDisabled(res);
 
-      if (user.googleId && user.googleId !== payload.sub) {
+      if (user.googleId) {
+        if (user.googleId === payload.sub) {
+          return sendSession(res, user);
+        }
+
         return fail(
           res,
           409,
-          "This account is connected to another Google account."
+          "GOOGLE_ACCOUNT_CONFLICT",
+          "This GymDrobe account is linked to a different Google account. Use the linked account or contact support."
         );
       }
 
-      // Google controls Gmail and verified Workspace mailboxes.
-      // Other email providers need proof of the existing account.
-      // Existing admins always need that extra proof when linking.
       const googleControlsEmail =
         email.endsWith("@gmail.com") ||
         (typeof payload.hd === "string" && payload.hd.length > 0);
 
-      if (user.role === "admin" || !googleControlsEmail) {
-        if (!(await user.comparePassword(existingPassword))) {
-          return res.status(409).json({
-            success: false,
-            code: "ACCOUNT_LINK_REQUIRED",
-            message:
-              "Enter your existing GymDrobe password once to connect this Google account.",
-          });
+      // Preserve the existing account-linking protection.
+      const needsPassword =
+        user.role === "admin" || !googleControlsEmail;
+
+      if (needsPassword) {
+        const supplied =
+          typeof existingPassword === "string" &&
+          existingPassword.length > 0;
+
+        if (!supplied || !(await user.comparePassword(existingPassword))) {
+          return fail(
+            res,
+            409,
+            "ACCOUNT_LINK_REQUIRED",
+            supplied
+              ? "The existing GymDrobe password is incorrect. Try again or contact support."
+              : "Enter your existing GymDrobe password once to connect your Google account."
+          );
         }
       }
 
@@ -226,8 +347,7 @@ async function googleLogin(req, res) {
         ],
       };
 
-      // Ensure the password did not change while verifying it.
-      if (user.role === "admin" || !googleControlsEmail) {
+      if (needsPassword) {
         conditions.password = user.password;
       }
 
@@ -241,7 +361,8 @@ async function googleLogin(req, res) {
         return fail(
           res,
           409,
-          "Your account changed. Please start Google sign-in again."
+          "ACCOUNT_CHANGED",
+          "Your account changed during sign-in. Please start again."
         );
       }
 
@@ -253,11 +374,8 @@ async function googleLogin(req, res) {
         ? payload.name.trim().slice(0, 60)
         : "";
 
-    if (name.length < 2) {
-      name = "GymDrobe Customer";
-    }
+    if (name.length < 2) name = "GymDrobe Customer";
 
-    // Role is set by the server. Google sign-in never grants admin access.
     const created = await User.create({
       name,
       email,
@@ -267,13 +385,22 @@ async function googleLogin(req, res) {
 
     return sendSession(res, created);
   } catch (error) {
-    return handleError(res, error, "Google sign-in could not be completed.");
+    return handleError(
+      res,
+      error,
+      "GymDrobe could not complete sign-in. Please try again later."
+    );
   }
 }
 
 async function getMe(req, res) {
   if (!req.user) {
-    return fail(res, 401, "Authentication required.");
+    return fail(
+      res,
+      401,
+      "SESSION_EXPIRED",
+      "Your session has expired. Please sign in again."
+    );
   }
 
   return res.json({
@@ -284,7 +411,12 @@ async function getMe(req, res) {
 
 async function updateProfile(req, res) {
   if (!req.user) {
-    return fail(res, 401, "Authentication required.");
+    return fail(
+      res,
+      401,
+      "SESSION_EXPIRED",
+      "Your session has expired. Please sign in again."
+    );
   }
 
   try {
@@ -296,7 +428,12 @@ async function updateProfile(req, res) {
         typeof body.name === "string" ? body.name.trim() : "";
 
       if (name.length < 2 || name.length > 60) {
-        return fail(res, 400, "Name must contain 2–60 characters.");
+        return fail(
+          res,
+          400,
+          "INVALID_PROFILE",
+          "Name must contain 2–60 characters."
+        );
       }
 
       updates.name = name;
@@ -306,14 +443,24 @@ async function updateProfile(req, res) {
       const phone = String(body.phone ?? "").replace(/\D/g, "");
 
       if (phone && !/^[6-9]\d{9}$/.test(phone)) {
-        return fail(res, 400, "Please enter a valid 10-digit mobile number.");
+        return fail(
+          res,
+          400,
+          "INVALID_PROFILE",
+          "Enter a valid 10-digit Indian mobile number."
+        );
       }
 
       updates.phone = phone;
     }
 
     if (!Object.keys(updates).length) {
-      return fail(res, 400, "No profile changes were provided.");
+      return fail(
+        res,
+        400,
+        "INVALID_PROFILE",
+        "No profile changes were provided."
+      );
     }
 
     const user = await User.findOneAndUpdate(
@@ -322,15 +469,10 @@ async function updateProfile(req, res) {
         isActive: { $ne: false },
       },
       { $set: updates },
-      {
-        new: true,
-        runValidators: true,
-      }
+      { new: true, runValidators: true }
     );
 
-    if (!user) {
-      return fail(res, 403, "Account is unavailable.");
-    }
+    if (!user) return accountDisabled(res);
 
     return res.json({
       success: true,
@@ -338,17 +480,20 @@ async function updateProfile(req, res) {
       user: safeUser(user),
     });
   } catch (error) {
-    return handleError(res, error, "Profile could not be updated.");
+    return handleError(
+      res,
+      error,
+      "Your profile could not be updated. Please try again later."
+    );
   }
 }
 
-// Compatibility exports keep the existing router loading.
-// Password-based endpoints are disabled.
 function googleOnly(req, res) {
   return fail(
     res,
     410,
-    "Please use Continue with Google to access your GymDrobe account."
+    "GOOGLE_ONLY",
+    "Use Continue with Google to access your GymDrobe account."
   );
 }
 
@@ -357,7 +502,6 @@ module.exports = {
   googleLogin,
   getMe,
   updateProfile,
-
   register: googleOnly,
   login: googleOnly,
   changePassword: googleOnly,

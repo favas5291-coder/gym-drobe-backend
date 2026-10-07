@@ -1,319 +1,155 @@
-function number(
-  value,
-  fallback = 0
-) {
-  const parsed =
-    Number(value);
-
-  return Number.isFinite(
-    parsed
-  )
-    ? parsed
-    : fallback;
+function number(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function count(value) {
+  return Math.max(0, Math.floor(number(value)));
+}
 
-// ======================================================
-// SAFE STOCK COUNT
-// ======================================================
-
-function count(
-  value
-) {
-  return Math.max(
-    0,
-    Math.floor(
-      number(
-        value
-      )
-    )
+function own(object, key) {
+  return Object.prototype.hasOwnProperty.call(
+    object || {},
+    key
   );
 }
 
-
-// ======================================================
-// OWN PROPERTY
-// ======================================================
-
-function own(
-  object,
-  key
-) {
-  return Object.prototype
-    .hasOwnProperty.call(
-      object || {},
-      key
-    );
-}
-
-
-// ======================================================
-// CALCULATE VARIANT TOTAL
-// ======================================================
-
-function calculateVariantTotal(
-  variants
-) {
-  const sum = (
-    value
-  ) => {
-    if (
-      value &&
-      typeof value ===
-        "object"
-    ) {
-      return Object
-        .values(
-          value
-        )
-        .reduce(
-          (
-            total,
-            child
-          ) =>
-            total +
-            sum(
-              child
-            ),
-          0
-        );
-    }
-
-
-    return count(
-      value
-    );
-  };
-
-
-  return sum(
-    variants ||
-      {}
-  );
-}
-
-
-// ======================================================
-// TOTAL STOCK
-// ======================================================
-
-function getTotalStock(
-  product
-) {
-  if (
-    !product
-  ) {
-    return 0;
-  }
-
-
-  if (
-    product.variants
-  ) {
-    return calculateVariantTotal(
-      product.variants
+function calculateVariantTotal(value) {
+  if (value && typeof value === "object") {
+    return Object.values(value).reduce(
+      (total, child) => total + calculateVariantTotal(child),
+      0
     );
   }
 
-
-  return count(
-    product.stock
-  );
+  return count(value);
 }
 
+function getTotalStock(product) {
+  if (!product) return 0;
 
-// ======================================================
-// VARIANT STOCK
-// ======================================================
+  return product.variants
+    ? calculateVariantTotal(product.variants)
+    : count(product.stock);
+}
+
+function validateVariant(
+  product,
+  selectedSize = null,
+  selectedColor = null
+) {
+  if (!product) {
+    throw new Error("Product is unavailable.");
+  }
+
+  const sizes = (product.sizes || []).map(String);
+  const colors = (product.colors || []).map(String);
+
+  const size = sizes.length
+    ? selectedSize == null
+      ? null
+      : String(selectedSize)
+    : null;
+
+  const color = colors.length
+    ? selectedColor == null
+      ? null
+      : String(selectedColor)
+    : null;
+
+  if (sizes.length && (!size || !sizes.includes(size))) {
+    throw new Error("Invalid product size.");
+  }
+
+  if (colors.length && (!color || !colors.includes(color))) {
+    throw new Error("Invalid product colour.");
+  }
+
+  return { sizes, colors, size, color };
+}
 
 function getVariantStock(
   product,
   selectedSize = null,
   selectedColor = null
 ) {
-  if (
-    !product
-  ) {
+  if (!product) return 0;
+
+  let selection;
+
+  try {
+    selection = validateVariant(
+      product,
+      selectedSize,
+      selectedColor
+    );
+  } catch {
     return 0;
   }
 
-
-  const sizes =
-    (
-      product.sizes ||
-      []
-    ).map(
-      String
-    );
-
-
-  const colors =
-    (
-      product.colors ||
-      []
-    ).map(
-      String
-    );
-
-
-  // ====================================================
-  // SIZE REQUIRED
-  // ====================================================
-
-  if (
-    sizes.length
-  ) {
-    if (
-      selectedSize ==
-        null ||
-      !sizes.includes(
-        String(
-          selectedSize
-        )
-      )
-    ) {
-      return 0;
-    }
+  if (!product.variants) {
+    return count(product.stock);
   }
 
+  const { sizes, colors, size, color } = selection;
+  let group = product.variants;
 
-  // ====================================================
-  // COLOR REQUIRED
-  // ====================================================
-
-  if (
-    colors.length
-  ) {
-    if (
-      selectedColor ==
-        null ||
-      !colors.includes(
-        String(
-          selectedColor
-        )
-      )
-    ) {
-      return 0;
-    }
+  if (colors.length) {
+    if (!own(group, color)) return 0;
+    group = group[color];
   }
 
-
-  // ====================================================
-  // NO VARIANT OBJECT
-  // ====================================================
-
-  if (
-    !product.variants
-  ) {
-    return count(
-      product.stock
-    );
+  if (sizes.length) {
+    if (!own(group, size)) return 0;
+    return count(group[size]);
   }
 
-
-  let group =
-    product.variants;
-
-
-  // ====================================================
-  // COLOR LEVEL
-  // ====================================================
-
-  if (
-    colors.length
-  ) {
-    const color =
-      String(
-        selectedColor
-      );
-
-
-    if (
-      !own(
-        group,
-        color
-      )
-    ) {
-      return 0;
-    }
-
-
-    group =
-      group[
-        color
-      ];
-  }
-
-
-  // ====================================================
-  // SIZE LEVEL
-  // ====================================================
-
-  if (
-    sizes.length
-  ) {
-    const size =
-      String(
-        selectedSize
-      );
-
-
-    if (
-      !own(
-        group,
-        size
-      )
-    ) {
-      return 0;
-    }
-
-
-    return count(
-      group[
-        size
-      ]
-    );
-  }
-
-
-  // ====================================================
-  // DEFAULT LEVEL
-  // ====================================================
-
-  if (
-    group &&
-    typeof group ===
-      "object"
-  ) {
-    return count(
-      group.default
-    );
-  }
-
-
-  return count(
-    group
-  );
+  return group && typeof group === "object"
+    ? count(group.default)
+    : count(group);
 }
 
-
-// ======================================================
-// UPDATE STOCK STATUS
-// ======================================================
-
-function updateStockStatus(
-  product
+// Return the SKU belonging to the selected size and colour.
+// Older products without variant SKUs retain their parent SKU.
+function getVariantSku(
+  product,
+  selectedSize = null,
+  selectedColor = null
 ) {
-  const total =
-    getTotalStock(
-      product
-    );
+  const { size, color } = validateVariant(
+    product,
+    selectedSize,
+    selectedColor
+  );
 
+  const normalize = (value) =>
+    value == null ? "" : String(value);
 
-  product.stock =
-    total;
+  const rows = Array.isArray(product.variantSkus)
+    ? product.variantSkus
+    : [];
 
+  const variant = rows.find(
+    (row) =>
+      normalize(row.size) === normalize(size) &&
+      normalize(row.color) === normalize(color)
+  );
 
+  if (
+    variant &&
+    typeof variant.sku === "string" &&
+    variant.sku.trim()
+  ) {
+    return variant.sku.trim();
+  }
+
+  return String(product.sku || "").trim();
+}
+
+function updateStockStatus(product) {
+  const total = getTotalStock(product);
+
+  product.stock = total;
   product.stockStatus =
     total <= 0
       ? "out-of-stock"
@@ -321,108 +157,96 @@ function updateStockStatus(
         ? "low-stock"
         : "in-stock";
 
-
   return product;
 }
 
+function stockSlot(product, selection) {
+  const { sizes, colors, size, color } = selection;
 
-// ======================================================
-// VALIDATE VARIANT
-//
-// Used before changing inventory.
-// ======================================================
-
-function validateVariant(
-  product,
-  selectedSize,
-  selectedColor
-) {
-  const sizes =
-    (
-      product.sizes ||
-      []
-    ).map(
-      String
-    );
-
-
-  const colors =
-    (
-      product.colors ||
-      []
-    ).map(
-      String
-    );
-
-
-  let size =
-    selectedSize ==
-    null
-      ? null
-      : String(
-          selectedSize
-        );
-
-
-  let color =
-    selectedColor ==
-    null
-      ? null
-      : String(
-          selectedColor
-        );
-
-
-  if (
-    sizes.length
-  ) {
-    if (
-      !size ||
-      !sizes.includes(
-        size
-      )
-    ) {
-      throw new Error(
-        "Invalid product size."
-      );
-    }
-  } else {
-    size =
-      null;
+  if (!product.variants) {
+    return { target: product, key: "stock", mixed: false };
   }
 
+  let target = product.variants;
 
-  if (
-    colors.length
-  ) {
-    if (
-      !color ||
-      !colors.includes(
-        color
-      )
-    ) {
+  if (colors.length) {
+    if (!own(target, color)) {
       throw new Error(
-        "Invalid product colour."
+        "The original product colour variant no longer exists."
       );
     }
-  } else {
-    color =
-      null;
+
+    target = target[color];
   }
 
+  const key = sizes.length ? size : "default";
 
-  return {
-    sizes,
-    colors,
-    size,
-    color,
-  };
+  if (
+    !target ||
+    typeof target !== "object" ||
+    !own(target, key)
+  ) {
+    throw new Error(
+      "The original product stock variant no longer exists."
+    );
+  }
+
+  return { target, key, mixed: true };
 }
 
+function changeStock(
+  product,
+  quantity,
+  selectedSize,
+  selectedColor,
+  restoring
+) {
+  const qty = Number(quantity);
 
-// ======================================================
-// RESERVE / DEDUCT STOCK
-// ======================================================
+  if (!Number.isSafeInteger(qty) || qty < 1) {
+    throw new Error(
+      restoring
+        ? "Invalid inventory restore quantity."
+        : "Invalid order quantity."
+    );
+  }
+
+  const selection = validateVariant(
+    product,
+    selectedSize,
+    selectedColor
+  );
+
+  const slot = stockSlot(product, selection);
+  const available = count(slot.target[slot.key]);
+
+  if (!restoring && available < qty) {
+    throw new Error(
+      available > 0
+        ? `Only ${available} available for this selection.`
+        : "This product selection is out of stock."
+    );
+  }
+
+  const next = restoring
+    ? available + qty
+    : available - qty;
+
+  if (!Number.isSafeInteger(next)) {
+    throw new Error("Inventory quantity exceeds the supported limit.");
+  }
+
+  slot.target[slot.key] = next;
+
+  if (
+    slot.mixed &&
+    typeof product.markModified === "function"
+  ) {
+    product.markModified("variants");
+  }
+
+  return updateStockStatus(product);
+}
 
 function reserveVariantStock(
   product,
@@ -430,262 +254,14 @@ function reserveVariantStock(
   selectedSize = null,
   selectedColor = null
 ) {
-  const qty =
-    Number(
-      quantity
-    );
-
-
-  if (
-    !Number.isSafeInteger(
-      qty
-    ) ||
-    qty < 1
-  ) {
-    throw new Error(
-      "Invalid order quantity."
-    );
-  }
-
-
-  const {
-    sizes,
-    colors,
-    size,
-    color,
-  } =
-    validateVariant(
-      product,
-      selectedSize,
-      selectedColor
-    );
-
-
-  const available =
-    getVariantStock(
-      product,
-      size,
-      color
-    );
-
-
-  if (
-    available <
-    qty
-  ) {
-    throw new Error(
-      available >
-      0
-        ? `Only ${available} available for this selection.`
-        : "This product selection is out of stock."
-    );
-  }
-
-
-  // ====================================================
-  // VARIANT PRODUCT
-  // ====================================================
-
-  if (
-    product.variants
-  ) {
-    // --------------------------------------------------
-    // COLOR + SIZE
-    // --------------------------------------------------
-
-    if (
-      colors.length &&
-      sizes.length
-    ) {
-      if (
-        !own(
-          product.variants,
-          color
-        ) ||
-        !own(
-          product.variants[
-            color
-          ],
-          size
-        )
-      ) {
-        throw new Error(
-          "Product variant no longer exists."
-        );
-      }
-
-
-      product.variants[
-        color
-      ][
-        size
-      ] =
-        count(
-          product.variants[
-            color
-          ][
-            size
-          ]
-        ) -
-        qty;
-    }
-
-
-    // --------------------------------------------------
-    // COLOR ONLY
-    // --------------------------------------------------
-
-    else if (
-      colors.length
-    ) {
-      if (
-        !own(
-          product.variants,
-          color
-        ) ||
-        !own(
-          product.variants[
-            color
-          ],
-          "default"
-        )
-      ) {
-        throw new Error(
-          "Product colour variant no longer exists."
-        );
-      }
-
-
-      product.variants[
-        color
-      ].default =
-        count(
-          product.variants[
-            color
-          ].default
-        ) -
-        qty;
-    }
-
-
-    // --------------------------------------------------
-    // SIZE ONLY
-    // --------------------------------------------------
-
-    else if (
-      sizes.length
-    ) {
-      if (
-        !own(
-          product.variants,
-          size
-        )
-      ) {
-        throw new Error(
-          "Product size variant no longer exists."
-        );
-      }
-
-
-      product.variants[
-        size
-      ] =
-        count(
-          product.variants[
-            size
-          ]
-        ) -
-        qty;
-    }
-
-
-    // --------------------------------------------------
-    // DEFAULT VARIANT
-    // --------------------------------------------------
-
-    else {
-      if (
-        !own(
-          product.variants,
-          "default"
-        )
-      ) {
-        throw new Error(
-          "Product stock variant no longer exists."
-        );
-      }
-
-
-      product.variants.default =
-        count(
-          product.variants
-            .default
-        ) -
-        qty;
-    }
-
-
-    if (
-      typeof product.markModified ===
-      "function"
-    ) {
-      product.markModified(
-        "variants"
-      );
-    }
-  }
-
-
-  // ====================================================
-  // NON-VARIANT PRODUCT
-  // ====================================================
-
-  else {
-    const current =
-      count(
-        product.stock
-      );
-
-
-    if (
-      current <
-      qty
-    ) {
-      throw new Error(
-        current >
-        0
-          ? `Only ${current} available for this selection.`
-          : "This product selection is out of stock."
-      );
-    }
-
-
-    product.stock =
-      current -
-      qty;
-  }
-
-
-  updateStockStatus(
-    product
+  return changeStock(
+    product,
+    quantity,
+    selectedSize,
+    selectedColor,
+    false
   );
-
-
-  return product;
 }
-
-
-// ======================================================
-// RESTORE STOCK
-//
-// Used for:
-//
-// 1. Order cancellation
-// 2. Completed return
-// 3. Completed exchange original item
-//
-// This is the opposite of reserveVariantStock().
-// ======================================================
 
 function restoreVariantStock(
   product,
@@ -693,221 +269,19 @@ function restoreVariantStock(
   selectedSize = null,
   selectedColor = null
 ) {
-  const qty =
-    Number(
-      quantity
-    );
-
-
-  if (
-    !Number.isSafeInteger(
-      qty
-    ) ||
-    qty < 1
-  ) {
-    throw new Error(
-      "Invalid inventory restore quantity."
-    );
-  }
-
-
-  const {
-    sizes,
-    colors,
-    size,
-    color,
-  } =
-    validateVariant(
-      product,
-      selectedSize,
-      selectedColor
-    );
-
-
-  // ====================================================
-  // VARIANT PRODUCT
-  // ====================================================
-
-  if (
-    product.variants
-  ) {
-    // --------------------------------------------------
-    // COLOR + SIZE
-    // --------------------------------------------------
-
-    if (
-      colors.length &&
-      sizes.length
-    ) {
-      if (
-        !own(
-          product.variants,
-          color
-        ) ||
-        !own(
-          product.variants[
-            color
-          ],
-          size
-        )
-      ) {
-        throw new Error(
-          "Unable to restore stock because the original product variant no longer exists."
-        );
-      }
-
-
-      product.variants[
-        color
-      ][
-        size
-      ] =
-        count(
-          product.variants[
-            color
-          ][
-            size
-          ]
-        ) +
-        qty;
-    }
-
-
-    // --------------------------------------------------
-    // COLOR ONLY
-    // --------------------------------------------------
-
-    else if (
-      colors.length
-    ) {
-      if (
-        !own(
-          product.variants,
-          color
-        ) ||
-        !own(
-          product.variants[
-            color
-          ],
-          "default"
-        )
-      ) {
-        throw new Error(
-          "Unable to restore stock because the original colour variant no longer exists."
-        );
-      }
-
-
-      product.variants[
-        color
-      ].default =
-        count(
-          product.variants[
-            color
-          ].default
-        ) +
-        qty;
-    }
-
-
-    // --------------------------------------------------
-    // SIZE ONLY
-    // --------------------------------------------------
-
-    else if (
-      sizes.length
-    ) {
-      if (
-        !own(
-          product.variants,
-          size
-        )
-      ) {
-        throw new Error(
-          "Unable to restore stock because the original size variant no longer exists."
-        );
-      }
-
-
-      product.variants[
-        size
-      ] =
-        count(
-          product.variants[
-            size
-          ]
-        ) +
-        qty;
-    }
-
-
-    // --------------------------------------------------
-    // DEFAULT
-    // --------------------------------------------------
-
-    else {
-      if (
-        !own(
-          product.variants,
-          "default"
-        )
-      ) {
-        throw new Error(
-          "Unable to restore stock because the original stock variant no longer exists."
-        );
-      }
-
-
-      product.variants.default =
-        count(
-          product.variants
-            .default
-        ) +
-        qty;
-    }
-
-
-    if (
-      typeof product.markModified ===
-      "function"
-    ) {
-      product.markModified(
-        "variants"
-      );
-    }
-  }
-
-
-  // ====================================================
-  // NON-VARIANT PRODUCT
-  // ====================================================
-
-  else {
-    product.stock =
-      count(
-        product.stock
-      ) +
-      qty;
-  }
-
-
-  // Recalculate total stock and stock status.
-  updateStockStatus(
-    product
+  return changeStock(
+    product,
+    quantity,
+    selectedSize,
+    selectedColor,
+    true
   );
-
-
-  return product;
 }
-
-
-// ======================================================
-// EXPORTS
-// ======================================================
 
 module.exports = {
   getTotalStock,
   getVariantStock,
+  getVariantSku,
   reserveVariantStock,
   restoreVariantStock,
   updateStockStatus,

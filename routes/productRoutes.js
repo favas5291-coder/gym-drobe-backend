@@ -5,6 +5,7 @@ const {
   getProductById,
   getAdminProducts,
   getAdminProductById,
+  getAdminProductOptions,
   createProduct,
   updateProduct,
   updateProductInventory,
@@ -25,80 +26,47 @@ const {
 
 const router = express.Router();
 
-// Public catalog
 router.get("/", getProducts);
 
-// Admin routes must appear before "/:id".
+// Named admin routes must come before /admin/:id.
 router.get(
-  "/admin",
+  "/admin/options",
   protect,
   adminOnly,
-  getAdminProducts,
+  getAdminProductOptions
 );
+
+router.get("/admin", protect, adminOnly, getAdminProducts);
 
 router.get(
   "/admin/:id",
   protect,
   adminOnly,
-  getAdminProductById,
+  getAdminProductById
 );
 
-// Create product
-router.post(
-  "/",
-  protect,
-  adminOnly,
-  createProduct,
-);
+router.post("/", protect, adminOnly, createProduct);
 
-// Inventory
 router.put(
   "/:id/inventory",
   protect,
   adminOnly,
-  updateProductInventory,
+  updateProductInventory
 );
 
-// Restore archived product
 router.put(
   "/:id/restore",
   protect,
   adminOnly,
-  restoreProduct,
+  restoreProduct
 );
 
-// Reviews: public reading, authenticated writing
 router.get("/:id/reviews", getReviews);
+router.put("/:id/reviews", protect, saveReview);
+router.delete("/:id/reviews", protect, deleteReview);
 
-router.put(
-  "/:id/reviews",
-  protect,
-  saveReview,
-);
-
-router.delete(
-  "/:id/reviews",
-  protect,
-  deleteReview,
-);
-
-// Public product details
 router.get("/:id", getProductById);
-
-// Update product
-router.put(
-  "/:id",
-  protect,
-  adminOnly,
-  updateProduct,
-);
-
-// Archive product
-router.delete(
-  "/:id",
-  protect,
-  adminOnly,
-  deleteProduct,
-);
+router.put("/:id", protect, adminOnly, updateProduct);
+router.delete("/:id", protect, adminOnly, deleteProduct);
 
 module.exports = router;

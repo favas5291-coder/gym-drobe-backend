@@ -1,13 +1,15 @@
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
+const { attachReviews } = require("../utils/productReviews");
 
-const {
-  attachReviews,
-} = require("../utils/productReviews");
+const own = (object, key) =>
+  Object.prototype.hasOwnProperty.call(object || {}, key);
 
-// ======================================================
-// HELPERS
-// ======================================================
+const forbiddenKeys = new Set([
+  "__proto__",
+  "prototype",
+  "constructor",
+]);
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -15,21 +17,16 @@ function httpError(status, message) {
   return error;
 }
 
-function hasOwn(object, key) {
-  return Object.prototype.hasOwnProperty.call(
-    object || {},
-    key,
-  );
-}
+function text(value, maximum = 500) {
+  if (value != null && typeof value !== "string") {
+    throw httpError(400, "Text fields must contain text.");
+  }
 
-function cleanString(value, maxLength = 500) {
-  return String(value ?? "")
-    .trim()
-    .slice(0, maxLength);
+  return String(value ?? "").trim().slice(0, maximum);
 }
 
 function slugify(value) {
-  return cleanString(value, 300)
+  return text(value, 300)
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
@@ -39,617 +36,302 @@ function slugify(value) {
 }
 
 function escapeRegex(value) {
-  return String(value ?? "").replace(
-    /[.*+?^${}()|[\]\\]/g,
-    "\\$&",
-  );
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function parseBoolean(value, fallback = false) {
-  if (typeof value === "boolean") {
-    return value;
-  }
+function boolean(value) {
+  if ([true, "true", 1, "1"].includes(value)) return true;
+  if ([false, "false", 0, "0"].includes(value)) return false;
 
-  if (
-    value === 1 ||
-    value === "1" ||
-    value === "true"
-  ) {
-    return true;
-  }
-
-  if (
-    value === 0 ||
-    value === "0" ||
-    value === "false"
-  ) {
-    return false;
-  }
-
-  return fallback;
+  throw httpError(400, "Invalid checkbox value.");
 }
 
-function cleanStringArray(
-  value,
-  maxItems = 100,
-  maxLength = 300,
-) {
-  if (!Array.isArray(value)) {
-    return [];
+function number(value, label, maximum, integer = false) {
+  if (
+    value == null ||
+    value === "" ||
+    !["number", "string"].includes(typeof value)
+  ) {
+    throw httpError(400, `Enter a valid ${label}.`);
   }
 
-  const seen = new Set();
-  const result = [];
+  const result = Number(value);
 
-  for (const item of value) {
-    const text = cleanString(item, maxLength);
-
-    if (!text) {
-      continue;
-    }
-
-    const key = text.toLowerCase();
-
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    result.push(text);
-
-    if (result.length >= maxItems) {
-      break;
-    }
+  if (
+    !Number.isFinite(result) ||
+    result < 0 ||
+    result > maximum ||
+    (integer && !Number.isSafeInteger(result))
+  ) {
+    throw httpError(
+      400,
+      `${label} must be ${
+        integer ? "a whole number" : "a number"
+      } from 0 to ${maximum}.`
+    );
   }
 
   return result;
 }
 
-function hasVariantMatrix(value) {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      Object.keys(value).length > 0,
-  );
-}
-
-function cleanVariantKey(value, label) {
-  const key = cleanString(value, 80);
-
-  if (!key) {
+function array(value, maximum = 100, length = 300) {
+  if (!Array.isArray(value) || value.length > maximum) {
     throw httpError(
       400,
-      `${label} cannot be empty.`,
+      `Provide a list containing no more than ${maximum} entries.`
     );
   }
 
+  const seen = new Set();
+
+  return value
+    .map((item) => text(item, length))
+    .filter((item) => {
+      const key = item.toLowerCase();
+
+      if (!item || seen.has(key)) return false;
+
+      seen.add(key);
+      return true;
+    });
+}
+
+function object(value, label) {
   if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    throw httpError(400, `${label} must be an object.`);
+  }
+}
+
+function safeKey(value, maximum = 100) {
+  const key = text(value, maximum);
+
+  if (
+    !key ||
+    forbiddenKeys.has(key) ||
     key.startsWith("$") ||
     key.includes(".")
   ) {
     throw httpError(
       400,
-      `${label} cannot start with $ or contain a dot.`,
+      "Option and specification names cannot contain dots, start with $, or use reserved names."
     );
   }
 
   return key;
 }
 
-// ======================================================
-// NORMALIZE VARIANTS
-// ======================================================
-
 function normalizeVariants(value) {
-  if (value == null) {
-    return {};
-  }
+  if (value == null) return {};
 
-  if (
-    typeof value !== "object" ||
-    Array.isArray(value)
-  ) {
-    throw httpError(
-      400,
-      "Variants must be an object.",
-    );
+  object(value, "Variant stock");
+
+  const entries = Object.entries(value);
+
+  if (entries.length > 50) {
+    throw httpError(400, "Use no more than 50 size or colour groups.");
   }
 
   const result = {};
 
-  const colorEntries = Object.entries(value).slice(
-    0,
-    100,
-  );
+  for (const [first, group] of entries) {
+    const key = safeKey(first, 80);
 
-  for (const [rawColor, rawOptions] of colorEntries) {
-    const color = cleanVariantKey(
-      rawColor,
-      "Variant colour",
-    );
+    if (group && typeof group === "object") {
+      object(group, "Variant options");
 
-    if (
-      !rawOptions ||
-      typeof rawOptions !== "object" ||
-      Array.isArray(rawOptions)
-    ) {
-      throw httpError(
-        400,
-        `Variant ${color} must contain stock values.`,
-      );
-    }
+      const options = Object.entries(group);
 
-    const options = {};
-
-    const optionEntries = Object.entries(
-      rawOptions,
-    ).slice(0, 100);
-
-    for (const [rawOption, rawQuantity] of optionEntries) {
-      const option = cleanVariantKey(
-        rawOption,
-        "Variant option",
-      );
-
-      const quantity = Number(rawQuantity);
-
-      if (
-        !Number.isFinite(quantity) ||
-        quantity < 0 ||
-        quantity > 1000000
-      ) {
-        throw httpError(
-          400,
-          `Invalid stock quantity for ${color} / ${option}.`,
-        );
+      if (options.length > 50) {
+        throw httpError(400, "Use no more than 50 options per group.");
       }
 
-      options[option] = Math.floor(quantity);
-    }
+      result[key] = {};
 
-    result[color] = options;
+      for (const [second, quantity] of options) {
+        const option = safeKey(second, 80);
+
+        result[key][option] = number(
+          quantity,
+          `${key} / ${option} stock`,
+          1000000,
+          true
+        );
+      }
+    } else {
+      // Preserve size-only stock.
+      result[key] = number(
+        group,
+        `${key} stock`,
+        1000000,
+        true
+      );
+    }
   }
 
   return result;
 }
-
-// ======================================================
-// NORMALIZE SPECIFICATIONS
-// ======================================================
 
 function normalizeSpecifications(value) {
-  if (value == null) {
-    return {};
-  }
+  object(value, "Specifications");
 
-  if (
-    typeof value !== "object" ||
-    Array.isArray(value)
-  ) {
-    throw httpError(
-      400,
-      "Specifications must be an object.",
-    );
+  const entries = Object.entries(value);
+
+  if (entries.length > 100) {
+    throw httpError(400, "Use no more than 100 specifications.");
   }
 
   const result = {};
 
-  for (const [rawKey, rawValue] of Object.entries(
-    value,
-  ).slice(0, 100)) {
-    const key = cleanString(rawKey, 100);
+  for (const [rawKey, value] of entries) {
+    const key = safeKey(rawKey);
 
-    if (!key) {
-      continue;
-    }
-
-    if (
-      key.startsWith("$") ||
-      key.includes(".")
-    ) {
-      throw httpError(
-        400,
-        "Specification names cannot start with $ or contain a dot.",
-      );
-    }
-
-    if (typeof rawValue === "string") {
-      result[key] = cleanString(rawValue, 1000);
+    if (Array.isArray(value)) {
+      result[key] = array(value, 50, 300);
     } else if (
-      typeof rawValue === "number" &&
-      Number.isFinite(rawValue)
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
     ) {
-      result[key] = rawValue;
-    } else if (typeof rawValue === "boolean") {
-      result[key] = rawValue;
-    } else if (Array.isArray(rawValue)) {
-      result[key] = cleanStringArray(
-        rawValue,
-        50,
-        300,
-      );
-    } else if (rawValue == null) {
-      result[key] = "";
+      result[key] = value;
     } else {
-      result[key] = cleanString(rawValue, 1000);
+      result[key] = text(value, 1000);
     }
   }
 
   return result;
 }
-
-// ======================================================
-// NORMALIZE DELIVERY
-// ======================================================
 
 function normalizeDelivery(value) {
-  if (
-    value == null ||
-    typeof value !== "object" ||
-    Array.isArray(value)
-  ) {
-    throw httpError(
-      400,
-      "Delivery settings must be an object.",
-    );
-  }
+  object(value, "Delivery settings");
 
   const result = {};
 
-  if (hasOwn(value, "available")) {
-    result.available = parseBoolean(
-      value.available,
-      true,
+  if (own(value, "available")) {
+    result.available = boolean(value.available);
+  }
+
+  if (own(value, "estimatedDays")) {
+    result.estimatedDays = text(value.estimatedDays, 100) || null;
+  }
+
+  if (own(value, "freeDeliveryAbove")) {
+    result.freeDeliveryAbove = number(
+      value.freeDeliveryAbove,
+      "free delivery threshold",
+      100000000
     );
-  }
-
-  if (hasOwn(value, "estimatedDays")) {
-    result.estimatedDays =
-      value.estimatedDays == null ||
-      value.estimatedDays === ""
-        ? null
-        : cleanString(value.estimatedDays, 100);
-  }
-
-  if (hasOwn(value, "freeDeliveryAbove")) {
-    const amount = Number(value.freeDeliveryAbove);
-
-    if (
-      !Number.isFinite(amount) ||
-      amount < 0
-    ) {
-      throw httpError(
-        400,
-        "Free delivery amount must be zero or more.",
-      );
-    }
-
-    result.freeDeliveryAbove = amount;
   }
 
   return result;
 }
 
-// ======================================================
-// NORMALIZE PRODUCT PAYLOAD
-// ======================================================
+function normalizePayload(body, creating = false) {
+  object(body, "Product data");
 
-function normalizeProductPayload(
-  body = {},
-  { creating = false } = {},
-) {
-  if (
-    !body ||
-    typeof body !== "object" ||
-    Array.isArray(body)
-  ) {
-    throw httpError(
-      400,
-      "Product data is invalid.",
-    );
-  }
+  const result = {};
 
-  const payload = {};
-
-  const stringFields = [
-    ["name", 200],
-    ["category", 100],
-    ["subcategory", 100],
-    ["brand", 100],
-    ["gender", 50],
-    ["badge", 80],
-    ["material", 500],
-    ["whatsIncluded", 1000],
-    ["image", 2000],
-    ["description", 5000],
-    ["returnPolicy", 2000],
-  ];
-
-  for (const [field, maxLength] of stringFields) {
-    if (hasOwn(body, field)) {
-      payload[field] = cleanString(
-        body[field],
-        maxLength,
-      );
-    }
-  }
-
-  if (hasOwn(body, "slug")) {
-    payload.slug = slugify(body.slug);
-  } else if (creating && hasOwn(body, "name")) {
-    payload.slug = slugify(body.name);
-  }
-
-  if (hasOwn(body, "sku")) {
-    payload.sku = cleanString(
-      body.sku,
-      100,
-    ).toUpperCase();
-  }
-
-  if (hasOwn(body, "legacyId")) {
-    if (
-      body.legacyId == null ||
-      body.legacyId === ""
-    ) {
-      payload.legacyId = null;
-    } else {
-      const legacyId = Number(body.legacyId);
-
-      if (
-        !Number.isSafeInteger(legacyId) ||
-        legacyId < 1
-      ) {
-        throw httpError(
-          400,
-          "Legacy product ID must be a positive integer.",
-        );
-      }
-
-      payload.legacyId = legacyId;
-    }
-  }
-
-  if (hasOwn(body, "price")) {
-    const price = Number(body.price);
-
-    if (
-      !Number.isFinite(price) ||
-      price < 0
-    ) {
-      throw httpError(
-        400,
-        "Product price must be zero or more.",
-      );
-    }
-
-    payload.price = price;
-  }
-
-  if (hasOwn(body, "discount")) {
-    const discount = Number(body.discount);
-
-    if (
-      !Number.isFinite(discount) ||
-      discount < 0 ||
-      discount > 100
-    ) {
-      throw httpError(
-        400,
-        "Discount must be between 0 and 100.",
-      );
-    }
-
-    payload.discount = discount;
-  }
-
-  if (hasOwn(body, "stock")) {
-    const stock = Number(body.stock);
-
-    if (
-      !Number.isFinite(stock) ||
-      stock < 0 ||
-      stock > 1000000
-    ) {
-      throw httpError(
-        400,
-        "Stock must be a valid quantity of zero or more.",
-      );
-    }
-
-    payload.stock = Math.floor(stock);
-  }
-
-  if (hasOwn(body, "tags")) {
-    payload.tags = cleanStringArray(
-      body.tags,
-      50,
-      100,
-    );
-  }
-
-  if (hasOwn(body, "highlights")) {
-    payload.highlights = cleanStringArray(
-      body.highlights,
-      30,
-      500,
-    );
-  }
-
-  if (hasOwn(body, "careInstructions")) {
-    payload.careInstructions = cleanStringArray(
-      body.careInstructions,
-      30,
-      500,
-    );
-  }
-
-  if (hasOwn(body, "sizes")) {
-    payload.sizes = cleanStringArray(
-      body.sizes,
-      50,
-      50,
-    );
-  }
-
-  if (hasOwn(body, "colors")) {
-    payload.colors = cleanStringArray(
-      body.colors,
-      50,
-      80,
-    );
-  }
-
-  if (hasOwn(body, "images")) {
-    payload.images = cleanStringArray(
-      body.images,
-      20,
-      2000,
-    );
-  }
-
-  if (hasOwn(body, "variants")) {
-    payload.variants = normalizeVariants(
-      body.variants,
-    );
-  }
-
-  if (hasOwn(body, "specifications")) {
-    payload.specifications = normalizeSpecifications(
-      body.specifications,
-    );
-  }
-
-  if (hasOwn(body, "delivery")) {
-    payload.delivery = normalizeDelivery(
-      body.delivery,
-    );
-  }
-
-  const booleanFields = [
-    "isFeatured",
-    "isBestSeller",
-    "isActive",
-  ];
-
-  for (const field of booleanFields) {
-    if (hasOwn(body, field)) {
-      payload[field] = parseBoolean(body[field]);
-    }
-  }
-
-  if (hasOwn(body, "isNewArrival")) {
-    payload.isNewArrival = parseBoolean(
-      body.isNewArrival,
-    );
-  } else if (hasOwn(body, "isNew")) {
-    payload.isNewArrival = parseBoolean(
-      body.isNew,
-    );
-  }
-
-  return payload;
-}
-
-// ======================================================
-// CREATE VALIDATION
-// ======================================================
-
-function validateCreatePayload(payload) {
-  if (
-    !payload.name ||
-    payload.name.length < 2
-  ) {
-    throw httpError(
-      400,
-      "Enter a product name.",
-    );
-  }
-
-  if (!payload.slug) {
-    throw httpError(
-      400,
-      "A valid product slug is required.",
-    );
-  }
-
-  if (!payload.category) {
-    throw httpError(
-      400,
-      "Choose a product category.",
-    );
-  }
-
-  if (!Number.isFinite(payload.price)) {
-    throw httpError(
-      400,
-      "Enter a valid product price.",
-    );
-  }
-
-  if (!payload.sku) {
-    throw httpError(
-      400,
-      "Enter a product SKU.",
-    );
-  }
-}
-
-// ======================================================
-// FIND PRODUCT
-// Supports MongoDB ID, legacy numeric ID, and slug.
-// ======================================================
-
-async function findProductByIdentifier(
-  identifier,
-  { activeOnly = false } = {},
-) {
-  const text = cleanString(identifier, 200);
-
-  if (!text) {
-    return null;
-  }
-
-  const conditions = [];
-
-  if (mongoose.Types.ObjectId.isValid(text)) {
-    conditions.push({ _id: text });
-  }
-
-  const legacyId = Number(text);
-
-  if (
-    Number.isSafeInteger(legacyId) &&
-    legacyId >= 1
-  ) {
-    conditions.push({ legacyId });
-  }
-
-  conditions.push({
-    slug: text.toLowerCase(),
-  });
-
-  const filter = {
-    $or: conditions,
+  const strings = {
+    name: 200,
+    category: 100,
+    subcategory: 100,
+    brand: 100,
+    gender: 50,
+    badge: 80,
+    material: 500,
+    whatsIncluded: 1000,
+    image: 2000,
+    description: 5000,
+    returnPolicy: 2000,
   };
 
-  if (activeOnly) {
-    filter.isActive = true;
+  for (const [key, maximum] of Object.entries(strings)) {
+    if (own(body, key)) result[key] = text(body[key], maximum);
   }
 
-  return Product.findOne(filter);
-}
+  if (own(body, "slug")) {
+    result.slug = slugify(body.slug);
 
-// ======================================================
-// ADMIN GUARD
-// ======================================================
+    if (!result.slug) {
+      throw httpError(400, "Enter a valid product URL name.");
+    }
+  }
+
+  if (own(body, "price")) {
+    result.price = number(body.price, "price", 100000000);
+  }
+
+  if (own(body, "discount")) {
+    result.discount = number(body.discount, "discount", 100);
+  }
+
+  if (own(body, "stock")) {
+    result.stock = number(body.stock, "stock", 1000000, true);
+  }
+
+  if (own(body, "legacyId")) {
+    result.legacyId =
+      body.legacyId == null || body.legacyId === ""
+        ? null
+        : number(body.legacyId, "legacy ID", Number.MAX_SAFE_INTEGER, true);
+
+    if (result.legacyId === 0) {
+      throw httpError(400, "Legacy ID must be a positive integer.");
+    }
+  }
+
+  const lists = {
+    tags: [50, 100],
+    highlights: [30, 500],
+    careInstructions: [30, 500],
+    sizes: [50, 50],
+    colors: [50, 80],
+    images: [20, 2000],
+  };
+
+  for (const [key, limits] of Object.entries(lists)) {
+    if (own(body, key)) result[key] = array(body[key], ...limits);
+  }
+
+  if (own(body, "variants")) {
+    result.variants = normalizeVariants(body.variants);
+  }
+
+  if (own(body, "specifications")) {
+    result.specifications = normalizeSpecifications(body.specifications);
+  }
+
+  if (own(body, "delivery")) {
+    result.delivery = normalizeDelivery(body.delivery);
+  }
+
+  for (const key of ["isFeatured", "isBestSeller", "isActive"]) {
+    if (own(body, key)) result[key] = boolean(body[key]);
+  }
+
+  if (own(body, "isNewArrival")) {
+    result.isNewArrival = boolean(body.isNewArrival);
+  } else if (own(body, "isNew")) {
+    result.isNewArrival = boolean(body.isNew);
+  }
+
+  // The server owns product codes and variant SKUs.
+  // Preserve compatibility with older clients sending a parent SKU
+  // during creation, but do not allow later SKU changes.
+  if (creating && own(body, "sku") && text(body.sku, 100)) {
+    result.sku = text(body.sku, 100).toUpperCase();
+  }
+
+  return result;
+}
 
 function ensureAdmin(req, res) {
   if (!req.user) {
     res.status(401).json({
       success: false,
-      message: "Admin login is required.",
+      message: "Please sign in with an admin account.",
     });
 
     return false;
@@ -667,659 +349,454 @@ function ensureAdmin(req, res) {
   return true;
 }
 
-// ======================================================
-// ERROR RESPONSES
-// ======================================================
-
-function sendError(res, error, fallbackMessage) {
-  if (error?.code === 11000) {
+function sendError(res, error, fallback) {
+  if (error.code === 11000) {
     const field = Object.keys(
-      error.keyPattern ||
-        error.keyValue ||
-        {},
+      error.keyPattern || error.keyValue || {}
     )[0];
-
-    const label =
-      field === "sku"
-        ? "SKU"
-        : field === "slug"
-          ? "slug"
-          : field || "value";
 
     return res.status(409).json({
       success: false,
       message:
-        `A product with this ${label} already exists.`,
+        field === "slug"
+          ? "This product URL name is already used. Choose another."
+          : "This product code or SKU is already used. Refresh and try again.",
     });
   }
 
-  if (error?.name === "ValidationError") {
-    const firstMessage = Object.values(
-      error.errors || {},
-    )[0]?.message;
-
+  if (error.name === "ValidationError") {
     return res.status(400).json({
       success: false,
       message:
-        firstMessage ||
-        error.message ||
-        "Product validation failed.",
+        Object.values(error.errors || {})[0]?.message ||
+        "Please check the product details.",
     });
   }
 
-  if (error?.name === "CastError") {
+  if (error.name === "CastError") {
     return res.status(400).json({
       success: false,
-      message: "Invalid product value.",
+      message: "A product value is invalid.",
     });
   }
 
   const status =
-    Number.isInteger(error?.status) &&
+    Number.isInteger(error.status) &&
     error.status >= 400 &&
     error.status <= 599
       ? error.status
       : 500;
 
+  if (status >= 500) {
+    console.error("Product request failed:", error.name);
+  }
+
   return res.status(status).json({
     success: false,
-    message:
-      error?.message || fallbackMessage,
+    message: status >= 500 ? fallback : error.message,
   });
 }
 
-// ======================================================
-// APPLY PRODUCT CHANGES
-// ======================================================
+async function findProduct(identifier, activeOnly = false) {
+  const value = text(identifier, 200);
 
-function currentDelivery(product) {
-  if (!product?.delivery) {
-    return {};
+  if (!value) return null;
+
+  const alternatives = [{ slug: value.toLowerCase() }];
+
+  if (/^[a-f0-9]{24}$/i.test(value)) {
+    alternatives.push({ _id: value });
   }
 
-  if (
-    typeof product.delivery.toObject === "function"
-  ) {
-    return product.delivery.toObject();
+  if (/^\d+$/.test(value)) {
+    const legacyId = Number(value);
+
+    if (Number.isSafeInteger(legacyId) && legacyId > 0) {
+      alternatives.push({ legacyId });
+    }
   }
 
-  return { ...product.delivery };
+  const filter = { $or: alternatives };
+
+  if (activeOnly) filter.isActive = true;
+
+  return Product.findOne(filter);
 }
 
-function applyProductPatch(product, payload) {
+function hasVariants(value) {
+  return Boolean(value && Object.keys(value).length);
+}
+
+function applyPatch(product, payload) {
   const patch = { ...payload };
 
-  if (hasOwn(patch, "delivery")) {
-    product.delivery = {
-      ...currentDelivery(product),
-      ...patch.delivery,
-    };
+  if (own(patch, "delivery")) {
+    const current =
+      product.delivery?.toObject?.() || product.delivery || {};
 
+    product.delivery = { ...current, ...patch.delivery };
     delete patch.delivery;
   }
 
   product.set(patch);
 
-  if (hasOwn(payload, "variants")) {
-    product.markModified("variants");
-  }
-
-  if (hasOwn(payload, "specifications")) {
-    product.markModified("specifications");
+  for (const key of ["variants", "specifications"]) {
+    if (own(payload, key)) product.markModified(key);
   }
 }
-
-// ======================================================
-// PUBLIC — GET PRODUCTS
-// ======================================================
 
 async function getProducts(req, res) {
   try {
-    const products = await Product.find({
-      isActive: true,
-    });
+    const products = await Product.find({ isActive: true });
+    const reviewed = await attachReviews(products);
 
-    const productsWithReviews =
-      await attachReviews(products);
-
-    return res.status(200).json({
+    res.json({
       success: true,
-      count: productsWithReviews.length,
-      products: productsWithReviews,
+      count: reviewed.length,
+      products: reviewed,
     });
   } catch (error) {
-    console.error(
-      "Get products error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to load products.",
-    );
+    sendError(res, error, "Unable to load products.");
   }
 }
-
-// ======================================================
-// PUBLIC — GET ONE PRODUCT
-// ======================================================
 
 async function getProductById(req, res) {
   try {
-    const product = await findProductByIdentifier(
-      req.params.id,
-      { activeOnly: true },
-    );
+    const product = await findProduct(req.params.id, true);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found.",
-      });
-    }
+    if (!product) throw httpError(404, "Product not found.");
 
-    const [productWithReviews] =
-      await attachReviews([product]);
+    const [reviewed] = await attachReviews([product]);
 
-    return res.status(200).json({
-      success: true,
-      product: productWithReviews,
-    });
+    res.json({ success: true, product: reviewed });
   } catch (error) {
-    console.error(
-      "Get product error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to load product.",
-    );
+    sendError(res, error, "Unable to load this product.");
   }
 }
 
-// ======================================================
-// ADMIN — GET ALL PRODUCTS
-// ======================================================
-
-async function getAdminProducts(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
+async function getAdminProductOptions(req, res) {
+  if (!ensureAdmin(req, res)) return;
 
   try {
-    const search = cleanString(
-      req.query.search,
-      150,
-    );
+    // Includes archived products so their categories/brands remain usable.
+    const [categories, brands, pairs] = await Promise.all([
+      Product.distinct("category"),
+      Product.distinct("brand"),
+      Product.aggregate([
+        {
+          $match: {
+            category: { $type: "string" },
+            subcategory: { $type: "string", $ne: "" },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              category: "$category",
+              subcategory: "$subcategory",
+            },
+          },
+        },
+        {
+          $sort: {
+            "_id.category": 1,
+            "_id.subcategory": 1,
+          },
+        },
+      ]),
+    ]);
 
-    const category = cleanString(
-      req.query.category,
-      100,
-    );
+    const subcategories = {};
 
-    const stockStatus = cleanString(
-      req.query.stockStatus,
-      50,
-    );
+    for (const { _id } of pairs) {
+      const category = _id.category;
 
-    const active = cleanString(
-      req.query.active,
-      20,
-    ).toLowerCase();
+      if (!own(subcategories, category)) {
+        Object.defineProperty(subcategories, category, {
+          value: [],
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
 
-    const page = Math.max(
-      1,
-      Number.parseInt(req.query.page, 10) || 1,
+      subcategories[category].push(_id.subcategory);
+    }
+
+    res.json({
+      success: true,
+      categories: categories.filter(Boolean).sort(),
+      brands: brands.filter(Boolean).sort(),
+      subcategories,
+    });
+  } catch (error) {
+    sendError(res, error, "Unable to load category and brand options.");
+  }
+}
+
+async function getAdminProducts(req, res) {
+  if (!ensureAdmin(req, res)) return;
+
+  try {
+    const search = text(req.query.search, 150);
+    const category = text(req.query.category, 100);
+    const active = text(req.query.active, 20);
+
+    const page = Math.min(
+      1000000,
+      Math.max(1, parseInt(req.query.page, 10) || 1)
     );
 
     const limit = Math.min(
       100,
-      Math.max(
-        1,
-        Number.parseInt(req.query.limit, 10) || 25,
-      ),
+      Math.max(1, parseInt(req.query.limit, 10) || 25)
     );
 
     const filter = {};
 
     if (search) {
-      const regex = new RegExp(
-        escapeRegex(search),
-        "i",
-      );
+      const regex = new RegExp(escapeRegex(search), "i");
 
       filter.$or = [
-        { name: regex },
-        { slug: regex },
-        { sku: regex },
-        { brand: regex },
-        { category: regex },
-        { subcategory: regex },
-      ];
+        "name",
+        "slug",
+        "sku",
+        "productCode",
+        "variantSkus.sku",
+        "brand",
+        "category",
+        "subcategory",
+      ].map((field) => ({ [field]: regex }));
     }
 
     if (category) {
       filter.category = new RegExp(
         `^${escapeRegex(category)}$`,
-        "i",
+        "i"
       );
     }
 
     if (
-      [
-        "in-stock",
-        "low-stock",
-        "out-of-stock",
-      ].includes(stockStatus)
+      ["in-stock", "low-stock", "out-of-stock"].includes(
+        req.query.stockStatus
+      )
     ) {
-      filter.stockStatus = stockStatus;
+      filter.stockStatus = req.query.stockStatus;
     }
 
-    if (
-      active === "true" ||
-      active === "false"
-    ) {
+    if (["true", "false"].includes(active)) {
       filter.isActive = active === "true";
     }
 
     const [products, total] = await Promise.all([
       Product.find(filter)
-        .sort({
-          updatedAt: -1,
-          _id: -1,
-        })
+        .sort({ updatedAt: -1, _id: -1 })
         .skip((page - 1) * limit)
         .limit(limit),
-
       Product.countDocuments(filter),
     ]);
 
-    return res.status(200).json({
+    res.json({
       success: true,
       count: products.length,
       total,
       page,
-      pages: Math.max(
-        1,
-        Math.ceil(total / limit),
-      ),
+      pages: Math.max(1, Math.ceil(total / limit)),
       limit,
       products,
     });
   } catch (error) {
-    console.error(
-      "Get admin products error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to load admin products.",
-    );
+    sendError(res, error, "Unable to load admin products.");
   }
 }
-
-// ======================================================
-// ADMIN — GET ONE PRODUCT
-// ======================================================
 
 async function getAdminProductById(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
+  if (!ensureAdmin(req, res)) return;
 
   try {
-    const product = await findProductByIdentifier(
-      req.params.id,
-    );
+    const product = await findProduct(req.params.id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found.",
-      });
-    }
+    if (!product) throw httpError(404, "Product not found.");
 
-    return res.status(200).json({
-      success: true,
-      product,
-    });
+    res.json({ success: true, product });
   } catch (error) {
-    console.error(
-      "Get admin product error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to load product.",
-    );
+    sendError(res, error, "Unable to load this product.");
   }
 }
-
-// ======================================================
-// ADMIN — CREATE PRODUCT
-// ======================================================
 
 async function createProduct(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
+  if (!ensureAdmin(req, res)) return;
 
   try {
-    const payload = normalizeProductPayload(
-      req.body,
-      { creating: true },
-    );
+    const payload = normalizePayload(req.body, true);
 
-    validateCreatePayload(payload);
+    if (!payload.name || payload.name.length < 2) {
+      throw httpError(400, "Enter a product name.");
+    }
 
-    const product = new Product(payload);
+    if (!payload.category) {
+      throw httpError(400, "Choose a product category.");
+    }
 
-    // save() runs the Product model's calculations.
+    if (!Number.isFinite(payload.price)) {
+      throw httpError(400, "Enter a valid product price.");
+    }
+
+    const id = new mongoose.Types.ObjectId();
+
+    if (!payload.slug) {
+      const base = slugify(payload.name) || "product";
+      payload.slug = `${base.slice(0, 150)}-${String(id)}`;
+    }
+
+    const product = new Product({
+      ...payload,
+      _id: id,
+      isActive: true,
+    });
+
     await product.save();
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
-      message: "Product created successfully.",
+      message: "Product and stock saved successfully.",
       product,
     });
   } catch (error) {
-    console.error(
-      "Create product error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to create product.",
-    );
+    sendError(res, error, "Unable to create this product.");
   }
 }
-
-// ======================================================
-// ADMIN — UPDATE PRODUCT
-// ======================================================
 
 async function updateProduct(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
+  if (!ensureAdmin(req, res)) return;
 
   try {
-    const product = await findProductByIdentifier(
-      req.params.id,
-    );
+    const product = await findProduct(req.params.id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found.",
-      });
-    }
+    if (!product) throw httpError(404, "Product not found.");
 
-    const payload = normalizeProductPayload(
-      req.body,
-    );
+    const payload = normalizePayload(req.body);
 
-    if (Object.keys(payload).length === 0) {
-      throw httpError(
-        400,
-        "No product changes were provided.",
-      );
+    if (!Object.keys(payload).length) {
+      throw httpError(400, "No product changes were provided.");
     }
 
     if (
-      hasOwn(payload, "stock") &&
-      !hasOwn(payload, "variants") &&
-      hasVariantMatrix(product.variants)
+      own(payload, "stock") &&
+      !own(payload, "variants") &&
+      hasVariants(product.variants)
     ) {
       throw httpError(
         400,
-        "This product uses variant stock. Update the variant quantities instead of the total stock value.",
+        "Update individual variant quantities for this product."
       );
     }
 
-    applyProductPatch(product, payload);
-
+    applyPatch(product, payload);
     await product.save();
 
-    return res.status(200).json({
+    res.json({
       success: true,
-      message: "Product updated successfully.",
+      message: "Product and stock updated successfully.",
       product,
     });
   } catch (error) {
-    console.error(
-      "Update product error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to update product.",
-    );
+    sendError(res, error, "Unable to update this product.");
   }
 }
 
-// ======================================================
-// ADMIN — UPDATE INVENTORY
-// ======================================================
-
 async function updateProductInventory(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
+  if (!ensureAdmin(req, res)) return;
 
   try {
-    const product = await findProductByIdentifier(
-      req.params.id,
-    );
+    const product = await findProduct(req.params.id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found.",
-      });
+    if (!product) throw httpError(404, "Product not found.");
+
+    object(req.body, "Inventory");
+
+    const hasMatrix = own(req.body, "variants");
+    const hasStock = own(req.body, "stock");
+
+    if (!hasMatrix && !hasStock) {
+      throw httpError(400, "Provide stock quantities.");
     }
 
-    const hasVariantsInput = hasOwn(
-      req.body,
-      "variants",
-    );
+    if (hasMatrix) {
+      const variants = normalizeVariants(req.body.variants);
 
-    const hasStockInput = hasOwn(
-      req.body,
-      "stock",
-    );
+      if (
+        (product.colors.length || product.sizes.length) &&
+        !hasVariants(variants)
+      ) {
+        throw httpError(
+          400,
+          "Provide the quantities for this product's options."
+        );
+      }
 
-    if (
-      !hasVariantsInput &&
-      !hasStockInput
-    ) {
-      throw httpError(
-        400,
-        "Provide variant stock or a total stock quantity.",
-      );
-    }
-
-    if (hasVariantsInput) {
-      product.variants = normalizeVariants(
-        req.body.variants,
-      );
-
+      product.variants = variants;
       product.markModified("variants");
     }
 
-    if (hasStockInput) {
-      const stock = Number(req.body.stock);
-
-      if (
-        !Number.isFinite(stock) ||
-        stock < 0 ||
-        stock > 1000000
-      ) {
+    if (hasStock) {
+      if (hasVariants(product.variants)) {
         throw httpError(
           400,
-          "Stock must be a valid quantity of zero or more.",
+          "Update individual variant quantities instead of total stock."
         );
       }
 
-      if (
-        !hasVariantsInput &&
-        hasVariantMatrix(product.variants)
-      ) {
-        throw httpError(
-          400,
-          "This product uses variant stock. Update the variant quantities instead.",
-        );
-      }
-
-      product.stock = Math.floor(stock);
+      product.stock = number(
+        req.body.stock,
+        "stock",
+        1000000,
+        true
+      );
     }
 
     await product.save();
 
-    return res.status(200).json({
+    res.json({
       success: true,
       message: "Inventory updated successfully.",
       product,
     });
   } catch (error) {
-    console.error(
-      "Update inventory error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to update inventory.",
-    );
+    sendError(res, error, "Unable to update inventory.");
   }
 }
 
-// ======================================================
-// ADMIN — ARCHIVE PRODUCT
-// Existing order references are preserved.
-// ======================================================
-
-async function deleteProduct(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
+async function setVisibility(req, res, isActive) {
+  if (!ensureAdmin(req, res)) return;
 
   try {
-    const product = await findProductByIdentifier(
-      req.params.id,
-    );
+    const product = await findProduct(req.params.id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found.",
-      });
-    }
+    if (!product) throw httpError(404, "Product not found.");
 
-    if (product.isActive === false) {
-      return res.status(200).json({
-        success: true,
-        message: "Product is already archived.",
-        product,
-      });
-    }
-
-    product.isActive = false;
-
+    product.isActive = isActive;
     await product.save();
 
-    return res.status(200).json({
+    res.json({
       success: true,
-      message: "Product archived successfully.",
+      message: isActive ? "Product restored." : "Product archived.",
       product,
     });
   } catch (error) {
-    console.error(
-      "Archive product error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to archive product.",
-    );
+    sendError(res, error, "Unable to change product visibility.");
   }
 }
 
-// ======================================================
-// ADMIN — RESTORE PRODUCT
-// ======================================================
-
-async function restoreProduct(req, res) {
-  if (!ensureAdmin(req, res)) {
-    return;
-  }
-
-  try {
-    const product = await findProductByIdentifier(
-      req.params.id,
-    );
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found.",
-      });
-    }
-
-    if (product.isActive === true) {
-      return res.status(200).json({
-        success: true,
-        message: "Product is already active.",
-        product,
-      });
-    }
-
-    product.isActive = true;
-
-    await product.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Product restored successfully.",
-      product,
-    });
-  } catch (error) {
-    console.error(
-      "Restore product error:",
-      error,
-    );
-
-    return sendError(
-      res,
-      error,
-      "Unable to restore product.",
-    );
-  }
-}
-
-// ======================================================
-// EXPORTS
-// ======================================================
+const deleteProduct = (req, res) => setVisibility(req, res, false);
+const restoreProduct = (req, res) => setVisibility(req, res, true);
 
 module.exports = {
   getProducts,
   getProductById,
   getAdminProducts,
   getAdminProductById,
+  getAdminProductOptions,
   createProduct,
   updateProduct,
   updateProductInventory,
