@@ -6,44 +6,26 @@ dotenv.config();
 
 const connectDB = require("./config/db");
 
-const productRoutes = require(
-  "./routes/productRoutes",
-);
-
-const authRoutes = require(
-  "./routes/authRoutes",
-);
-
-const addressRoutes = require(
-  "./routes/addressRoutes",
-);
-
-const orderRoutes = require(
-  "./routes/orderRoutes",
-);
-
-const paymentRoutes = require(
-  "./routes/paymentRoutes",
-);
+const productRoutes = require("./routes/productRoutes");
+const authRoutes = require("./routes/authRoutes");
+const addressRoutes = require("./routes/addressRoutes");
+const orderRoutes = require("./routes/orderRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
 
 const paymentWebhookRoutes = require(
   "./routes/paymentWebhookRoutes",
 );
 
-const supportRoutes = require(
-  "./routes/supportRoutes",
-);
+const supportRoutes = require("./routes/supportRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
-const SupportTicket = require(
-  "./models/SupportTicket",
-);
+const SupportTicket = require("./models/SupportTicket");
 
 const app = express();
 
 app.use(cors());
 
-// Webhooks must receive the exact raw body.
-// Keep this BEFORE express.json().
+// Keep raw webhook parsing before express.json().
 app.use(
   "/api/payment-webhooks",
   express.raw({
@@ -59,45 +41,20 @@ app.use(
   }),
 );
 
-app.get(
-  "/api/health",
-  (req, res) => {
-    res.json({
-      success: true,
-      message: "GymDrobe API is running",
-    });
-  },
-);
+app.get("/api/health", (req, res) => {
+  res.json({
+    success: true,
+    message: "GymDrobe API is running",
+  });
+});
 
-app.use(
-  "/api/products",
-  productRoutes,
-);
-
-app.use(
-  "/api/auth",
-  authRoutes,
-);
-
-app.use(
-  "/api/addresses",
-  addressRoutes,
-);
-
-app.use(
-  "/api/orders",
-  orderRoutes,
-);
-
-app.use(
-  "/api/payments",
-  paymentRoutes,
-);
-
-app.use(
-  "/api/support",
-  supportRoutes,
-);
+app.use("/api/products", productRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/addresses", addressRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/support", supportRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
@@ -129,15 +86,12 @@ app.use((error, req, res, next) => {
   });
 });
 
-const PORT =
-  process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
     await connectDB();
 
-    // Create the unique index before accepting
-    // support requests, so retries are deduplicated.
     await SupportTicket.createIndexes();
 
     app.listen(PORT, () => {
@@ -145,14 +99,13 @@ async function startServer() {
         `GymDrobe server running on http://localhost:${PORT}`,
       );
     });
-    } catch (error) {
+  } catch (error) {
     console.error(
       "Server startup failed:",
       error.message,
     );
 
     console.error(error);
-
     process.exit(1);
   }
 }
