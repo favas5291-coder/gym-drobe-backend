@@ -136,6 +136,26 @@ function safeOrder(order) {
 }
 
 function fail(res, error, verification = false) {
+  if (!error?.status) {
+    const code =
+      typeof error?.code === "string" &&
+      /^[A-Za-z0-9_.-]{1,80}$/.test(error.code)
+        ? error.code
+        : "UNKNOWN";
+
+    console.error("Payment request failed:", {
+      operation: verification
+        ? "payment-verification"
+        : "payment-order",
+      name:
+        typeof error?.name === "string" &&
+        /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(error.name)
+          ? error.name
+          : "Error",
+      code,
+    });
+  }
+
   return res.status(error.status || 503).json({
     success: false,
     code: error.code || "PAYMENT_UNAVAILABLE",

@@ -16,7 +16,7 @@ const {
   reviewReturnRequest,
   completeReturnRequest,
   recordReturnRefund,
-} = require("../controllers/returnController");
+} = require("./returnController");
 
 const {
   protect,
