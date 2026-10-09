@@ -58,19 +58,18 @@ function paise(value) {
   return amount;
 }
 
-// Preserve the existing rule:
-// 10% of the product total after coupons.
-// Shipping remains included in the delivery balance.
+// COD advance is 10% of merchandise after coupons.
+// Delivery charges remain in the balance due on delivery.
 function advance(pricing) {
   const amount = roundMoney(
-    Number(pricing.totalAfterCoupon) * 0.1
+    Number(pricing.totalAfterCoupon) * 0.1,
   );
 
   return {
     advancePercentage: 10,
     advanceAmount: amount,
     amountDue: roundMoney(
-      Math.max(0, pricing.finalTotal - amount)
+      Math.max(0, pricing.finalTotal - amount),
     ),
   };
 }
@@ -82,24 +81,28 @@ function payable(order) {
 }
 
 function safeOrder(order) {
-  const v = order.toObject ? order.toObject() : order;
+  const value = order.toObject
+    ? order.toObject()
+    : order;
 
   return {
-    id: v.orderNumber,
-    orderNumber: v.orderNumber,
-    createdAt: v.createdAt,
-    updatedAt: v.updatedAt,
-    status: v.status,
-    source: v.source,
-    giftMessage: v.giftMessage || "",
-    orderNote: v.orderNote || "",
-    user: {
-      id: String(v.user),
-    },
-    customer: v.customer,
-    shippingAddress: v.shippingAddress,
+    id: value.orderNumber,
+    orderNumber: value.orderNumber,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    status: value.status,
+    source: value.source,
+    giftMessage: value.giftMessage || "",
+    orderNote: value.orderNote || "",
 
-    items: (v.items || []).map((item) => ({
+    user: {
+      id: String(value.user),
+    },
+
+    customer: value.customer,
+    shippingAddress: value.shippingAddress,
+
+    items: (value.items || []).map((item) => ({
       id: String(item.product),
       productId: String(item.product),
       legacyId: item.legacyId,
@@ -117,56 +120,134 @@ function safeOrder(order) {
       returnPolicy: item.returnPolicy,
     })),
 
-    pricing: v.pricing,
-    coupon: v.coupon,
-    payment: v.payment,
-    paymentMethod: v.paymentMethod,
-    delivery: v.delivery,
-    deliveryMethod: v.deliveryMethod,
-    tracking: v.tracking,
-    cancellation: v.cancellation,
-    returnRequest: v.returnRequest,
-    refund: v.refund,
+    pricing: value.pricing,
+    coupon: value.coupon,
+    payment: value.payment,
+    paymentMethod: value.paymentMethod,
+    delivery: value.delivery,
+    deliveryMethod: value.deliveryMethod,
+    tracking: value.tracking,
+    cancellation: value.cancellation,
+    returnRequest: value.returnRequest,
+    refund: value.refund,
 
     metadata: {
-      ...v.metadata,
-      checkoutToken: v.checkoutToken,
+      ...value.metadata,
+      checkoutToken: value.checkoutToken,
     },
   };
 }
 
-function fail(res, error, verification = false) {
-  if (!error?.status) {
-    const code =
-      typeof error?.code === "string" &&
-      /^[A-Za-z0-9_.-]{1,80}$/.test(error.code)
-        ? error.code
-        : "UNKNOWN";
+// Log diagnostic identifiers without logging credentials,
+// authentication tokens, request bodies or customer details.
+function logPaymentFailure(error, stage) {
+  const reference = crypto.randomBytes(8).toString("hex");
 
-    console.error("Payment request failed:", {
-      operation: verification
-        ? "payment-verification"
-        : "payment-order",
-      name:
-        typeof error?.name === "string" &&
-        /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(error.name)
-          ? error.name
-          : "Error",
-      code,
-    });
+  const safeName = (value) =>
+    typeof value === "string" &&
+    /^[a-zA-Z0-9_.-]{1,100}$/.test(value)
+      ? value
+      : "unknown";
+
+  console.error("GymDrobe payment error", {
+    reference,
+    stage,
+    name: safeName(error?.name),
+
+    code: Number.isSafeInteger(error?.code)
+      ? error.code
+      : safeName(error?.code),
+
+    databaseState: mongoose.connection.readyState,
+
+    validationFields: Object.keys(error?.errors || {})
+      .filter((field) =>
+        /^[a-zA-Z0-9_.-]{1,100}$/.test(field),
+      )
+      .slice(0, 20),
+
+    duplicateFields: Object.keys(
+      error?.keyPattern || {},
+    ).filter((field) =>
+      /^[a-zA-Z0-9_.-]{1,100}$/.test(field),
+    ),
+
+    stack: String(error?.stack || "")
+      .split("\n")
+      .filter((line) => /^\s*at /.test(line))
+      .slice(0, 5),
+  });
+
+  return reference;
+}
+
+function fail(
+  res,
+  error,
+  verification = false,
+  stage = "payment-confirmation",
+) {
+  const reference = logPaymentFailure(error, stage);
+  const explicitStatus = Number(error?.status);
+
+  const knownError =
+    Number.isInteger(explicitStatus) &&
+    explicitStatus >= 400 &&
+    explicitStatus <= 599;
+
+  let status = knownError ? explicitStatus : 503;
+
+  let code = knownError
+    ? error.code || "PAYMENT_ERROR"
+    : "PAYMENT_UNAVAILABLE";
+
+  let message = knownError
+    ? error.message
+    : "Payment could not be started.";
+
+  if (!knownError && verification) {
+    message =
+      "Payment confirmation was interrupted. Do not pay again; check My orders or contact support.";
+  } else if (
+    !knownError &&
+    error?.name === "ValidationError"
+  ) {
+    status = 500;
+    code = "ORDER_VALIDATION_FAILED";
+    message =
+      "Your order could not be saved. Contact support with the error reference.";
+  } else if (!knownError && error?.code === 11000) {
+    status = 409;
+    code = "ORDER_CONFLICT";
+    message =
+      "An order conflict occurred. Check My orders before trying again.";
+  } else if (
+    !knownError &&
+    [
+      "MongoServerSelectionError",
+      "MongooseServerSelectionError",
+      "MongoNetworkError",
+      "MongoNetworkTimeoutError",
+    ].includes(error?.name)
+  ) {
+    code = "PAYMENT_DATABASE_UNAVAILABLE";
+    message =
+      "The order database is temporarily unavailable. Please try again later.";
+  } else if (!knownError && !verification) {
+    message =
+      "Payment could not be started. Contact support with the error reference.";
   }
 
-  return res.status(error.status || 503).json({
+  res.set("Cache-Control", "no-store");
+  res.set("X-GymDrobe-Error-Reference", reference);
+
+  return res.status(status).json({
     success: false,
-    code: error.code || "PAYMENT_UNAVAILABLE",
+    code,
+    message,
+    errorReference: reference,
 
-    message: error.status
-      ? error.message
-      : verification
-        ? "Payment confirmation was interrupted. Do not pay again; check My orders or contact support."
-        : "Payment could not be started. Please try again later.",
-
-    ...(verification && !error.status
+    ...(verification && !knownError
       ? { verificationUncertain: true }
       : {}),
   });
@@ -177,10 +258,12 @@ function address(value = {}) {
     fullName: text(value.fullName || value.name, 100),
     email: text(value.email, 150).toLowerCase(),
     phone: text(value.phone, 20).replace(/\D/g, ""),
+
     addressLine: text(
       value.addressLine || value.address,
-      200
+      200,
     ),
+
     landmark: text(value.landmark, 150),
     city: text(value.city, 100),
     state: text(value.state, 100),
@@ -192,19 +275,24 @@ function address(value = {}) {
     throw problem(400, "Enter your full name.");
   }
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)) {
+  if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)
+  ) {
     throw problem(400, "Enter a valid email.");
   }
 
   if (!/^[6-9]\d{9}$/.test(result.phone)) {
     throw problem(
       400,
-      "Enter a valid 10-digit Indian mobile number."
+      "Enter a valid 10-digit Indian mobile number.",
     );
   }
 
   if (result.addressLine.length < 5) {
-    throw problem(400, "Enter your house number and street.");
+    throw problem(
+      400,
+      "Enter your house number and street.",
+    );
   }
 
   if (!result.city || !result.state) {
@@ -212,7 +300,10 @@ function address(value = {}) {
   }
 
   if (!/^[1-9]\d{5}$/.test(result.pincode)) {
-    throw problem(400, "Enter a valid 6-digit pincode.");
+    throw problem(
+      400,
+      "Enter a valid 6-digit pincode.",
+    );
   }
 
   return {
@@ -246,7 +337,10 @@ async function snapshot(body) {
     !body.items.length ||
     body.items.length > 50
   ) {
-    throw problem(400, "Choose between 1 and 50 order items.");
+    throw problem(
+      400,
+      "Choose between 1 and 50 order items.",
+    );
   }
 
   const products = new Map();
@@ -256,7 +350,7 @@ async function snapshot(body) {
   for (const raw of body.items) {
     const id = text(
       raw?.id || raw?.productId || raw?.product,
-      100
+      100,
     );
 
     const quantity = Number(raw?.quantity);
@@ -269,7 +363,7 @@ async function snapshot(body) {
     ) {
       throw problem(
         400,
-        "Choose a whole-number quantity between 1 and 99."
+        "Choose a whole-number quantity between 1 and 99.",
       );
     }
 
@@ -281,7 +375,7 @@ async function snapshot(body) {
       if (!product || product.isActive === false) {
         throw problem(
           409,
-          "A product in your bag is no longer available."
+          "A product in your bag is no longer available.",
         );
       }
 
@@ -306,7 +400,7 @@ async function snapshot(body) {
     ) {
       throw problem(
         409,
-        `${product.name} has insufficient stock for this selection.`
+        `${product.name} has insufficient stock for this selection.`,
       );
     }
 
@@ -318,7 +412,10 @@ async function snapshot(body) {
 
     const existing = rows.get(key);
 
-    if (existing && existing.quantity + quantity > 99) {
+    if (
+      existing &&
+      existing.quantity + quantity > 99
+    ) {
       throw problem(400, "Quantity is too large.");
     }
 
@@ -338,7 +435,7 @@ async function snapshot(body) {
 
         discount: Math.max(
           0,
-          Math.min(100, Number(product.discount || 0))
+          Math.min(100, Number(product.discount || 0)),
         ),
 
         quantity,
@@ -348,8 +445,14 @@ async function snapshot(body) {
       });
     }
 
-    // Check combined quantities without saving stock changes.
-    reserveVariantStock(product, quantity, size, color);
+    // Check combined stock using the in-memory document.
+    // Stock is not saved until payment is verified.
+    reserveVariantStock(
+      product,
+      quantity,
+      size,
+      color,
+    );
   }
 
   const items = [...rows.values()];
@@ -370,11 +473,13 @@ async function snapshot(body) {
 
   if (
     Number.isFinite(expected) &&
-    Math.abs(roundMoney(expected) - pricing.finalTotal) > 0.01
+    Math.abs(
+      roundMoney(expected) - pricing.finalTotal,
+    ) > 0.01
   ) {
     throw problem(
       409,
-      "Your order total changed. Review the latest total and try again."
+      "Your order total changed. Review the latest total and try again.",
     );
   }
 
@@ -403,32 +508,54 @@ function gatewayResponse(res, order, status = 200) {
       totalAmount: order.pricing.finalTotal,
       amountToPayNow: amount,
       amountDue: roundMoney(
-        order.pricing.finalTotal - amount
+        order.pricing.finalTotal - amount,
       ),
-      advancePercentage: order.payment.advancePercentage,
+      advancePercentage:
+        order.payment.advancePercentage,
       advanceAmount: order.payment.advanceAmount,
     },
   });
 }
 
 async function createRazorpayOrder(req, res) {
+  let stage = "checkout-validation";
+
   try {
     const body = req.body || {};
-    const user = req.user._id;
-    const checkoutToken = text(body.checkoutToken, 200);
+    const user = req.user?._id;
+
+    if (!user) {
+      throw problem(
+        401,
+        "Please sign in again.",
+        "AUTHENTICATION_REQUIRED",
+      );
+    }
+
+    const checkoutToken = text(
+      body.checkoutToken,
+      200,
+    );
 
     if (!checkoutToken) {
       throw problem(
         400,
-        "Checkout token is missing. Refresh checkout and try again."
+        "Checkout token is missing. Refresh checkout and try again.",
       );
     }
 
     if (
-      !["razorpay", "cod-partial"].includes(body.paymentMethod)
+      !["razorpay", "cod-partial"].includes(
+        body.paymentMethod,
+      )
     ) {
-      throw problem(400, "Choose a valid payment method.");
+      throw problem(
+        400,
+        "Choose a valid payment method.",
+      );
     }
+
+    stage = "order-lookup";
 
     let order = await Order.findOne({
       user,
@@ -436,7 +563,12 @@ async function createRazorpayOrder(req, res) {
     });
 
     if (!order) {
-      const shippingAddress = address(body.shippingAddress);
+      stage = "checkout-address";
+      const shippingAddress = address(
+        body.shippingAddress,
+      );
+
+      stage = "checkout-products-and-stock";
       const current = await snapshot(body);
       const partial = advance(current.pricing);
 
@@ -446,11 +578,13 @@ async function createRazorpayOrder(req, res) {
       ) {
         throw problem(
           400,
-          "This order amount is too low for COD advance payment."
+          "This order amount is too low for COD advance payment.",
         );
       }
 
       try {
+        stage = "order-create";
+
         order = await Order.create({
           orderNumber: `GD-${Date.now()
             .toString(36)
@@ -462,9 +596,11 @@ async function createRazorpayOrder(req, res) {
           user,
           checkoutToken,
 
-          source: ["cart", "selection", "buy-now"].includes(
-            body.source
-          )
+          source: [
+            "cart",
+            "selection",
+            "buy-now",
+          ].includes(body.source)
             ? body.source
             : "cart",
 
@@ -502,7 +638,9 @@ async function createRazorpayOrder(req, res) {
             amountDue: current.pricing.finalTotal,
 
             advancePercentage:
-              body.paymentMethod === "cod-partial" ? 10 : 0,
+              body.paymentMethod === "cod-partial"
+                ? 10
+                : 0,
 
             advanceAmount:
               body.paymentMethod === "cod-partial"
@@ -551,7 +689,10 @@ async function createRazorpayOrder(req, res) {
 
           metadata: {
             version: "7.0",
-            demo: getRazorpayKeyId().startsWith("rzp_test_"),
+            demo:
+              getRazorpayKeyId().startsWith(
+                "rzp_test_",
+              ),
             inventoryReserved: false,
           },
         });
@@ -567,10 +708,14 @@ async function createRazorpayOrder(req, res) {
       }
     }
 
-    if (order.payment.method !== body.paymentMethod) {
+    stage = "existing-order-validation";
+
+    if (
+      order.payment.method !== body.paymentMethod
+    ) {
       throw problem(
         409,
-        "This checkout attempt uses a different payment method. Start a new checkout."
+        "This checkout attempt uses a different payment method. Start a new checkout.",
       );
     }
 
@@ -581,14 +726,16 @@ async function createRazorpayOrder(req, res) {
     ) {
       throw problem(
         409,
-        "This order is cancelled or under refund review. Do not pay for it again."
+        "This order is cancelled or under refund review. Do not pay for it again.",
       );
     }
 
     if (
       FULFILMENT.includes(order.status) &&
       order.metadata?.inventoryReserved &&
-      ["paid", "partially-paid"].includes(order.payment.status)
+      ["paid", "partially-paid"].includes(
+        order.payment.status,
+      )
     ) {
       return res.json({
         success: true,
@@ -599,11 +746,13 @@ async function createRazorpayOrder(req, res) {
 
     if (
       order.status !== "payment-pending" ||
-      ["paid", "partially-paid"].includes(order.payment.status)
+      ["paid", "partially-paid"].includes(
+        order.payment.status,
+      )
     ) {
       throw problem(
         409,
-        "This order needs payment confirmation. Do not pay again; check My orders."
+        "This order needs payment confirmation. Do not pay again; check My orders.",
       );
     }
 
@@ -613,18 +762,21 @@ async function createRazorpayOrder(req, res) {
 
     const amount = paise(payable(order));
 
-    const gateway = await getRazorpayClient().orders.create({
-      amount,
-      currency: "INR",
-      receipt: order.orderNumber.slice(0, 40),
+    stage = "razorpay-order-create";
 
-      notes: {
-        gymdrobeOrder: order.orderNumber,
-        paymentMethod: order.payment.method,
-        checkoutToken: checkoutToken.slice(0, 100),
-        userId: String(user),
-      },
-    });
+    const gateway =
+      await getRazorpayClient().orders.create({
+        amount,
+        currency: "INR",
+        receipt: order.orderNumber.slice(0, 40),
+
+        notes: {
+          gymdrobeOrder: order.orderNumber,
+          paymentMethod: order.payment.method,
+          checkoutToken: checkoutToken.slice(0, 100),
+          userId: String(user),
+        },
+      });
 
     if (
       !gateway?.id ||
@@ -633,11 +785,12 @@ async function createRazorpayOrder(req, res) {
     ) {
       throw problem(
         502,
-        "Razorpay returned unexpected order details."
+        "Razorpay returned unexpected order details.",
       );
     }
 
-    // Only one gateway order ID can be attached to this checkout.
+    stage = "razorpay-order-save";
+
     const saved = await Order.findOneAndUpdate(
       {
         _id: order._id,
@@ -657,10 +810,11 @@ async function createRazorpayOrder(req, res) {
       },
       {
         new: true,
-      }
+      },
     );
 
-    order = saved || await Order.findById(order._id);
+    order =
+      saved || (await Order.findById(order._id));
 
     if (
       !order ||
@@ -670,21 +824,28 @@ async function createRazorpayOrder(req, res) {
     ) {
       throw problem(
         409,
-        "Your order changed while starting payment. Check My orders before paying."
+        "Your order changed while starting payment. Check My orders before paying.",
       );
     }
 
-    return gatewayResponse(res, order, saved ? 201 : 200);
+    return gatewayResponse(
+      res,
+      order,
+      saved ? 201 : 200,
+    );
   } catch (error) {
-    return fail(res, error);
+    return fail(res, error, false, stage);
   }
 }
 
 function recordPayment(order, payment) {
   const now = new Date();
-  const total = roundMoney(order.pricing.finalTotal);
+  const total = roundMoney(
+    order.pricing.finalTotal,
+  );
   const partial = advance(order.pricing);
-  const cod = order.payment.method === "cod-partial";
+  const cod =
+    order.payment.method === "cod-partial";
 
   Object.assign(order.payment, {
     gateway: "razorpay",
@@ -703,7 +864,9 @@ function recordPayment(order, payment) {
       ? order.payment.advancePaidAt || now
       : null,
 
-    balanceStatus: cod ? "pending" : "not-applicable",
+    balanceStatus: cod
+      ? "pending"
+      : "not-applicable",
 
     paidAt: cod
       ? null
@@ -715,7 +878,9 @@ async function transaction(work) {
   const session = await mongoose.startSession();
 
   try {
-    return await session.withTransaction(() => work(session));
+    return await session.withTransaction(
+      () => work(session),
+    );
   } finally {
     await session.endSession();
   }
@@ -724,20 +889,27 @@ async function transaction(work) {
 function checkPayment(order, payment) {
   if (
     !order ||
-    !["razorpay", "cod-partial"].includes(order.payment?.method)
+    !["razorpay", "cod-partial"].includes(
+      order.payment?.method,
+    )
   ) {
-    throw problem(404, "Payment order was not found.");
+    throw problem(
+      404,
+      "Payment order was not found.",
+    );
   }
 
   if (
     !payment?.id ||
-    payment.order_id !== order.payment.razorpayOrderId ||
-    Number(payment.amount) !== paise(payable(order)) ||
+    payment.order_id !==
+      order.payment.razorpayOrderId ||
+    Number(payment.amount) !==
+      paise(payable(order)) ||
     payment.currency !== "INR"
   ) {
     throw problem(
       400,
-      "Payment details do not match this order."
+      "Payment details do not match this order.",
     );
   }
 
@@ -748,45 +920,53 @@ function checkPayment(order, payment) {
   ) {
     throw problem(
       409,
-      "This order has a different verified payment. Contact support."
+      "This order has a different verified payment. Contact support.",
     );
   }
 }
 
 async function refundCancelled(order, payment) {
-  const key = `gd-auto-${order._id}-${payment.id}`;
+  const key =
+    `gd-auto-${order._id}-${payment.id}`;
 
-  const claimed = await transaction(async (session) => {
-    const current = await Order.findById(order._id)
-      .session(session);
+  const claimed = await transaction(
+    async (session) => {
+      const current = await Order.findById(
+        order._id,
+      ).session(session);
 
-    checkPayment(current, payment);
+      checkPayment(current, payment);
 
-    if (
-      current.status !== "cancelled" ||
-      current.metadata?.inventoryReserved
-    ) {
+      if (
+        current.status !== "cancelled" ||
+        current.metadata?.inventoryReserved
+      ) {
+        return current;
+      }
+
+      if (
+        REFUNDS.includes(current.refund?.status)
+      ) {
+        return current;
+      }
+
+      recordPayment(current, payment);
+
+      current.payment.amountDue = 0;
+      current.payment.balanceStatus =
+        "not-applicable";
+
+      current.refund.status = "pending";
+      current.refund.amount =
+        Number(payment.amount) / 100;
+      current.refund.reference = key;
+      current.refund.requestedAt = new Date();
+
+      await current.save({ session });
+
       return current;
-    }
-
-    if (REFUNDS.includes(current.refund?.status)) {
-      return current;
-    }
-
-    recordPayment(current, payment);
-
-    current.payment.amountDue = 0;
-    current.payment.balanceStatus = "not-applicable";
-
-    current.refund.status = "pending";
-    current.refund.amount = Number(payment.amount) / 100;
-    current.refund.reference = key;
-    current.refund.requestedAt = new Date();
-
-    await current.save({ session });
-
-    return current;
-  });
+    },
+  );
 
   if (
     claimed.refund?.status !== "pending" ||
@@ -797,15 +977,19 @@ async function refundCancelled(order, payment) {
 
   try {
     const keyId = text(getRazorpayKeyId());
-    const secret = text(process.env.RAZORPAY_KEY_SECRET);
+    const secret = text(
+      process.env.RAZORPAY_KEY_SECRET,
+    );
 
     if (!keyId || !secret) {
-      throw new Error("Refund configuration unavailable");
+      throw new Error(
+        "Refund configuration unavailable",
+      );
     }
 
     const response = await fetch(
       `https://api.razorpay.com/v1/payments/${encodeURIComponent(
-        payment.id
+        payment.id,
       )}/refund`,
       {
         method: "POST",
@@ -813,9 +997,10 @@ async function refundCancelled(order, payment) {
         signal: AbortSignal.timeout(30000),
 
         headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${keyId}:${secret}`
-          ).toString("base64")}`,
+          Authorization:
+            `Basic ${Buffer.from(
+              `${keyId}:${secret}`,
+            ).toString("base64")}`,
 
           "Content-Type": "application/json",
           "X-Refund-Idempotency": key,
@@ -825,7 +1010,7 @@ async function refundCancelled(order, payment) {
           amount: Number(payment.amount),
           speed: "normal",
         }),
-      }
+      },
     );
 
     const refund = await response.json();
@@ -834,12 +1019,16 @@ async function refundCancelled(order, payment) {
       !response.ok ||
       !refund?.id ||
       refund.payment_id !== payment.id ||
-      Number(refund.amount) !== Number(payment.amount)
+      Number(refund.amount) !==
+        Number(payment.amount)
     ) {
-      throw new Error("Refund response unavailable");
+      throw new Error(
+        "Refund response unavailable",
+      );
     }
 
-    const processed = refund.status === "processed";
+    const processed =
+      refund.status === "processed";
 
     const changes = {
       "refund.reference": refund.id,
@@ -859,7 +1048,6 @@ async function refundCancelled(order, payment) {
       });
     }
 
-    // A webhook may already have completed this refund.
     await Order.updateOne(
       {
         _id: claimed._id,
@@ -868,11 +1056,11 @@ async function refundCancelled(order, payment) {
       },
       {
         $set: changes,
-      }
+      },
     );
   } catch {
-    // An uncertain refund response needs reconciliation.
-    // Do not issue a different refund request automatically.
+    // An uncertain refund needs review.
+    // Do not automatically issue a second refund.
     await Order.updateOne(
       {
         _id: claimed._id,
@@ -883,15 +1071,17 @@ async function refundCancelled(order, payment) {
         $set: {
           "refund.status": "manual-required",
         },
-      }
+      },
     );
   }
 
   return Order.findById(claimed._id);
 }
 
-// Customer verification and webhooks use this same function.
-async function finalizeCapturedPayment(orderId, payment) {
+async function finalizeCapturedPayment(
+  orderId,
+  payment,
+) {
   const initial = await Order.findById(orderId);
 
   checkPayment(initial, payment);
@@ -902,151 +1092,178 @@ async function finalizeCapturedPayment(orderId, payment) {
   ) {
     throw problem(
       409,
-      "This payment is not eligible for order confirmation. Check My orders or contact support."
+      "This payment is not eligible for order confirmation. Check My orders or contact support.",
     );
   }
 
   let result;
 
   try {
-    result = await transaction(async (session) => {
-      const current = await Order.findById(orderId)
-        .session(session);
+    result = await transaction(
+      async (session) => {
+        const current = await Order.findById(
+          orderId,
+        ).session(session);
 
-      checkPayment(current, payment);
+        checkPayment(current, payment);
 
-      if (
-        current.status === "cancelled" ||
-        REFUNDS.includes(current.refund?.status) ||
-        current.payment.status === "refunded"
-      ) {
-        return current;
-      }
+        if (
+          current.status === "cancelled" ||
+          REFUNDS.includes(
+            current.refund?.status,
+          ) ||
+          current.payment.status === "refunded"
+        ) {
+          return current;
+        }
 
-      // Preserve processing, shipped and delivered statuses.
-      if (
-        FULFILMENT.includes(current.status) &&
-        current.metadata?.inventoryReserved
-      ) {
-        return current;
-      }
+        if (
+          FULFILMENT.includes(current.status) &&
+          current.metadata?.inventoryReserved
+        ) {
+          return current;
+        }
 
-      if (current.status !== "payment-pending") {
-        throw problem(
-          409,
-          "This order needs manual confirmation. Do not pay again."
-        );
-      }
-
-      if (!current.metadata.inventoryReserved) {
-        const touched = new Map();
-
-        for (const item of current.items) {
-          const id = String(item.product);
-          let product = touched.get(id);
-
-          if (!product) {
-            product = await Product.findById(item.product)
-              .session(session);
-          }
-
-          if (
-            !product ||
-            product.isActive === false ||
-            getVariantStock(
-              product,
-              item.selectedSize,
-              item.selectedColor
-            ) < item.quantity
-          ) {
-            throw problem(
-              409,
-              "Stock changed after payment.",
-              "PAID_STOCK_UNAVAILABLE"
-            );
-          }
-
-          reserveVariantStock(
-            product,
-            item.quantity,
-            item.selectedSize,
-            item.selectedColor
+        if (
+          current.status !== "payment-pending"
+        ) {
+          throw problem(
+            409,
+            "This order needs manual confirmation. Do not pay again.",
           );
-
-          touched.set(id, product);
         }
 
-        for (const product of touched.values()) {
-          await product.save({ session });
+        if (
+          !current.metadata.inventoryReserved
+        ) {
+          const touched = new Map();
+
+          for (const item of current.items) {
+            const id = String(item.product);
+            let product = touched.get(id);
+
+            if (!product) {
+              product =
+                await Product.findById(
+                  item.product,
+                ).session(session);
+            }
+
+            if (
+              !product ||
+              product.isActive === false ||
+              getVariantStock(
+                product,
+                item.selectedSize,
+                item.selectedColor,
+              ) < item.quantity
+            ) {
+              throw problem(
+                409,
+                "Stock changed after payment.",
+                "PAID_STOCK_UNAVAILABLE",
+              );
+            }
+
+            reserveVariantStock(
+              product,
+              item.quantity,
+              item.selectedSize,
+              item.selectedColor,
+            );
+
+            touched.set(id, product);
+          }
+
+          for (const product of touched.values()) {
+            await product.save({ session });
+          }
+
+          current.metadata.inventoryReserved =
+            true;
         }
 
-        current.metadata.inventoryReserved = true;
-      }
+        recordPayment(current, payment);
+        current.status = "confirmed";
 
-      recordPayment(current, payment);
-      current.status = "confirmed";
+        if (
+          !current.tracking.events.some(
+            (event) =>
+              event.status === "confirmed",
+          )
+        ) {
+          current.tracking.events.push({
+            status: "confirmed",
 
-      if (
-        !current.tracking.events.some(
-          (event) => event.status === "confirmed"
-        )
-      ) {
-        current.tracking.events.push({
-          status: "confirmed",
+            description:
+              current.payment.method ===
+              "cod-partial"
+                ? `10% COD advance paid online. Remaining ₹${current.payment.amountDue} is due on delivery.`
+                : "Online payment verified. Order confirmed by GymDrobe.",
 
-          description:
-            current.payment.method === "cod-partial"
-              ? `10% COD advance paid online. Remaining ₹${current.payment.amountDue} is due on delivery.`
-              : "Online payment verified. Order confirmed by GymDrobe.",
+            timestamp: new Date(),
+          });
+        }
 
-          timestamp: new Date(),
-        });
-      }
+        await current.save({ session });
 
-      await current.save({ session });
-
-      return current;
-    });
+        return current;
+      },
+    );
   } catch (error) {
-    if (error.code !== "PAID_STOCK_UNAVAILABLE") {
+    if (
+      error.code !== "PAID_STOCK_UNAVAILABLE"
+    ) {
       throw error;
     }
 
-    result = await transaction(async (session) => {
-      const current = await Order.findById(orderId)
-        .session(session);
+    result = await transaction(
+      async (session) => {
+        const current = await Order.findById(
+          orderId,
+        ).session(session);
 
-      checkPayment(current, payment);
+        checkPayment(current, payment);
 
-      // Another confirmation may have succeeded meanwhile.
-      if (
-        current.metadata?.inventoryReserved ||
-        FULFILMENT.includes(current.status)
-      ) {
+        if (
+          current.metadata?.inventoryReserved ||
+          FULFILMENT.includes(current.status)
+        ) {
+          return current;
+        }
+
+        if (
+          current.status === "payment-pending"
+        ) {
+          recordPayment(current, payment);
+
+          current.status = "cancelled";
+          current.payment.amountDue = 0;
+          current.payment.balanceStatus =
+            "not-applicable";
+
+          current.cancellation.status =
+            "cancelled";
+
+          current.cancellation.reason =
+            "Product stock changed after online payment.";
+
+          current.cancellation.cancelledAt =
+            new Date();
+
+          await current.save({ session });
+        }
+
         return current;
-      }
-
-      if (current.status === "payment-pending") {
-        recordPayment(current, payment);
-
-        current.status = "cancelled";
-        current.payment.amountDue = 0;
-        current.payment.balanceStatus = "not-applicable";
-
-        current.cancellation.status = "cancelled";
-        current.cancellation.reason =
-          "Product stock changed after online payment.";
-        current.cancellation.cancelledAt = new Date();
-
-        await current.save({ session });
-      }
-
-      return current;
-    });
+      },
+    );
   }
 
   if (result.status === "cancelled") {
-    result = await refundCancelled(result, payment);
+    result = await refundCancelled(
+      result,
+      payment,
+    );
   }
 
   return result;
@@ -1058,10 +1275,25 @@ async function verifyRazorpayPayment(req, res) {
   try {
     const body = req.body || {};
 
-    const checkoutToken = text(body.checkoutToken, 200);
-    const orderId = text(body.razorpay_order_id, 200);
-    const paymentId = text(body.razorpay_payment_id, 200);
-    const signature = text(body.razorpay_signature, 500);
+    const checkoutToken = text(
+      body.checkoutToken,
+      200,
+    );
+
+    const orderId = text(
+      body.razorpay_order_id,
+      200,
+    );
+
+    const paymentId = text(
+      body.razorpay_payment_id,
+      200,
+    );
+
+    const signature = text(
+      body.razorpay_signature,
+      500,
+    );
 
     if (
       !checkoutToken ||
@@ -1071,7 +1303,7 @@ async function verifyRazorpayPayment(req, res) {
     ) {
       throw problem(
         400,
-        "Incomplete or invalid Razorpay payment details."
+        "Incomplete or invalid Razorpay payment details.",
       );
     }
 
@@ -1086,32 +1318,42 @@ async function verifyRazorpayPayment(req, res) {
     ) {
       throw problem(
         400,
-        "Razorpay order does not match this checkout."
+        "Razorpay order does not match this checkout.",
       );
     }
 
-    const secret = text(process.env.RAZORPAY_KEY_SECRET);
+    const secret = text(
+      process.env.RAZORPAY_KEY_SECRET,
+    );
 
     if (!secret) {
-      throw new Error("Payment configuration unavailable");
+      throw new Error(
+        "Payment configuration unavailable",
+      );
     }
 
     const expected = crypto
       .createHmac("sha256", secret)
-      .update(`${order.payment.razorpayOrderId}|${paymentId}`)
+      .update(
+        `${order.payment.razorpayOrderId}|${paymentId}`,
+      )
       .digest();
 
     if (
       !crypto.timingSafeEqual(
         expected,
-        Buffer.from(signature, "hex")
+        Buffer.from(signature, "hex"),
       )
     ) {
-      throw problem(400, "Payment verification failed.");
+      throw problem(
+        400,
+        "Payment verification failed.",
+      );
     }
 
     const client = getRazorpayClient();
-    let payment = await client.payments.fetch(paymentId);
+    let payment =
+      await client.payments.fetch(paymentId);
 
     checkPayment(order, payment);
 
@@ -1120,25 +1362,25 @@ async function verifyRazorpayPayment(req, res) {
         payment = await client.payments.capture(
           paymentId,
           paise(payable(order)),
-          "INR"
+          "INR",
         );
       } catch {
-        // Another confirmation may already have captured it.
-        payment = await client.payments.fetch(paymentId);
+        payment =
+          await client.payments.fetch(paymentId);
       }
     }
 
     if (payment.status === "refunded") {
       throw problem(
         409,
-        "This payment has already been refunded. Check My orders."
+        "This payment has already been refunded. Check My orders.",
       );
     }
 
     if (payment.status !== "captured") {
       throw problem(
         409,
-        "Payment is not captured yet. Check My orders before paying again."
+        "Payment is not captured yet. Check My orders before paying again.",
       );
     }
 
@@ -1146,7 +1388,7 @@ async function verifyRazorpayPayment(req, res) {
 
     const saved = await finalizeCapturedPayment(
       order._id,
-      payment
+      payment,
     );
 
     if (
@@ -1162,7 +1404,9 @@ async function verifyRazorpayPayment(req, res) {
           saved.refund.status === "refunded" ||
           (
             saved.refund.status === "pending" &&
-            saved.refund.reference.startsWith("rfnd_")
+            saved.refund.reference.startsWith(
+              "rfnd_",
+            )
           ),
 
         message:
@@ -1181,19 +1425,30 @@ async function verifyRazorpayPayment(req, res) {
         totalAmount: saved.payment.totalAmount,
         amountPaid: saved.payment.amountPaid,
         amountDue: saved.payment.amountDue,
-        advancePercentage: saved.payment.advancePercentage,
-        advanceAmount: saved.payment.advanceAmount,
-        balanceStatus: saved.payment.balanceStatus,
+        advancePercentage:
+          saved.payment.advancePercentage,
+        advanceAmount:
+          saved.payment.advanceAmount,
+        balanceStatus:
+          saved.payment.balanceStatus,
       },
 
       order: safeOrder(saved),
     });
   } catch (error) {
     if (captured && !error.status) {
+      const reference = logPaymentFailure(
+        error,
+        "captured-payment-confirmation",
+      );
+
+      res.set("Cache-Control", "no-store");
+
       return res.status(503).json({
         success: false,
         paymentReceived: true,
         retryVerification: true,
+        errorReference: reference,
 
         message:
           "Your payment was received, but confirmation was interrupted. Do not pay again. Please retry confirmation or check My orders.",
