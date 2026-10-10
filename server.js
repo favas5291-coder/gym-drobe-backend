@@ -25,7 +25,8 @@ const app = express();
 
 app.use(cors());
 
-// Keep raw webhook parsing before express.json().
+// Razorpay needs the exact raw request body.
+// Keep this route before express.json().
 app.use(
   "/api/payment-webhooks",
   express.raw({
@@ -92,6 +93,7 @@ async function startServer() {
   try {
     await connectDB();
 
+    // Prepare support-request retry protection.
     await SupportTicket.createIndexes();
 
     app.listen(PORT, () => {

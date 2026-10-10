@@ -1,14 +1,15 @@
 const express = require("express");
 
 const {
+  getDashboard,
+  getCustomers,
+  setCustomerStatus,
+} = require("../controllers/adminController");
+
+const {
   protect,
   adminOnly,
 } = require("../middleware/authMiddleware");
-
-const {
-  getDashboard,
-  getCustomers,
-} = require("../controllers/adminController");
 
 const router = express.Router();
 
@@ -21,5 +22,10 @@ router.use(protect, adminOnly);
 
 router.get("/dashboard", getDashboard);
 router.get("/customers", getCustomers);
+
+router.patch(
+  "/customers/:id/status",
+  setCustomerStatus,
+);
 
 module.exports = router;
