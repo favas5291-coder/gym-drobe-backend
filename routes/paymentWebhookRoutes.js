@@ -5,7 +5,7 @@ const {
   razorpayWebhook,
 } =
   require(
-    "../controllers/paymentWebhookController"
+    "../middleware/controllers/paymentWebhookController"
   );
 
 

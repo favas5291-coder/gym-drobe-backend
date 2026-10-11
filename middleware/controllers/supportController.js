@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
-const Ticket = require("../models/SupportTicket");
-const Order = require("../models/Order");
+const Ticket = require("../../models/SupportTicket");
+const Order = require("../../models/Order");
 
 const categories = [
   "General",

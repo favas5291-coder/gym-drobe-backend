@@ -1,12 +1,12 @@
 const mongoose = require("mongoose");
 
-const Product = require("../models/Product");
-const Order = require("../models/Order");
-const Review = require("../models/Review");
+const Product = require("../../models/Product");
+const Order = require("../../models/Order");
+const Review = require("../../models/Review");
 
 const {
   publicReview,
-} = require("../utils/productReviews");
+} = require("../../utils/productReviews");
 
 // ======================================================
 // FIND ACTIVE PRODUCT

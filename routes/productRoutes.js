@@ -11,13 +11,13 @@ const {
   updateProductInventory,
   deleteProduct,
   restoreProduct,
-} = require("../controllers/productController");
+} = require("../middleware/controllers/productController");
 
 const {
   getReviews,
   saveReview,
   deleteReview,
-} = require("../controllers/reviewController");
+} = require("../middleware/controllers/reviewController");
 
 const {
   protect,
@@ -26,6 +26,7 @@ const {
 
 const router = express.Router();
 
+// Public catalogue.
 router.get("/", getProducts);
 
 // Named admin routes must come before /admin/:id.
@@ -33,40 +34,79 @@ router.get(
   "/admin/options",
   protect,
   adminOnly,
-  getAdminProductOptions
+  getAdminProductOptions,
 );
 
-router.get("/admin", protect, adminOnly, getAdminProducts);
+router.get(
+  "/admin",
+  protect,
+  adminOnly,
+  getAdminProducts,
+);
 
 router.get(
   "/admin/:id",
   protect,
   adminOnly,
-  getAdminProductById
+  getAdminProductById,
 );
 
-router.post("/", protect, adminOnly, createProduct);
+// Create product.
+router.post(
+  "/",
+  protect,
+  adminOnly,
+  createProduct,
+);
 
+// Update inventory.
 router.put(
   "/:id/inventory",
   protect,
   adminOnly,
-  updateProductInventory
+  updateProductInventory,
 );
 
+// Restore archived product.
 router.put(
   "/:id/restore",
   protect,
   adminOnly,
-  restoreProduct
+  restoreProduct,
 );
 
+// Public review reading; authenticated review changes.
 router.get("/:id/reviews", getReviews);
-router.put("/:id/reviews", protect, saveReview);
-router.delete("/:id/reviews", protect, deleteReview);
 
+router.put(
+  "/:id/reviews",
+  protect,
+  saveReview,
+);
+
+router.delete(
+  "/:id/reviews",
+  protect,
+  deleteReview,
+);
+
+// Product details.
 router.get("/:id", getProductById);
-router.put("/:id", protect, adminOnly, updateProduct);
-router.delete("/:id", protect, adminOnly, deleteProduct);
+
+// Update product.
+router.put(
+  "/:id",
+  protect,
+  adminOnly,
+  updateProduct,
+);
+
+// Archive product.
+router.delete(
+  "/:id",
+  protect,
+  adminOnly,
+  deleteProduct,
+);
 
 module.exports = router;

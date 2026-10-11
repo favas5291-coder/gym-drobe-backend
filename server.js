@@ -13,13 +13,15 @@ const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 
 const paymentWebhookRoutes = require(
-  "./routes/paymentWebhookRoutes",
+  "./routes/paymentWebhookRoutes"
 );
 
 const supportRoutes = require("./routes/supportRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const supplierRoutes = require("./routes/supplierRoutes");
 
 const SupportTicket = require("./models/SupportTicket");
+const Supplier = require("./models/Supplier");
 
 const app = express();
 
@@ -33,13 +35,13 @@ app.use(
     type: "application/json",
     limit: "1mb",
   }),
-  paymentWebhookRoutes,
+  paymentWebhookRoutes
 );
 
 app.use(
   express.json({
     limit: "1mb",
-  }),
+  })
 );
 
 app.get("/api/health", (req, res) => {
@@ -56,6 +58,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/suppliers", supplierRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
@@ -93,18 +96,18 @@ async function startServer() {
   try {
     await connectDB();
 
-    // Prepare support-request retry protection.
     await SupportTicket.createIndexes();
+    await Supplier.createIndexes();
 
     app.listen(PORT, () => {
       console.log(
-        `GymDrobe server running on http://localhost:${PORT}`,
+        `GymDrobe server running on http://localhost:${PORT}`
       );
     });
   } catch (error) {
     console.error(
       "Server startup failed:",
-      error.message,
+      error.message
     );
 
     console.error(error);

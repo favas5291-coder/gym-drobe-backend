@@ -1,35 +1,112 @@
 const mongoose = require("mongoose");
-const User = require("../models/User");
-const Product = require("../models/Product");
-const Order = require("../models/Order");
-const SupportTicket = require("../models/SupportTicket");
+
+const User = require("../../models/User");
+const Product = require("../../models/Product");
+const Order = require("../../models/Order");
+const SupportTicket = require("../../models/SupportTicket");
+
+// ======================================================
+// SETTINGS
+// ======================================================
 
 const TIMEOUT = 10000;
 const DAY = 86400000;
 const IST = 330 * 60000;
 
 const CUSTOMER_FIELDS =
-  "_id name email phone isActive createdAt";
+  "_id name email phone role isActive createdAt";
+
+const CONFIRMED_STATUSES = [
+  "confirmed",
+  "processing",
+  "shipped",
+  "out-for-delivery",
+  "delivered",
+];
+
+// ======================================================
+// ERRORS AND ADMIN ACCESS
+// ======================================================
 
 function problem(status, message) {
-  return Object.assign(new Error(message), { status });
+  return Object.assign(
+    new Error(message),
+    { status },
+  );
 }
 
+function requireAdmin(req, res) {
+  res.set("Cache-Control", "no-store");
+
+  if (!req.user) {
+    throw problem(
+      401,
+      "Please sign in to your admin account.",
+    );
+  }
+
+  if (req.user.role !== "admin") {
+    throw problem(
+      403,
+      "Admin access required.",
+    );
+  }
+}
+
+function failure(res, error) {
+  const status = [
+    400,
+    401,
+    403,
+    404,
+    409,
+  ].includes(error?.status)
+    ? error.status
+    : 503;
+
+  if (status === 503) {
+    console.error(
+      "Admin request failed:",
+      error?.name || "Error",
+    );
+  }
+
+  return res.status(status).json({
+    success: false,
+
+    message:
+      status === 503
+        ? "Admin information is temporarily unavailable. Please retry."
+        : error.message,
+  });
+}
+
+// ======================================================
+// QUERY VALIDATION
+// ======================================================
+
 function text(value, label, maximum) {
-  if (value === undefined) return "";
+  if (value === undefined) {
+    return "";
+  }
 
   if (
     typeof value !== "string" ||
     value.trim().length > maximum
   ) {
-    throw problem(400, "Check " + label + ".");
+    throw problem(
+      400,
+      "Check " + label + ".",
+    );
   }
 
   return value.trim();
 }
 
 function integer(value, fallback, maximum) {
-  if (value === undefined) return fallback;
+  if (value === undefined) {
+    return fallback;
+  }
 
   if (
     typeof value !== "string" ||
@@ -56,46 +133,48 @@ function integer(value, fallback, maximum) {
   return number;
 }
 
-function failure(res, error) {
-  const status = [400, 403, 404, 409].includes(error.status)
-    ? error.status
-    : 503;
+// ======================================================
+// CUSTOMER INFORMATION
+// ======================================================
 
-  if (status === 503) {
-    console.error(
-      "Admin request failed:",
-      error.name || "Error",
-    );
-  }
-
-  return res.status(status).json({
-    success: false,
-    message:
-      status === 503
-        ? "Admin information is temporarily unavailable. Please retry."
-        : error.message,
-  });
+function phone(value) {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
 }
 
 function customer(user, summary = {}) {
-  const profilePhone = user.phone || "";
-  const orderPhone = summary.orderPhone || "";
+  const profilePhone = phone(user.phone);
+  const orderPhone = phone(summary.orderPhone);
 
   return {
     id: String(user._id),
+
     name: user.name,
+
     email: user.email,
+
+    role: user.role,
+
     phone: profilePhone || orderPhone,
+
     phoneSource: profilePhone
       ? "profile"
       : orderPhone
         ? "order"
         : "",
+
     isActive: user.isActive !== false,
+
     createdAt: user.createdAt,
+
     orderCount: summary.orderCount || 0,
   };
 }
+
+// ======================================================
+// DATE AND MONEY HELPERS
+// ======================================================
 
 function dayKey(date) {
   return new Date(date.getTime() + IST)
@@ -103,12 +182,27 @@ function dayKey(date) {
     .slice(0, 10);
 }
 
+// Database money values are stored in rupees.
+// Aggregate in paise to avoid floating-point addition errors.
+
 function paise(field) {
   return {
     $round: [
       {
         $multiply: [
-          { $ifNull: [field, 0] },
+          {
+            $max: [
+              0,
+              {
+                $convert: {
+                  input: field,
+                  to: "double",
+                  onError: 0,
+                  onNull: 0,
+                },
+              },
+            ],
+          },
           100,
         ],
       },
@@ -117,13 +211,78 @@ function paise(field) {
   };
 }
 
+// ======================================================
+// ORDER PHONE FALLBACK
+// ======================================================
+
+// $ifNull alone does not handle an empty customer phone.
+// Use the shipping number when the customer number is blank.
+
+function orderPhoneExpression() {
+  return {
+    $let: {
+      vars: {
+        contact: {
+          $trim: {
+            input: {
+              $convert: {
+                input: "$customer.phone",
+                to: "string",
+                onError: "",
+                onNull: "",
+              },
+            },
+          },
+        },
+
+        shipping: {
+          $trim: {
+            input: {
+              $convert: {
+                input: "$shippingAddress.phone",
+                to: "string",
+                onError: "",
+                onNull: "",
+              },
+            },
+          },
+        },
+      },
+
+      in: {
+        $cond: [
+          {
+            $ne: ["$$contact", ""],
+          },
+          "$$contact",
+          "$$shipping",
+        ],
+      },
+    },
+  };
+}
+
+// ======================================================
+// ADMIN DASHBOARD
+// ======================================================
+
 async function getDashboard(req, res) {
   try {
+    requireAdmin(req, res);
+
     const days =
-      text(req.query?.days, "the date range", 2) || "7";
+      text(
+        req.query?.days,
+        "the date range",
+        2,
+      ) || "7";
 
     const source =
-      text(req.query?.source, "the order type", 4) || "real";
+      text(
+        req.query?.source,
+        "the order type",
+        4,
+      ) || "real";
 
     if (
       !["7", "30"].includes(days) ||
@@ -142,12 +301,16 @@ async function getDashboard(req, res) {
     );
 
     const start = new Date(
-      today.getTime() - (Number(days) - 1) * DAY,
+      today.getTime() -
+        (Number(days) - 1) * DAY,
     );
 
     const orderType = {
       "metadata.demo": source === "test",
     };
+
+    // This report groups orders by creation date.
+    // Cancelled orders do not contribute to confirmed sales.
 
     const salesPipeline = [
       {
@@ -160,29 +323,42 @@ async function getDashboard(req, res) {
           },
 
           status: {
-            $in: [
-              "confirmed",
-              "processing",
-              "shipped",
-              "out-for-delivery",
-              "delivered",
-            ],
+            $in: CONFIRMED_STATUSES,
           },
 
-          "payment.status": {
-            $in: [
-              "paid",
-              "partially-paid",
-              "refunded",
-            ],
-          },
-
-          $or: [
-            { "pricing.currency": "INR" },
+          $and: [
             {
-              "pricing.currency": {
-                $exists: false,
-              },
+              $or: [
+                {
+                  "pricing.currency": "INR",
+                },
+                {
+                  "pricing.currency": {
+                    $exists: false,
+                  },
+                },
+              ],
+            },
+
+            {
+              $or: [
+                {
+                  "payment.status": {
+                    $in: [
+                      "paid",
+                      "partially-paid",
+                      "refunded",
+                      "partially-refunded",
+                    ],
+                  },
+                },
+
+                // Preserve confirmed legacy COD orders.
+                {
+                  "payment.method": "cod",
+                  "payment.status": "pending",
+                },
+              ],
             },
           ],
         },
@@ -199,8 +375,38 @@ async function getDashboard(req, res) {
           },
 
           total: paise("$pricing.finalTotal"),
-          paid: paise("$payment.amountPaid"),
-          due: paise("$payment.amountDue"),
+
+          // Read amountPaid directly.
+          // Do not subtract a refund again from a field
+          // that the payment controller may already have reduced.
+
+          paid: {
+            $cond: [
+              {
+                $eq: [
+                  "$payment.status",
+                  "refunded",
+                ],
+              },
+              0,
+              paise("$payment.amountPaid"),
+            ],
+          },
+
+          due: {
+            $cond: [
+              {
+                $eq: [
+                  "$payment.status",
+                  "refunded",
+                ],
+              },
+              0,
+              paise("$payment.amountDue"),
+            ],
+          },
+
+          // Only completed refunds reduce recorded sales.
 
           refunded: {
             $cond: [
@@ -236,23 +442,11 @@ async function getDashboard(req, res) {
           },
 
           received: {
-            $sum: {
-              $max: [
-                0,
-                {
-                  $subtract: [
-                    "$paid",
-                    "$refunded",
-                  ],
-                },
-              ],
-            },
+            $sum: "$paid",
           },
 
           due: {
-            $sum: {
-              $max: [0, "$due"],
-            },
+            $sum: "$due",
           },
 
           orders: {
@@ -291,21 +485,35 @@ async function getDashboard(req, res) {
       }).maxTimeMS(TIMEOUT),
 
       Product.countDocuments({
-        isActive: { $ne: false },
+        isActive: {
+          $ne: false,
+        },
       }).maxTimeMS(TIMEOUT),
 
       Product.countDocuments({
-        isActive: { $ne: false },
-        stock: { $gt: 0, $lte: 10 },
+        isActive: {
+          $ne: false,
+        },
+
+        stock: {
+          $gt: 0,
+          $lte: 10,
+        },
       }).maxTimeMS(TIMEOUT),
 
       Product.countDocuments({
-        isActive: { $ne: false },
-        stock: { $lte: 0 },
+        isActive: {
+          $ne: false,
+        },
+
+        stock: {
+          $lte: 0,
+        },
       }).maxTimeMS(TIMEOUT),
 
       Order.countDocuments({
         ...orderType,
+
         status: {
           $in: [
             "confirmed",
@@ -323,14 +531,21 @@ async function getDashboard(req, res) {
 
       Order.countDocuments({
         ...orderType,
+
         "returnRequest.status": {
-          $in: ["requested", "approved"],
+          $in: [
+            "requested",
+            "approved",
+          ],
         },
       }).maxTimeMS(TIMEOUT),
 
       SupportTicket.countDocuments({
         status: {
-          $in: ["open", "waiting"],
+          $in: [
+            "open",
+            "waiting",
+          ],
         },
       }).maxTimeMS(TIMEOUT),
 
@@ -340,66 +555,84 @@ async function getDashboard(req, res) {
 
       Order.find(orderType)
         .select(
-          "orderNumber customer.name customer.phone shippingAddress.phone status payment.status pricing.finalTotal createdAt",
+          "orderNumber customer.name customer.phone shippingAddress.fullName shippingAddress.name shippingAddress.phone status payment.status pricing.finalTotal createdAt",
         )
-        .sort({ createdAt: -1, _id: -1 })
+        .sort({
+          createdAt: -1,
+          _id: -1,
+        })
         .limit(5)
         .lean()
         .maxTimeMS(TIMEOUT),
     ]);
 
     const byDay = new Map(
-      daily.map((row) => [row._id, row]),
+      daily.map((row) => [
+        row._id,
+        row,
+      ]),
     );
 
+    const summaryPaise = {
+      sales: 0,
+      received: 0,
+      due: 0,
+      orders: 0,
+    };
+
     const points = Array.from(
-      { length: Number(days) },
+      {
+        length: Number(days),
+      },
+
       (_, index) => {
         const date = dayKey(
-          new Date(start.getTime() + index * DAY),
+          new Date(
+            start.getTime() + index * DAY,
+          ),
         );
 
         const row = byDay.get(date) || {};
 
+        for (const key of [
+          "sales",
+          "received",
+          "due",
+          "orders",
+        ]) {
+          summaryPaise[key] += Number(
+            row[key] || 0,
+          );
+        }
+
         return {
           date,
-          sales: Number(row.sales || 0) / 100,
-          received: Number(row.received || 0) / 100,
-          due: Number(row.due || 0) / 100,
-          orders: Number(row.orders || 0),
+
+          sales:
+            Number(row.sales || 0) / 100,
+
+          received:
+            Number(row.received || 0) / 100,
+
+          due:
+            Number(row.due || 0) / 100,
+
+          orders:
+            Number(row.orders || 0),
         };
       },
     );
 
-    const summary = points.reduce(
-      (sum, point) => ({
-        sales:
-          sum.sales + Math.round(point.sales * 100),
-
-        received:
-          sum.received +
-          Math.round(point.received * 100),
-
-        due:
-          sum.due + Math.round(point.due * 100),
-
-        orders:
-          sum.orders + point.orders,
-      }),
-      {
-        sales: 0,
-        received: 0,
-        due: 0,
-        orders: 0,
-      },
-    );
-
-    for (const key of ["sales", "received", "due"]) {
-      summary[key] /= 100;
-    }
+    const summary = {
+      sales: summaryPaise.sales / 100,
+      received: summaryPaise.received / 100,
+      due: summaryPaise.due / 100,
+      orders: summaryPaise.orders,
+    };
 
     return res.json({
       success: true,
+
       generatedAt: now.toISOString(),
 
       stats: {
@@ -419,23 +652,30 @@ async function getDashboard(req, res) {
         source,
         points,
         summary,
+
+        basis:
+          "Current figures for confirmed orders created during this period; cancelled orders excluded.",
       },
 
       recentOrders: recent.map((order) => ({
+        id: String(order._id),
+
         orderNumber: order.orderNumber,
 
         customerName:
-          order.customer?.name || "Customer",
+          order.customer?.name ||
+          order.shippingAddress?.fullName ||
+          order.shippingAddress?.name ||
+          "Customer",
 
         customerPhone:
-          order.customer?.phone ||
-          order.shippingAddress?.phone ||
-          "",
+          phone(order.customer?.phone) ||
+          phone(order.shippingAddress?.phone),
 
         status: order.status,
 
         paymentStatus:
-          order.payment?.status || "pending",
+          order.payment?.status || null,
 
         total:
           order.pricing?.finalTotal ?? null,
@@ -448,8 +688,14 @@ async function getDashboard(req, res) {
   }
 }
 
+// ======================================================
+// CUSTOMER LIST
+// ======================================================
+
 async function getCustomers(req, res) {
   try {
+    requireAdmin(req, res);
+
     const query = req.query || {};
 
     const search = text(
@@ -477,7 +723,12 @@ async function getCustomers(req, res) {
     );
 
     if (
-      !["", "all", "active", "disabled"].includes(status)
+      ![
+        "",
+        "all",
+        "active",
+        "disabled",
+      ].includes(status)
     ) {
       throw problem(
         400,
@@ -490,7 +741,9 @@ async function getCustomers(req, res) {
     };
 
     if (status === "active") {
-      filter.isActive = { $ne: false };
+      filter.isActive = {
+        $ne: false,
+      };
     }
 
     if (status === "disabled") {
@@ -498,11 +751,15 @@ async function getCustomers(req, res) {
     }
 
     if (search) {
+      // Treat search text literally, including regex symbols.
+
+      const escaped = search.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+
       const pattern = new RegExp(
-        search.replace(
-          /[|\\{}()[\]^$+*?.]/g,
-          "\\$&",
-        ),
+        escaped,
         "i",
       );
 
@@ -529,7 +786,10 @@ async function getCustomers(req, res) {
 
     const users = await User.find(filter)
       .select(CUSTOMER_FIELDS)
-      .sort({ createdAt: -1, _id: -1 })
+      .sort({
+        createdAt: -1,
+        _id: -1,
+      })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean()
@@ -540,7 +800,9 @@ async function getCustomers(req, res) {
           {
             $match: {
               user: {
-                $in: users.map((user) => user._id),
+                $in: users.map(
+                  (user) => user._id,
+                ),
               },
             },
           },
@@ -561,12 +823,7 @@ async function getCustomers(req, res) {
               },
 
               orderPhone: {
-                $first: {
-                  $ifNull: [
-                    "$customer.phone",
-                    "$shippingAddress.phone",
-                  ],
-                },
+                $first: orderPhoneExpression(),
               },
             },
           },
@@ -584,6 +841,7 @@ async function getCustomers(req, res) {
 
     return res.json({
       success: true,
+
       page,
       limit,
       total,
@@ -601,9 +859,15 @@ async function getCustomers(req, res) {
   }
 }
 
+// ======================================================
+// BLOCK OR UNBLOCK CUSTOMER
+// ======================================================
+
 async function setCustomerStatus(req, res) {
   try {
-    const id = req.params.id;
+    requireAdmin(req, res);
+
+    const id = req.params?.id;
 
     const {
       isActive,
@@ -628,16 +892,26 @@ async function setCustomerStatus(req, res) {
       );
     }
 
-    if (String(req.user._id) === id) {
+    const currentAdminId = String(
+      req.user._id || req.user.id,
+    ).toLowerCase();
+
+    if (
+      currentAdminId === String(id).toLowerCase()
+    ) {
       throw problem(
         403,
         "You cannot block your own admin account.",
       );
     }
 
+    // Compare the previous status before updating.
+    // This prevents an old screen from overwriting a newer change.
+
     const updated = await User.findOneAndUpdate(
       {
         _id: id,
+
         role: "customer",
 
         isActive: expectedIsActive
@@ -650,7 +924,9 @@ async function setCustomerStatus(req, res) {
           isActive,
         },
 
-        // Old sessions remain invalid after unblocking.
+        // Authentication middleware must compare this version
+        // with the version contained in each login token.
+
         $inc: {
           authVersion: 1,
         },
@@ -673,6 +949,7 @@ async function setCustomerStatus(req, res) {
 
       throw problem(
         exists ? 409 : 404,
+
         exists
           ? "This customer's status changed. Refresh the list and try again."
           : "Customer not found. Admin accounts cannot be changed here.",
@@ -683,7 +960,7 @@ async function setCustomerStatus(req, res) {
       success: true,
 
       message: isActive
-        ? "Customer unblocked."
+        ? "Customer unblocked. Sign in again to use the account."
         : "Customer blocked.",
 
       customer: customer(updated),
@@ -692,6 +969,10 @@ async function setCustomerStatus(req, res) {
     return failure(res, error);
   }
 }
+
+// ======================================================
+// EXPORTS
+// ======================================================
 
 module.exports = {
   getDashboard,

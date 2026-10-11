@@ -6,7 +6,7 @@ const {
   verifyRazorpayPayment,
 } =
   require(
-    "../controllers/paymentController"
+    "../middleware/controllers/paymentController"
   );
 
 const {

@@ -9,7 +9,7 @@ const {
 );
 
 const controller = require(
-  "../controllers/supportController",
+  "../middleware/controllers/supportController",
 );
 
 router.use(protect);

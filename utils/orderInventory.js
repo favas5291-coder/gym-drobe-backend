@@ -1,125 +1,393 @@
-function number(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+"use strict";
 
-function count(value) {
-  return Math.max(0, Math.floor(number(value)));
-}
+// Keep this limit aligned with models/Product.js.
+const MAX_STOCK = 1000000;
+
+const FORBIDDEN_KEYS = new Set([
+  "__proto__",
+  "prototype",
+  "constructor",
+]);
 
 function own(object, key) {
   return Object.prototype.hasOwnProperty.call(
     object || {},
-    key
+    key,
   );
 }
 
-function calculateVariantTotal(value) {
-  if (value && typeof value === "object") {
-    return Object.values(value).reduce(
-      (total, child) => total + calculateVariantTotal(child),
-      0
+function record(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.prototype.toString.call(value) ===
+      "[object Object]"
+  );
+}
+
+function quantity(value, message) {
+  if (
+    !["number", "string"].includes(typeof value) ||
+    (typeof value === "string" && !value.trim())
+  ) {
+    throw new Error(message);
+  }
+
+  const parsed = Number(value);
+
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_STOCK
+  ) {
+    throw new Error(message);
+  }
+
+  return parsed;
+}
+
+function optionList(value, label, maximumLength) {
+  if (value == null) {
+    return [];
+  }
+
+  if (!Array.isArray(value) || value.length > 50) {
+    throw new Error(
+      `Product ${label} options need an admin correction.`,
     );
   }
 
-  return count(value);
+  const seen = new Set();
+
+  return value.map((option) => {
+    if (
+      !["string", "number"].includes(typeof option) ||
+      (
+        typeof option === "number" &&
+        !Number.isFinite(option)
+      )
+    ) {
+      throw new Error(
+        `Product ${label} options need an admin correction.`,
+      );
+    }
+
+    const name = String(option);
+    const key = name.toLowerCase();
+
+    if (
+      !name ||
+      name.trim() !== name ||
+      name.length > maximumLength ||
+      name === "default" ||
+      FORBIDDEN_KEYS.has(name) ||
+      name.startsWith("$") ||
+      name.includes(".") ||
+      /[\u0000-\u001f\u007f]/.test(name) ||
+      seen.has(key)
+    ) {
+      throw new Error(
+        `Product ${label} options need an admin correction.`,
+      );
+    }
+
+    seen.add(key);
+    return name;
+  });
 }
 
-function getTotalStock(product) {
-  if (!product) return 0;
+function options(product) {
+  if (
+    !product ||
+    typeof product !== "object" ||
+    Array.isArray(product)
+  ) {
+    throw new Error("Product is unavailable.");
+  }
 
-  return product.variants
-    ? calculateVariantTotal(product.variants)
-    : count(product.stock);
+  return {
+    sizes: optionList(product.sizes, "size", 50),
+    colors: optionList(product.colors, "colour", 80),
+  };
+}
+
+function selected(value, label) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  if (
+    !["string", "number"].includes(typeof value) ||
+    (
+      typeof value === "number" &&
+      !Number.isFinite(value)
+    )
+  ) {
+    throw new Error(`Invalid product ${label}.`);
+  }
+
+  return String(value);
 }
 
 function validateVariant(
   product,
-  selectedSize = null,
-  selectedColor = null
+  selectedSize,
+  selectedColor,
 ) {
-  if (!product) {
-    throw new Error("Product is unavailable.");
+  const { sizes, colors } = options(product);
+
+  const size = selected(selectedSize, "size");
+  const color = selected(selectedColor, "colour");
+
+  if (
+    sizes.length
+      ? !size || !sizes.includes(size)
+      : size !== null
+  ) {
+    throw new Error(
+      "The selected product size is unavailable or no longer exists.",
+    );
   }
 
-  const sizes = (product.sizes || []).map(String);
-  const colors = (product.colors || []).map(String);
-
-  const size = sizes.length
-    ? selectedSize == null
-      ? null
-      : String(selectedSize)
-    : null;
-
-  const color = colors.length
-    ? selectedColor == null
-      ? null
-      : String(selectedColor)
-    : null;
-
-  if (sizes.length && (!size || !sizes.includes(size))) {
-    throw new Error("Invalid product size.");
+  if (
+    colors.length
+      ? !color || !colors.includes(color)
+      : color !== null
+  ) {
+    throw new Error(
+      "The selected product colour is unavailable or no longer exists.",
+    );
   }
 
-  if (colors.length && (!color || !colors.includes(color))) {
-    throw new Error("Invalid product colour.");
+  return {
+    sizes,
+    colors,
+    size,
+    color,
+  };
+}
+
+function listedKeys(value, allowed) {
+  const names = new Set(allowed);
+
+  if (
+    !record(value) ||
+    Object.keys(value).some(
+      (key) => !names.has(key),
+    )
+  ) {
+    throw new Error(
+      "Variant stock contains an invalid or unlisted size or colour.",
+    );
+  }
+}
+
+// Read and change the same stock entries for every supported shape.
+function inventory(
+  product,
+  declared = options(product),
+) {
+  const { sizes, colors } = declared;
+  const variants = product.variants;
+
+  const slots = [];
+  let total = 0;
+
+  function add(
+    target,
+    key,
+    mixed,
+    size = null,
+    color = null,
+    fallback = false,
+  ) {
+    const available = quantity(
+      fallback
+        ? target[key] ?? 0
+        : target[key],
+
+      "Stock must be a whole number from 0 to 1,000,000. Ask an admin to correct it.",
+    );
+
+    total += available;
+
+    if (
+      !Number.isSafeInteger(total) ||
+      total > MAX_STOCK
+    ) {
+      throw new Error(
+        "Combined product stock cannot exceed 1,000,000.",
+      );
+    }
+
+    slots.push({
+      target,
+      key,
+      mixed,
+      size,
+      color,
+      available,
+    });
   }
 
-  return { sizes, colors, size, color };
+  if (!sizes.length && !colors.length) {
+    if (
+      variants != null &&
+      (
+        !record(variants) ||
+        Object.keys(variants).length
+      )
+    ) {
+      throw new Error(
+        "Product options and variant stock do not match. Ask an admin to correct them.",
+      );
+    }
+
+    // Ordinary products can have Mongoose's default empty variants object.
+    add(
+      product,
+      "stock",
+      false,
+      null,
+      null,
+      true,
+    );
+
+    return { slots, total };
+  }
+
+  if (
+    !record(variants) ||
+    !Object.keys(variants).length
+  ) {
+    throw new Error(
+      "Stock for the listed sizes or colours has not been configured.",
+    );
+  }
+
+  listedKeys(
+    variants,
+    colors.length ? colors : sizes,
+  );
+
+  if (colors.length) {
+    for (const color of colors) {
+      if (!own(variants, color)) {
+        continue;
+      }
+
+      const group = variants[color];
+
+      if (sizes.length) {
+        listedKeys(group, sizes);
+
+        for (const size of sizes) {
+          if (own(group, size)) {
+            add(
+              group,
+              size,
+              true,
+              size,
+              color,
+            );
+          }
+        }
+      } else if (record(group)) {
+        listedKeys(group, ["default"]);
+
+        if (own(group, "default")) {
+          add(
+            group,
+            "default",
+            true,
+            null,
+            color,
+          );
+        }
+      } else {
+        // Legacy colour-only shape:
+        // { Black: 5, Blue: 0 }
+        add(
+          variants,
+          color,
+          true,
+          null,
+          color,
+        );
+      }
+    }
+  } else {
+    for (const size of sizes) {
+      if (own(variants, size)) {
+        add(
+          variants,
+          size,
+          true,
+          size,
+          null,
+        );
+      }
+    }
+  }
+
+  return { slots, total };
+}
+
+function stockSlot(state, selection) {
+  const slot = state.slots.find(
+    (row) =>
+      row.size === selection.size &&
+      row.color === selection.color,
+  );
+
+  if (!slot) {
+    throw new Error(
+      "The original product stock variant no longer exists. Ask an admin to review the order.",
+    );
+  }
+
+  return slot;
+}
+
+function getTotalStock(product) {
+  try {
+    return inventory(product).total;
+  } catch {
+    return 0;
+  }
 }
 
 function getVariantStock(
   product,
   selectedSize = null,
-  selectedColor = null
+  selectedColor = null,
 ) {
-  if (!product) return 0;
-
-  let selection;
-
   try {
-    selection = validateVariant(
+    const selection = validateVariant(
       product,
       selectedSize,
-      selectedColor
+      selectedColor,
     );
+
+    return stockSlot(
+      inventory(product, selection),
+      selection,
+    ).available;
   } catch {
     return 0;
   }
-
-  if (!product.variants) {
-    return count(product.stock);
-  }
-
-  const { sizes, colors, size, color } = selection;
-  let group = product.variants;
-
-  if (colors.length) {
-    if (!own(group, color)) return 0;
-    group = group[color];
-  }
-
-  if (sizes.length) {
-    if (!own(group, size)) return 0;
-    return count(group[size]);
-  }
-
-  return group && typeof group === "object"
-    ? count(group.default)
-    : count(group);
 }
 
-// Return the SKU belonging to the selected size and colour.
-// Older products without variant SKUs retain their parent SKU.
+// Older products without a matching variant SKU keep their parent SKU.
 function getVariantSku(
   product,
   selectedSize = null,
-  selectedColor = null
+  selectedColor = null,
 ) {
   const { size, color } = validateVariant(
     product,
     selectedSize,
-    selectedColor
+    selectedColor,
   );
 
   const normalize = (value) =>
@@ -131,25 +399,27 @@ function getVariantSku(
 
   const variant = rows.find(
     (row) =>
+      row &&
+      typeof row === "object" &&
       normalize(row.size) === normalize(size) &&
-      normalize(row.color) === normalize(color)
+      normalize(row.color) === normalize(color),
   );
 
   if (
-    variant &&
-    typeof variant.sku === "string" &&
+    typeof variant?.sku === "string" &&
     variant.sku.trim()
   ) {
     return variant.sku.trim();
   }
 
-  return String(product.sku || "").trim();
+  return typeof product.sku === "string"
+    ? product.sku.trim()
+    : "";
 }
 
-function updateStockStatus(product) {
-  const total = getTotalStock(product);
-
+function applyStockStatus(product, total) {
   product.stock = total;
+
   product.stockStatus =
     total <= 0
       ? "out-of-stock"
@@ -160,82 +430,69 @@ function updateStockStatus(product) {
   return product;
 }
 
-function stockSlot(product, selection) {
-  const { sizes, colors, size, color } = selection;
-
-  if (!product.variants) {
-    return { target: product, key: "stock", mixed: false };
-  }
-
-  let target = product.variants;
-
-  if (colors.length) {
-    if (!own(target, color)) {
-      throw new Error(
-        "The original product colour variant no longer exists."
-      );
-    }
-
-    target = target[color];
-  }
-
-  const key = sizes.length ? size : "default";
-
-  if (
-    !target ||
-    typeof target !== "object" ||
-    !own(target, key)
-  ) {
-    throw new Error(
-      "The original product stock variant no longer exists."
-    );
-  }
-
-  return { target, key, mixed: true };
+function updateStockStatus(product) {
+  return applyStockStatus(
+    product,
+    inventory(product).total,
+  );
 }
 
 function changeStock(
   product,
-  quantity,
+  value,
   selectedSize,
   selectedColor,
-  restoring
+  restoring,
 ) {
-  const qty = Number(quantity);
+  const message = restoring
+    ? "Invalid inventory restore quantity."
+    : "Invalid order quantity.";
 
-  if (!Number.isSafeInteger(qty) || qty < 1) {
-    throw new Error(
-      restoring
-        ? "Invalid inventory restore quantity."
-        : "Invalid order quantity."
-    );
+  const qty = quantity(value, message);
+
+  if (qty < 1) {
+    throw new Error(message);
   }
 
   const selection = validateVariant(
     product,
     selectedSize,
-    selectedColor
+    selectedColor,
   );
 
-  const slot = stockSlot(product, selection);
-  const available = count(slot.target[slot.key]);
+  const state = inventory(product, selection);
+  const slot = stockSlot(state, selection);
 
-  if (!restoring && available < qty) {
+  if (!restoring && slot.available < qty) {
     throw new Error(
-      available > 0
-        ? `Only ${available} available for this selection.`
-        : "This product selection is out of stock."
+      slot.available > 0
+        ? `Only ${slot.available} available for this selection.`
+        : "This product selection is out of stock.",
     );
   }
 
   const next = restoring
-    ? available + qty
-    : available - qty;
+    ? slot.available + qty
+    : slot.available - qty;
 
-  if (!Number.isSafeInteger(next)) {
-    throw new Error("Inventory quantity exceeds the supported limit.");
+  const nextTotal = restoring
+    ? state.total + qty
+    : state.total - qty;
+
+  if (
+    !Number.isSafeInteger(next) ||
+    next < 0 ||
+    next > MAX_STOCK ||
+    !Number.isSafeInteger(nextTotal) ||
+    nextTotal < 0 ||
+    nextTotal > MAX_STOCK
+  ) {
+    throw new Error(
+      "Inventory quantity exceeds the supported limit of 1,000,000.",
+    );
   }
 
+  // Complete validation before changing any quantities.
   slot.target[slot.key] = next;
 
   if (
@@ -245,21 +502,24 @@ function changeStock(
     product.markModified("variants");
   }
 
-  return updateStockStatus(product);
+  return applyStockStatus(product, nextTotal);
 }
 
+// These functions change the document in memory.
+// Controllers save it inside their order/payment transaction and
+// guard against repeated reservation or restoration.
 function reserveVariantStock(
   product,
   quantity,
   selectedSize = null,
-  selectedColor = null
+  selectedColor = null,
 ) {
   return changeStock(
     product,
     quantity,
     selectedSize,
     selectedColor,
-    false
+    false,
   );
 }
 
@@ -267,14 +527,14 @@ function restoreVariantStock(
   product,
   quantity,
   selectedSize = null,
-  selectedColor = null
+  selectedColor = null,
 ) {
   return changeStock(
     product,
     quantity,
     selectedSize,
     selectedColor,
-    true
+    true,
   );
 }
 

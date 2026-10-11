@@ -5,7 +5,7 @@ const {
   googleLogin,
   getMe,
   updateProfile,
-} = require("../controllers/authController");
+} = require("../middleware/controllers/authController");
 
 const { protect } = require("../middleware/authMiddleware");
 

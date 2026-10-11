@@ -8,7 +8,7 @@ const {
   deleteAddress,
 } =
   require(
-    "../controllers/addressController"
+    "../middleware/controllers/addressController"
   );
 
 const {

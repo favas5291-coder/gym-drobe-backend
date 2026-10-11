@@ -5,18 +5,17 @@ const {
   getOrders,
   getOrderById,
   cancelOrder,
+  requestReturn,
+
   getAdminOrders,
   getAdminOrderById,
   updateAdminOrderStatus,
-} = require("../controllers/orderController");
 
-const {
-  requestReturn,
   getAdminReturnRequests,
   reviewReturnRequest,
   completeReturnRequest,
   recordReturnRefund,
-} = require("./returnController");
+} = require("../middleware/controllers/orderController");
 
 const {
   protect,
@@ -25,7 +24,11 @@ const {
 
 const router = express.Router();
 
-// All order routes require authentication.
+router.use((req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
 router.use(protect);
 
 // Customer orders.
@@ -34,66 +37,56 @@ router
   .get(getOrders)
   .post(createOrder);
 
-// Admin order routes.
+// Admin order management.
 router.get(
   "/admin/orders",
   adminOnly,
-  getAdminOrders
+  getAdminOrders,
 );
 
 router.put(
   "/admin/orders/:id/status",
   adminOnly,
-  updateAdminOrderStatus
+  updateAdminOrderStatus,
 );
 
 router.get(
   "/admin/orders/:id",
   adminOnly,
-  getAdminOrderById
+  getAdminOrderById,
 );
 
-// Admin return and exchange routes.
+// Return and exchange handlers come from orderController.
 router.get(
   "/admin/returns",
   adminOnly,
-  getAdminReturnRequests
+  getAdminReturnRequests,
 );
 
 router.put(
   "/admin/returns/:id/review",
   adminOnly,
-  reviewReturnRequest
+  reviewReturnRequest,
 );
 
 router.put(
   "/admin/returns/:id/complete",
   adminOnly,
-  completeReturnRequest
+  completeReturnRequest,
 );
 
 router.put(
   "/admin/returns/:id/refund",
   adminOnly,
-  recordReturnRefund
+  recordReturnRefund,
 );
 
-// Customer cancellation.
-router.put(
-  "/:id/cancel",
-  cancelOrder
-);
+// Customer cancellation and returns.
+router.put("/:id/cancel", cancelOrder);
 
-// Customer return or exchange request.
-router.post(
-  "/:id/return",
-  requestReturn
-);
+router.post("/:id/return", requestReturn);
 
-// Keep this route after the admin routes.
-router.get(
-  "/:id",
-  getOrderById
-);
+// Keep the generic lookup last.
+router.get("/:id", getOrderById);
 
 module.exports = router;

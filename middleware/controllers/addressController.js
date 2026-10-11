@@ -1,5 +1,5 @@
 const Address =
-  require("../models/Address");
+  require("../../models/Address");
 
 
 const ADDRESS_FIELDS = [
