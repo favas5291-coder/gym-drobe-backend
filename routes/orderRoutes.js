@@ -13,9 +13,12 @@ const {
 
   getAdminReturnRequests,
   reviewReturnRequest,
-  completeReturnRequest,
   recordReturnRefund,
 } = require("../middleware/controllers/orderController");
+
+const {
+  completeInspectedReturn,
+} = require("../middleware/controllers/returnCompletionController");
 
 const {
   protect,
@@ -31,13 +34,11 @@ router.use((req, res, next) => {
 
 router.use(protect);
 
-// Customer orders.
 router
   .route("/")
   .get(getOrders)
   .post(createOrder);
 
-// Admin order management.
 router.get(
   "/admin/orders",
   adminOnly,
@@ -56,7 +57,6 @@ router.get(
   getAdminOrderById,
 );
 
-// Return and exchange handlers come from orderController.
 router.get(
   "/admin/returns",
   adminOnly,
@@ -69,10 +69,11 @@ router.put(
   reviewReturnRequest,
 );
 
+// Completion now requires recorded inspection quantities.
 router.put(
   "/admin/returns/:id/complete",
   adminOnly,
-  completeReturnRequest,
+  completeInspectedReturn,
 );
 
 router.put(
@@ -81,12 +82,11 @@ router.put(
   recordReturnRefund,
 );
 
-// Customer cancellation and returns.
 router.put("/:id/cancel", cancelOrder);
 
 router.post("/:id/return", requestReturn);
 
-// Keep the generic lookup last.
+// Keep generic lookup after named routes.
 router.get("/:id", getOrderById);
 
 module.exports = router;
