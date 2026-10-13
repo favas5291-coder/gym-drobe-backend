@@ -12,7 +12,6 @@ function days() {
     default: null,
     min: 0,
     max: 365,
-
     validate: {
       validator: (value) =>
         value == null ||
@@ -26,214 +25,351 @@ function days() {
 
 const noId = { _id: false };
 
-const addressSchema = new mongoose.Schema(
-  {
-    addressLine: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 500,
-    },
+const addressSchema = new mongoose.Schema({
+  addressLine: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 500,
+  },
 
-    city: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 100,
-    },
+  city: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 100,
+  },
 
-    state: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 100,
-    },
+  state: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 100,
+  },
 
-    pincode: {
-      type: String,
-      default: "",
-      trim: true,
+  pincode: {
+    type: String,
+    default: "",
+    trim: true,
+    validate: {
+      validator: (value) =>
+        !value ||
+        /^[1-9]\d{5}$/.test(value),
 
-      validate: {
-        validator: (value) =>
-          !value ||
-          /^[1-9]\d{5}$/.test(value),
-
-        message:
-          "Enter a valid six-digit packing-location pincode.",
-      },
+      message:
+        "Enter a valid six-digit packing-location pincode.",
     },
   },
-  noId,
-);
+}, noId);
 
-const contactSchema = new mongoose.Schema(
-  {
-    name: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 100,
-    },
+const contactSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 100,
+  },
 
-    phone: {
-      type: String,
-      default: "",
-      trim: true,
+  phone: {
+    type: String,
+    default: "",
+    trim: true,
+    validate: {
+      validator: (value) =>
+        !value ||
+        /^\d{7,15}$/.test(value),
 
-      validate: {
-        validator: (value) =>
-          !value ||
-          /^\d{7,15}$/.test(value),
-
-        message:
-          "Use 7–15 digits for the contact phone.",
-      },
-    },
-
-    email: {
-      type: String,
-      default: "",
-      trim: true,
-      lowercase: true,
-      maxlength: 150,
-
-      validate: {
-        validator: (value) =>
-          !value ||
-          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
-
-        message:
-          "Enter a valid contact email.",
-      },
+      message:
+        "Use 7–15 digits for the contact phone.",
     },
   },
-  noId,
-);
 
-const verificationSchema = new mongoose.Schema(
-  {
-    confirmedAt: {
-      type: Date,
-      default: null,
-    },
+  email: {
+    type: String,
+    default: "",
+    trim: true,
+    lowercase: true,
+    maxlength: 150,
+    validate: {
+      validator: (value) =>
+        !value ||
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
 
-    confirmedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
-
-    arrangementReference: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 200,
+      message:
+        "Enter a valid contact email.",
     },
   },
-  noId,
-);
+}, noId);
 
-const supplierArrangementSchema =
-  new mongoose.Schema(
-    {
-      supplier: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Supplier",
-        required: true,
-      },
+const verificationSchema = new mongoose.Schema({
+  confirmedAt: {
+    type: Date,
+    default: null,
+  },
 
-      status: {
-        type: String,
-        enum: [
-          "pending",
-          "confirmed",
-          "paused",
-        ],
-        default: "pending",
-      },
+  confirmedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
 
-      confirmedAt: {
-        type: Date,
-        default: null,
-      },
+  arrangementReference: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 200,
+  },
+}, noId);
 
-      confirmedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-        default: null,
-      },
+const supplierArrangementSchema = new mongoose.Schema({
+  supplier: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Supplier",
+    required: true,
+  },
 
-      arrangementReference: {
-        type: String,
-        default: "",
-        trim: true,
-        maxlength: 200,
-      },
+  status: {
+    type: String,
+    enum: ["pending", "confirmed", "paused"],
+    default: "pending",
+  },
 
-      transferDaysMin: days(),
-      transferDaysMax: days(),
-    },
-    noId,
-  );
+  confirmedAt: {
+    type: Date,
+    default: null,
+  },
 
-supplierArrangementSchema.pre(
-  "validate",
-  function () {
-    const either =
-      this.transferDaysMin != null ||
-      this.transferDaysMax != null;
+  confirmedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
 
-    if (
-      either &&
+  arrangementReference: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 200,
+  },
+
+  transferDaysMin: days(),
+  transferDaysMax: days(),
+}, noId);
+
+supplierArrangementSchema.pre("validate", function () {
+  const either =
+    this.transferDaysMin != null ||
+    this.transferDaysMax != null;
+
+  if (
+    either &&
+    !dayRange(
+      this.transferDaysMin,
+      this.transferDaysMax,
+    )
+  ) {
+    this.invalidate(
+      "transferDaysMax",
+      "Record both valid supplier-to-packing transfer limits.",
+    );
+  }
+
+  if (
+    this.status === "confirmed" &&
+    (
+      !confirmedDate(this.confirmedAt) ||
+      !this.confirmedBy ||
+      !this.arrangementReference ||
       !dayRange(
         this.transferDaysMin,
         this.transferDaysMax,
       )
-    ) {
-      this.invalidate(
-        "transferDaysMax",
-        "Record both valid supplier-to-packing transfer limits.",
-      );
-    }
+    )
+  ) {
+    this.invalidate(
+      "status",
+      "Confirm the real supplier-to-location arrangement, its verifier, reference and transfer times.",
+    );
+  }
+});
 
-    if (
-      this.status === "confirmed" &&
-      (
-        !confirmedDate(this.confirmedAt) ||
-        !this.confirmedBy ||
-        !this.arrangementReference ||
-        !dayRange(
-          this.transferDaysMin,
-          this.transferDaysMax,
-        )
-      )
-    ) {
-      this.invalidate(
-        "status",
-        "Confirm the real supplier-to-location arrangement, its verifier, reference and transfer times.",
-      );
-    }
+// This route covers only explicitly selected GymDrobe-held products.
+// It is not automatically applied to every product or stock location.
+const gymdrobeStockTransferSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ["pending", "confirmed", "paused"],
+    default: "pending",
   },
-);
 
-const packingSchema = new mongoose.Schema(
-  {
-    packingDaysMin: days(),
-    packingDaysMax: days(),
+  originName: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 200,
   },
-  noId,
-);
 
-const deliverySchema = new mongoose.Schema(
-  {
-    transitDaysMin: days(),
-    transitDaysMax: days(),
+  originAddress: {
+    type: addressSchema,
+    default: () => ({}),
   },
-  noId,
-);
 
-for (const [schema, low, high] of [
+  originContact: {
+    type: contactSchema,
+    default: () => ({}),
+  },
+
+  productIds: {
+    type: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+    }],
+
+    default: [],
+
+    validate: {
+      validator: (values) =>
+        Array.isArray(values) &&
+        values.length <= 500 &&
+        values.every(
+          (value) => Boolean(reference(value)),
+        ) &&
+        new Set(values.map(reference)).size ===
+          values.length,
+
+      message:
+        "Choose at most 500 distinct product IDs for this transfer route.",
+    },
+  },
+
+  transferDaysMin: days(),
+  transferDaysMax: days(),
+
+  confirmedAt: {
+    type: Date,
+    default: null,
+  },
+
+  confirmedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+
+  arrangementReference: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 200,
+  },
+}, noId);
+
+gymdrobeStockTransferSchema.pre("validate", function () {
+  const either =
+    this.transferDaysMin != null ||
+    this.transferDaysMax != null;
+
+  if (
+    either &&
+    !dayRange(
+      this.transferDaysMin,
+      this.transferDaysMax,
+    )
+  ) {
+    this.invalidate(
+      "transferDaysMax",
+      "Record both valid GymDrobe-to-packing transfer limits.",
+    );
+  }
+
+  if (this.status !== "confirmed") {
+    return;
+  }
+
+  if (
+    !this.originName ||
+    this.originName.trim().length < 2 ||
+    !this.originAddress?.addressLine ||
+    !this.originAddress.city ||
+    !this.originAddress.state ||
+    !/^[1-9]\d{5}$/.test(
+      this.originAddress.pincode || "",
+    )
+  ) {
+    this.invalidate(
+      "originAddress",
+      "Record the real GymDrobe stock origin and complete pickup address before confirming this route.",
+    );
+  }
+
+  if (
+    !this.originContact?.name ||
+    !(
+      this.originContact.phone ||
+      this.originContact.email
+    )
+  ) {
+    this.invalidate(
+      "originContact",
+      "Record a pickup contact and contact method before confirming this route.",
+    );
+  }
+
+  if (!this.productIds?.length) {
+    this.invalidate(
+      "productIds",
+      "Select the GymDrobe-held products covered by this transfer arrangement.",
+    );
+  }
+
+  if (
+    !dayRange(
+      this.transferDaysMin,
+      this.transferDaysMax,
+    ) ||
+    !confirmedDate(this.confirmedAt) ||
+    !reference(this.confirmedBy) ||
+    !this.arrangementReference?.trim()
+  ) {
+    this.invalidate(
+      "status",
+      "Record real transfer times, who confirmed the route, when and its arrangement reference.",
+    );
+  }
+
+  const changed = [
+    "originName",
+    "originAddress",
+    "originContact",
+    "productIds",
+    "transferDaysMin",
+    "transferDaysMax",
+    "arrangementReference",
+  ].some((field) => this.isModified(field));
+
+  if (
+    !this.isNew &&
+    changed &&
+    !this.isModified("confirmedAt")
+  ) {
+    this.invalidate(
+      "status",
+      "Save transfer-route changes as pending and confirm the updated arrangement again.",
+    );
+  }
+});
+
+const packingSchema = new mongoose.Schema({
+  packingDaysMin: days(),
+  packingDaysMax: days(),
+}, noId);
+
+const deliverySchema = new mongoose.Schema({
+  transitDaysMin: days(),
+  transitDaysMax: days(),
+}, noId);
+
+for (const [childSchema, low, high] of [
   [
     packingSchema,
     "packingDaysMin",
@@ -245,7 +381,7 @@ for (const [schema, low, high] of [
     "transitDaysMax",
   ],
 ]) {
-  schema.pre("validate", function () {
+  childSchema.pre("validate", function () {
     if (
       (
         this[low] != null ||
@@ -261,100 +397,95 @@ for (const [schema, low, high] of [
   });
 }
 
-const schema = new mongoose.Schema(
-  {
-    locationCode: {
-      type: String,
-      trim: true,
-      uppercase: true,
-      immutable: true,
-      maxlength: 100,
-    },
-
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-      minlength: 2,
-      maxlength: 200,
-    },
-
-    operator: {
-      type: String,
-      enum: [
-        "gymdrobe",
-        "fulfillment-partner",
-      ],
-      default: "gymdrobe",
-    },
-
-    status: {
-      type: String,
-      enum: [
-        "draft",
-        "active",
-        "paused",
-        "archived",
-      ],
-      default: "draft",
-    },
-
-    address: {
-      type: addressSchema,
-      default: () => ({}),
-      select: false,
-    },
-
-    contact: {
-      type: contactSchema,
-      default: () => ({}),
-      select: false,
-    },
-
-    verification: {
-      type: verificationSchema,
-      default: () => ({}),
-      select: false,
-    },
-
-    packing: {
-      type: packingSchema,
-      default: () => ({}),
-      select: false,
-    },
-
-    delivery: {
-      type: deliverySchema,
-      default: () => ({}),
-      select: false,
-    },
-
-    acceptsGymDrobeStock: {
-      type: Boolean,
-      default: false,
-      select: false,
-    },
-
-    supplierArrangements: {
-      type: [supplierArrangementSchema],
-      default: [],
-      select: false,
-    },
-
-    notes: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 2000,
-      select: false,
-    },
+const schema = new mongoose.Schema({
+  locationCode: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    immutable: true,
+    maxlength: 100,
   },
-  {
-    timestamps: true,
-    minimize: false,
-    optimisticConcurrency: true,
+
+  name: {
+    type: String,
+    required: true,
+    trim: true,
+    minlength: 2,
+    maxlength: 200,
   },
-);
+
+  operator: {
+    type: String,
+    enum: ["gymdrobe", "fulfillment-partner"],
+    default: "gymdrobe",
+  },
+
+  status: {
+    type: String,
+    enum: ["draft", "active", "paused", "archived"],
+    default: "draft",
+  },
+
+  address: {
+    type: addressSchema,
+    default: () => ({}),
+    select: false,
+  },
+
+  contact: {
+    type: contactSchema,
+    default: () => ({}),
+    select: false,
+  },
+
+  verification: {
+    type: verificationSchema,
+    default: () => ({}),
+    select: false,
+  },
+
+  packing: {
+    type: packingSchema,
+    default: () => ({}),
+    select: false,
+  },
+
+  delivery: {
+    type: deliverySchema,
+    default: () => ({}),
+    select: false,
+  },
+
+  acceptsGymDrobeStock: {
+    type: Boolean,
+    default: false,
+    select: false,
+  },
+
+  gymdrobeStockTransfer: {
+    type: gymdrobeStockTransferSchema,
+    default: null,
+    select: false,
+  },
+
+  supplierArrangements: {
+    type: [supplierArrangementSchema],
+    default: [],
+    select: false,
+  },
+
+  notes: {
+    type: String,
+    default: "",
+    trim: true,
+    maxlength: 2000,
+    select: false,
+  },
+}, {
+  timestamps: true,
+  minimize: false,
+  optimisticConcurrency: true,
+});
 
 schema.pre("validate", function () {
   if (
@@ -371,14 +502,10 @@ schema.pre("validate", function () {
     );
   }
 
-  if (
-    this.isSelected("supplierArrangements")
-  ) {
+  if (this.isSelected("supplierArrangements")) {
     const ids = (
       this.supplierArrangements || []
-    ).map((row) =>
-      reference(row.supplier),
-    );
+    ).map((row) => reference(row.supplier));
 
     if (
       ids.length > 500 ||
@@ -389,6 +516,20 @@ schema.pre("validate", function () {
         "Use at most 500 distinct supplier arrangements.",
       );
     }
+  }
+
+  if (
+    this.isSelected("gymdrobeStockTransfer") &&
+    this.gymdrobeStockTransfer?.status === "confirmed" &&
+    (
+      !this.isSelected("acceptsGymDrobeStock") ||
+      this.acceptsGymDrobeStock !== true
+    )
+  ) {
+    this.invalidate(
+      "gymdrobeStockTransfer",
+      "Confirm that this packing location accepts GymDrobe-held stock before confirming its transfer route.",
+    );
   }
 
   if (this.status !== "active") {
@@ -490,6 +631,7 @@ function hidePrivate(document, result) {
     "packing",
     "delivery",
     "acceptsGymDrobeStock",
+    "gymdrobeStockTransfer",
     "supplierArrangements",
     "notes",
     "__v",

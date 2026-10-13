@@ -13,35 +13,47 @@ const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 
 const paymentWebhookRoutes = require(
-  "./routes/paymentWebhookRoutes"
+  "./routes/paymentWebhookRoutes",
 );
 
 const supportRoutes = require("./routes/supportRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const supplierRoutes = require("./routes/supplierRoutes");
+const kitRoutes = require("./routes/kitRoutes");
+
+const packingLocationRoutes = require(
+  "./routes/packingLocationRoutes",
+);
+
+const shippingProfileRoutes = require(
+  "./routes/shippingProfileRoutes",
+);
 
 const SupportTicket = require("./models/SupportTicket");
 const Supplier = require("./models/Supplier");
+const KitTemplate = require("./models/KitTemplate");
+const PackingLocation = require("./models/PackingLocation");
+const ShippingProfile = require("./models/ShippingProfile");
 
 const app = express();
 
 app.use(cors());
 
-// Razorpay needs the exact raw request body.
-// Keep this route before express.json().
+// Razorpay signature verification requires the raw body.
+// Keep this before express.json().
 app.use(
   "/api/payment-webhooks",
   express.raw({
     type: "application/json",
     limit: "1mb",
   }),
-  paymentWebhookRoutes
+  paymentWebhookRoutes,
 );
 
 app.use(
   express.json({
     limit: "1mb",
-  })
+  }),
 );
 
 app.get("/api/health", (req, res) => {
@@ -59,6 +71,17 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/suppliers", supplierRoutes);
+app.use("/api/kits", kitRoutes);
+
+app.use(
+  "/api/packing-locations",
+  packingLocationRoutes,
+);
+
+app.use(
+  "/api/shipping-profiles",
+  shippingProfileRoutes,
+);
 
 app.use((req, res) => {
   res.status(404).json({
@@ -98,19 +121,21 @@ async function startServer() {
 
     await SupportTicket.createIndexes();
     await Supplier.createIndexes();
+    await KitTemplate.createIndexes();
+    await PackingLocation.createIndexes();
+    await ShippingProfile.createIndexes();
 
     app.listen(PORT, () => {
       console.log(
-        `GymDrobe server running on http://localhost:${PORT}`
+        `GymDrobe server running on http://localhost:${PORT}`,
       );
     });
   } catch (error) {
     console.error(
       "Server startup failed:",
-      error.message
+      error.message,
     );
 
-    console.error(error);
     process.exit(1);
   }
 }

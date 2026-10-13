@@ -1,81 +1,46 @@
-const express =
-  require("express");
+const express = require("express");
 
 const {
+  getCheckoutQuote,
   createRazorpayOrder,
   verifyRazorpayPayment,
-} =
-  require(
-    "../middleware/controllers/paymentController"
-  );
+} = require("../middleware/controllers/paymentController");
 
 const {
   protect,
-} =
-  require(
-    "../middleware/authMiddleware"
-  );
+} = require("../middleware/authMiddleware");
 
+const router = express.Router();
 
-const router =
-  express.Router();
+// Checkout and payment responses must not be cached.
+router.use((req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 
+// All routes require login.
+router.use(protect);
 
-// ======================================================
-// ALL PAYMENT ROUTES REQUIRE LOGIN
-// ======================================================
-
-router.use(
-  protect
+// POST /api/payments/checkout/quote
+// Calculates a pricing preview.
+// Does not create an order, reserve stock or start payment.
+router.post(
+  "/checkout/quote",
+  getCheckoutQuote,
 );
 
-
-// ======================================================
-// CREATE RAZORPAY PAYMENT ORDER
-//
 // POST /api/payments/razorpay/order
-//
-// Supports:
-//
-// paymentMethod = "razorpay"
-// → full online payment
-//
-// paymentMethod = "cod-partial"
-// → 10% advance payment
-// ======================================================
-
+// Existing online payment and COD advance flow.
 router.post(
   "/razorpay/order",
-  createRazorpayOrder
+  createRazorpayOrder,
 );
 
-
-// ======================================================
-// VERIFY RAZORPAY PAYMENT
-//
 // POST /api/payments/razorpay/verify
-//
-// Verifies:
-// - Razorpay order ID
-// - payment ID
-// - signature
-// - amount
-// - currency
-//
-// Then:
-// full online → payment becomes paid
-// COD partial → payment becomes partially-paid
-// ======================================================
-
+// Existing Razorpay payment verification.
 router.post(
   "/razorpay/verify",
-  verifyRazorpayPayment
+  verifyRazorpayPayment,
 );
 
-
-// ======================================================
-// EXPORT
-// ======================================================
-
-module.exports =
-  router;
+module.exports = router;
