@@ -197,6 +197,13 @@ test(
       "https://meesho.com/item/p/1?x=2"
     );
 
+    assert.equal(
+      normalizeMeeshoLink(
+        "https://www.meesho.com:0443/item/p/1"
+      ),
+      "https://www.meesho.com/item/p/1"
+    );
+
     for (const empty of ["", "   ", null, undefined]) {
       assert.equal(normalizeMeeshoLink(empty), "");
     }

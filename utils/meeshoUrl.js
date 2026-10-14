@@ -6,8 +6,8 @@ function normalizeMeeshoLink(value) {
   if (input.length > 2000 || /[\u0000-\u0020\u007f\\]/.test(input)) throw new Error("Use a valid HTTPS Meesho listing link without spaces or backslashes.");
   let url;
   try { url = new URL(input); } catch { throw new Error("Enter a valid HTTPS Meesho listing link."); }
-  if (!/^https:\/\/(?:www\.)?meesho\.com(?::443)?(?:\/|$|[?#])/i.test(input) ||
-      url.protocol !== "https:" || !["meesho.com", "www.meesho.com"].includes(url.hostname) ||
+  if (url.protocol !== "https:" ||
+      !["meesho.com", "www.meesho.com"].includes(url.hostname) ||
       url.username || url.password || url.port || url.pathname === "/") {
     throw new Error("Use an HTTPS product link on meesho.com or www.meesho.com, without login credentials or a custom port.");
   }
