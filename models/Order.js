@@ -1,3 +1,4 @@
+const { normalizeMeeshoLink } = require("../utils/meeshoUrl");
 const mongoose = require("mongoose");
 
 const noId = { _id: false };
@@ -201,7 +202,13 @@ const kitSnapshotSchema = new mongoose.Schema({
   linePaidPaise: integer(0, true),
 }, noId);
 
+const sourcingSchema = new mongoose.Schema({
+  meeshoProductLink: { type: String, default: "", maxlength: 2000, set: normalizeMeeshoLink },
+  sizeLabel: { type: String, enum: ["Size", "Pack size", "Capacity", "Weight", "Length", "Option"], default: "Size" },
+  colorLabel: { type: String, enum: ["Colour", "Flavour", "Style", "Material", "Option"], default: "Colour" },
+}, { _id: false });
 const orderItemSchema = new mongoose.Schema({
+  sourcing: { type: sourcingSchema, default: null, select: false, immutable: true },
   product: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Product",
@@ -736,6 +743,33 @@ const orderSchema = new mongoose.Schema({
   timestamps: true,
   optimisticConcurrency: true,
 });
+
+// Defense in depth: even explicitly selected sourcing data stays out of
+// ordinary serialization, customer emails and receipts.
+function hideSourcing(document, result) {
+  for (const item of result.items || []) delete item.sourcing;
+  return result;
+}
+orderSchema.set("toJSON", { transform: hideSourcing });
+orderSchema.set("toObject", { transform: hideSourcing });
+orderSchema.pre("validate", function () {
+  if (!this.isNew && this.isModified("items")) {
+    this.invalidate("items", "Purchased items and internal sourcing snapshots cannot be replaced after order creation.");
+  }
+});
+for (const operation of ["updateOne", "updateMany", "findOneAndUpdate", "replaceOne", "findOneAndReplace"]) {
+  orderSchema.pre(operation, function () {
+    const update = this.getUpdate();
+    if (["replaceOne", "findOneAndReplace"].includes(this.op) || Array.isArray(update)) throw new Error("Order replacements cannot overwrite purchased sourcing snapshots.");
+    for (const [operator, values] of Object.entries(update || {})) {
+      const paths = operator.startsWith("$") ? Object.keys(values || {}) : [operator];
+      if (paths.some(path => path === "items" || path.startsWith("items.")) ||
+          (operator === "$rename" && Object.values(values || {}).some(path => path === "items" || String(path).startsWith("items.")))) {
+        throw new Error("Purchased items and sourcing snapshots cannot be changed.");
+      }
+    }
+  });
+}
 
 // Kit snapshots describe the purchase.
 // Procurement and shipment progress must be stored separately.

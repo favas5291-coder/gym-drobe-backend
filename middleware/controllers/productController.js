@@ -1,3 +1,4 @@
+const { normalizeMeeshoLink, safeMeeshoLink } = require("../../utils/meeshoUrl");
 const mongoose = require("mongoose");
 const Product = require("../../models/Product");
 const Supplier = require("../../models/Supplier");
@@ -12,7 +13,7 @@ const forbiddenKeys = new Set([
   "constructor",
 ]);
 
-const ADMIN_FIELDS = "+supplier +purchaseCost +fulfillment";
+const ADMIN_FIELDS = "+supplier +purchaseCost +fulfillment +meeshoProductLink";
 const SUPPLIER_FIELDS = "+contact +verification +fulfillment";
 
 const KIT_ROLES = [
@@ -484,6 +485,10 @@ function normalizePayload(body) {
 
   const result = {};
 
+  if (own(body, "meeshoProductLink")) {
+    try { result.meeshoProductLink = normalizeMeeshoLink(body.meeshoProductLink); }
+    catch (error) { throw httpError(400, error.message); }
+  }
   const strings = {
     name: 200,
     category: 100,
@@ -778,10 +783,12 @@ function serializeProduct(product, admin = false) {
       data.supplier == null ? null : String(data.supplier);
 
     data.purchaseCost = data.purchaseCost ?? null;
+    data.meeshoProductLink = safeMeeshoLink(data.meeshoProductLink);
   } else {
     delete data.supplier;
     delete data.purchaseCost;
     delete data.fulfillment;
+    delete data.meeshoProductLink;
   }
 
   return data;

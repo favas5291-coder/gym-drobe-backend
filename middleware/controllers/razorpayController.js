@@ -1,3 +1,4 @@
+const { snapshotProductSourcing } = require("../../utils/orderSourcing");
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 
@@ -568,7 +569,7 @@ function address(value) {
 
 async function findProduct(id) {
   if (mongoose.isObjectIdOrHexString(id)) {
-    const product = await Product.findById(id);
+    const product = await Product.findById(id).select("+meeshoProductLink");
     if (product) return product;
   }
 
@@ -578,14 +579,14 @@ async function findProduct(id) {
   ) {
     const product = await Product.findOne({
       legacyId: Number(id),
-    });
+    }).select("+meeshoProductLink");
 
     if (product) return product;
   }
 
   return Product.findOne({
     slug: id.toLowerCase(),
-  });
+  }).select("+meeshoProductLink");
 }
 
 async function snapshot(body) {
@@ -750,6 +751,7 @@ async function snapshot(body) {
       existing.quantity += quantity;
     } else {
       rows.set(key, {
+        sourcing: snapshotProductSourcing(product),
         product: product._id,
         legacyId: product.legacyId ?? null,
         slug: product.slug || "",

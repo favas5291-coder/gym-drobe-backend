@@ -1,3 +1,4 @@
+const { withAdminSourcing } = require("../../utils/orderSourcing");
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 
@@ -2024,7 +2025,7 @@ const getAdminOrderById = handler(
   async (req, res) => {
     const order = await Order.findOne(
       lookup(orderId(req)),
-    ).populate(
+    ).select("+items.sourcing").populate(
       "user",
       "name email phone role",
     );
@@ -2039,7 +2040,7 @@ const getAdminOrderById = handler(
 
     return res.json({
       success: true,
-      order: safeOrder(order),
+      order: await withAdminSourcing(order, safeOrder(order), req.user),
     });
   },
   true,
@@ -2380,7 +2381,7 @@ const updateAdminOrderStatus = handler(
         ? "Order delivered and COD balance recorded as collected."
         : "Order information confirmed.",
 
-      order: safeOrder(result.order),
+      order: await withAdminSourcing(result.order, safeOrder(result.order), req.user),
     });
   },
   true,

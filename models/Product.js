@@ -1,3 +1,4 @@
+const { normalizeMeeshoLink } = require("../utils/meeshoUrl");
 const mongoose = require("mongoose");
 const crypto = require("node:crypto");
 
@@ -467,6 +468,11 @@ const productSchema = new mongoose.Schema(
       select: false,
       index: true,
     },
+    meeshoProductLink: {
+      type: String, default: "", select: false, maxlength: 2000,
+      set: normalizeMeeshoLink,
+      validate: { validator: value => { try { normalizeMeeshoLink(value); return true; } catch { return false; } }, message: "Enter a safe HTTPS Meesho product link." },
+    },
     purchaseCost: {
       type: Number,
       default: null,
@@ -920,6 +926,7 @@ function transformProduct(document, result) {
   delete result.supplier;
   delete result.purchaseCost;
   delete result.fulfillment;
+  delete result.meeshoProductLink;
 
   return result;
 }
