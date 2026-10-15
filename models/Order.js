@@ -1,5 +1,25 @@
-const { normalizeMeeshoLink } = require("../utils/meeshoUrl");
+const {
+  normalizeMeeshoLink,
+} = require("../utils/meeshoUrl");
+
 const mongoose = require("mongoose");
+
+const PurchasedShippingSchema = require("./PurchasedShippingSchema");
+
+const {
+  validatePurchasedShipping,
+} = require("../utils/purchasedShipping");
+
+const KitFulfillmentProgressSchema =
+  require("./KitFulfillmentProgressSchema");
+
+const {
+  validateKitProgress,
+} = require("../utils/kitFulfillmentProgress");
+
+const {
+  publicKitFulfillmentFields,
+} = require("../utils/publicKitOrder");
 
 const noId = { _id: false };
 
@@ -8,6 +28,7 @@ const money = (required = false, fallback = 0) => ({
   min: 0,
   required,
   default: required ? undefined : fallback,
+
   validate: {
     validator: (value) =>
       value == null ||
@@ -15,6 +36,7 @@ const money = (required = false, fallback = 0) => ({
         Number.isFinite(value) &&
         Number.isSafeInteger(Math.round(value * 100))
       ),
+
     message:
       "Use a finite monetary amount within the supported range.",
   },
@@ -34,6 +56,7 @@ const integer = (
   min: minimum,
   required,
   default: fallback,
+
   validate: {
     validator: Number.isSafeInteger,
     message: "Use a valid whole number.",
@@ -63,33 +86,39 @@ const groupId = () => ({
 });
 
 // Identifies the kit section belonging to an order item.
-const itemKitSchema = new mongoose.Schema({
-  groupId: groupId(),
+const itemKitSchema = new mongoose.Schema(
+  {
+    groupId: groupId(),
 
-  slotKey: {
-    type: String,
-    required: true,
-    match: /^[a-z][a-z0-9-]{0,59}$/,
-  },
+    slotKey: {
+      type: String,
+      required: true,
+      match: /^[a-z][a-z0-9-]{0,59}$/,
+    },
 
-  role: {
-    type: String,
-    required: true,
-    enum: KIT_ROLES,
+    role: {
+      type: String,
+      required: true,
+      enum: KIT_ROLES,
+    },
   },
-}, noId);
+  noId,
+);
 
 // Purchase amounts are recorded in integer paise.
 // Any remainder is distributed deterministically across units.
-const priceAllocationSchema = new mongoose.Schema({
-  quantity: integer(1, true),
-  lineSubtotalPaise: integer(0, true),
-  kitDiscountPaise: integer(0, true),
-  couponDiscountPaise: integer(0, true),
-  linePaidPaise: integer(0, true),
-  unitBasePaise: integer(0, true),
-  extraPaiseUnits: integer(0, true),
-}, noId);
+const priceAllocationSchema = new mongoose.Schema(
+  {
+    quantity: integer(1, true),
+    lineSubtotalPaise: integer(0, true),
+    kitDiscountPaise: integer(0, true),
+    couponDiscountPaise: integer(0, true),
+    linePaidPaise: integer(0, true),
+    unitBasePaise: integer(0, true),
+    extraPaiseUnits: integer(0, true),
+  },
+  noId,
+);
 
 priceAllocationSchema.pre("validate", function () {
   const values = [
@@ -133,186 +162,343 @@ priceAllocationSchema.pre("validate", function () {
 });
 
 // Purchased kit information is independent of future template edits.
-const kitSnapshotSchema = new mongoose.Schema({
-  groupId: groupId(),
+const kitSnapshotSchema = new mongoose.Schema(
+  {
+    groupId: groupId(),
 
-  template: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "KitTemplate",
-    required: true,
+    template: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "KitTemplate",
+      required: true,
+    },
+
+    templateVersion: integer(0, true),
+
+    kitCode: {
+      type: String,
+      default: "",
+      maxlength: 100,
+    },
+
+    name: {
+      type: String,
+      required: true,
+      minlength: 2,
+      maxlength: 200,
+    },
+
+    level: {
+      type: String,
+      required: true,
+      enum: KIT_LEVELS,
+    },
+
+    audience: {
+      type: String,
+      default: "",
+      maxlength: 2000,
+    },
+
+    explanation: {
+      type: String,
+      default: "",
+      maxlength: 4000,
+    },
+
+    supplementNote: {
+      type: String,
+      default: "",
+      maxlength: 2000,
+    },
+
+    fulfillmentMode: {
+      type: String,
+      required: true,
+      enum: [
+        "packed-together",
+        "separate-shipments",
+      ],
+    },
+
+    customerNote: {
+      type: String,
+      default: "",
+      maxlength: 2000,
+    },
+
+    subtotalPaise: integer(0, true),
+    kitDiscountPaise: integer(0, true),
+    couponDiscountPaise: integer(0, true),
+    linePaidPaise: integer(0, true),
   },
+  noId,
+);
 
-  templateVersion: integer(0, true),
+const sourcingSchema = new mongoose.Schema(
+  {
+    meeshoProductLink: {
+      type: String,
+      default: "",
+      maxlength: 2000,
+      set: normalizeMeeshoLink,
+    },
 
-  kitCode: {
-    type: String,
-    default: "",
-    maxlength: 100,
+    sizeLabel: {
+      type: String,
+      enum: [
+        "Size",
+        "Pack size",
+        "Capacity",
+        "Weight",
+        "Length",
+        "Option",
+      ],
+      default: "Size",
+    },
+
+    colorLabel: {
+      type: String,
+      enum: [
+        "Colour",
+        "Flavour",
+        "Style",
+        "Material",
+        "Option",
+      ],
+      default: "Colour",
+    },
   },
+  noId,
+);
 
-  name: {
-    type: String,
-    required: true,
-    minlength: 2,
-    maxlength: 200,
+const orderItemSchema = new mongoose.Schema(
+  {
+    sourcing: {
+      type: sourcingSchema,
+      default: null,
+      select: false,
+      immutable: true,
+    },
+
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: true,
+    },
+
+    legacyId: {
+      type: Number,
+      default: null,
+    },
+
+    slug: {
+      type: String,
+      default: "",
+    },
+
+    sku: {
+      type: String,
+      default: "",
+    },
+
+    name: {
+      type: String,
+      required: true,
+    },
+
+    brand: {
+      type: String,
+      default: "",
+    },
+
+    image: {
+      type: String,
+      default: "",
+    },
+
+    originalPrice: money(true),
+    price: money(true),
+
+    discount: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+
+    quantity: integer(1, true),
+
+    kit: {
+      type: itemKitSchema,
+      default: null,
+      immutable: true,
+    },
+
+    priceAllocation: {
+      type: priceAllocationSchema,
+      default: null,
+      immutable: true,
+    },
+
+    selectedSize: {
+      type: String,
+      default: null,
+    },
+
+    selectedColor: {
+      type: String,
+      default: null,
+    },
+
+    // Preserve the conditions applicable when this item was purchased.
+    returnPolicy: {
+      type: String,
+      default: "",
+    },
+
+    returnsEligible: {
+      type: String,
+      enum: ["yes", "no", "unconfirmed"],
+      default: "unconfirmed",
+    },
+
+    returnConditions: {
+      type: String,
+      default: "",
+    },
+
+    returnWindowDays: {
+      ...integer(1, false, 7),
+      max: 7,
+    },
   },
+  noId,
+);
 
-  level: {
-    type: String,
-    required: true,
-    enum: KIT_LEVELS,
+const shippingAddressSchema = new mongoose.Schema(
+  {
+    fullName: {
+      type: String,
+      required: true,
+    },
+
+    name: {
+      type: String,
+      required: true,
+    },
+
+    email: {
+      type: String,
+      required: true,
+    },
+
+    phone: {
+      type: String,
+      required: true,
+    },
+
+    addressLine: {
+      type: String,
+      required: true,
+    },
+
+    landmark: {
+      type: String,
+      default: "",
+    },
+
+    city: {
+      type: String,
+      required: true,
+    },
+
+    state: {
+      type: String,
+      required: true,
+    },
+
+    pincode: {
+      type: String,
+      required: true,
+    },
+
+    label: {
+      type: String,
+      default: "Home",
+    },
   },
+  noId,
+);
 
-  audience: {
-    type: String,
-    default: "",
-    maxlength: 2000,
+const pricingSchema = new mongoose.Schema(
+  {
+    subtotal: money(true),
+    kitDiscount: money(),
+    couponDiscount: money(),
+    totalAfterCoupon: money(true),
+    shipping: money(true),
+    finalTotal: money(true),
+
+    currency: {
+      type: String,
+      default: "INR",
+    },
   },
+  noId,
+);
 
-  explanation: {
-    type: String,
-    default: "",
-    maxlength: 4000,
+const trackingEventSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      required: true,
+    },
+
+    description: {
+      type: String,
+      default: "",
+    },
+
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
   },
+  noId,
+);
 
-  supplementNote: {
-    type: String,
-    default: "",
-    maxlength: 2000,
+const returnItemSchema = new mongoose.Schema(
+  {
+    index: integer(0, true),
+    quantity: integer(1, true),
+
+    size: {
+      type: String,
+      default: null,
+    },
+
+    color: {
+      type: String,
+      default: null,
+    },
   },
+  noId,
+);
 
-  fulfillmentMode: {
-    type: String,
-    required: true,
-    enum: [
-      "packed-together",
-      "separate-shipments",
-    ],
+const returnInspectionItemSchema = new mongoose.Schema(
+  {
+    index: integer(0, true),
+    returnedQuantity: integer(1, true),
+    restockQuantity: integer(0, true),
+
+    note: {
+      type: String,
+      default: "",
+      maxlength: 500,
+    },
   },
-
-  customerNote: {
-    type: String,
-    default: "",
-    maxlength: 2000,
-  },
-
-  subtotalPaise: integer(0, true),
-  kitDiscountPaise: integer(0, true),
-  couponDiscountPaise: integer(0, true),
-  linePaidPaise: integer(0, true),
-}, noId);
-
-const sourcingSchema = new mongoose.Schema({
-  meeshoProductLink: { type: String, default: "", maxlength: 2000, set: normalizeMeeshoLink },
-  sizeLabel: { type: String, enum: ["Size", "Pack size", "Capacity", "Weight", "Length", "Option"], default: "Size" },
-  colorLabel: { type: String, enum: ["Colour", "Flavour", "Style", "Material", "Option"], default: "Colour" },
-}, { _id: false });
-const orderItemSchema = new mongoose.Schema({
-  sourcing: { type: sourcingSchema, default: null, select: false, immutable: true },
-  product: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Product",
-    required: true,
-  },
-
-  legacyId: { type: Number, default: null },
-  slug: { type: String, default: "" },
-  sku: { type: String, default: "" },
-  name: { type: String, required: true },
-  brand: { type: String, default: "" },
-  image: { type: String, default: "" },
-
-  originalPrice: money(true),
-  price: money(true),
-
-  discount: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 100,
-  },
-
-  quantity: integer(1, true),
-
-  kit: {
-    type: itemKitSchema,
-    default: null,
-    immutable: true,
-  },
-
-  priceAllocation: {
-    type: priceAllocationSchema,
-    default: null,
-    immutable: true,
-  },
-
-  selectedSize: { type: String, default: null },
-  selectedColor: { type: String, default: null },
-
-  // Preserve the conditions applicable when this item was purchased.
-  returnPolicy: { type: String, default: "" },
-
-  returnsEligible: {
-    type: String,
-    enum: ["yes", "no", "unconfirmed"],
-    default: "unconfirmed",
-  },
-
-  returnConditions: { type: String, default: "" },
-
-  returnWindowDays: {
-    ...integer(1, false, 7),
-    max: 7,
-  },
-}, noId);
-
-const shippingAddressSchema = new mongoose.Schema({
-  fullName: { type: String, required: true },
-  name: { type: String, required: true },
-  email: { type: String, required: true },
-  phone: { type: String, required: true },
-  addressLine: { type: String, required: true },
-  landmark: { type: String, default: "" },
-  city: { type: String, required: true },
-  state: { type: String, required: true },
-  pincode: { type: String, required: true },
-  label: { type: String, default: "Home" },
-}, noId);
-
-const pricingSchema = new mongoose.Schema({
-  subtotal: money(true),
-  kitDiscount: money(),
-  couponDiscount: money(),
-  totalAfterCoupon: money(true),
-  shipping: money(true),
-  finalTotal: money(true),
-  currency: { type: String, default: "INR" },
-}, noId);
-
-const trackingEventSchema = new mongoose.Schema({
-  status: { type: String, required: true },
-  description: { type: String, default: "" },
-  timestamp: { type: Date, default: Date.now },
-}, noId);
-
-const returnItemSchema = new mongoose.Schema({
-  index: integer(0, true),
-  quantity: integer(1, true),
-  size: { type: String, default: null },
-  color: { type: String, default: null },
-}, noId);
-
-const returnInspectionItemSchema = new mongoose.Schema({
-  index: integer(0, true),
-  returnedQuantity: integer(1, true),
-  restockQuantity: integer(0, true),
-
-  note: {
-    type: String,
-    default: "",
-    maxlength: 500,
-  },
-}, noId);
+  noId,
+);
 
 returnInspectionItemSchema.pre("validate", function () {
   if (this.restockQuantity > this.returnedQuantity) {
@@ -338,441 +524,591 @@ returnInspectionItemSchema.pre("validate", function () {
   }
 });
 
-const returnRequestSchema = new mongoose.Schema({
-  id: { type: String, default: null },
-
-  type: {
-    type: String,
-    default: null,
-    validate: {
-      validator: (value) =>
-        value == null ||
-        ["return", "exchange"].includes(value),
-      message: "Invalid return request type.",
-    },
-  },
-
-  status: {
-    type: String,
-    default: "not-requested",
-    enum: [
-      "not-requested",
-      "requested",
-      "approved",
-      "rejected",
-      "completed",
-    ],
-  },
-
-  items: {
-    type: [returnItemSchema],
-    default: [],
-  },
-
-  reason: {
-    type: String,
-    default: "",
-    maxlength: 1000,
-  },
-
-  response: {
-    type: String,
-    default: "",
-    maxlength: 1000,
-  },
-
-  requestedAt: date(),
-  respondedAt: date(),
-  approvedAt: date(),
-  rejectedAt: date(),
-  completedAt: date(),
-
-  originalInventoryRestoredAt: date(),
-  exchangeInventoryReservedAt: date(),
-
-  inspectionCompletedAt: date(),
-
-  inspectedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    default: null,
-  },
-
-  inspectionItems: {
-    type: [returnInspectionItemSchema],
-    default: [],
-  },
-}, noId);
-
-const refundSchema = new mongoose.Schema({
-  status: {
-    type: String,
-    default: "not-requested",
-    enum: [
-      "not-requested",
-      "pending",
-      "manual-required",
-      "refunded",
-      "not-applicable",
-    ],
-  },
-
-  amount: money(),
-
-  reference: {
-    type: String,
-    default: "",
-    maxlength: 200,
-  },
-
-  requestedAt: date(),
-  refundedAt: date(),
-
-  // An uncertain submission must be reconciled before another refund.
-  submissionState: {
-    type: String,
-    default: "not-started",
-    enum: [
-      "not-started",
-      "submitting",
-      "submitted",
-      "uncertain",
-      "manual",
-    ],
-  },
-
-  submissionKey: {
-    type: String,
-    default: "",
-    maxlength: 100,
-  },
-
-  submissionStartedAt: date(),
-}, noId);
-
-const paymentSchema = new mongoose.Schema({
-  method: {
-    type: String,
-    enum: ["cod", "razorpay", "cod-partial"],
-    default: "cod",
-  },
-
-  gateway: {
-    type: String,
-    enum: ["cod", "razorpay"],
-    default: "cod",
-  },
-
-  status: {
-    type: String,
-    default: "pending",
-    enum: [
-      "pending",
-      "partially-paid",
-      "paid",
-      "failed",
-      "refunded",
-      "partially-refunded",
-    ],
-  },
-
-  totalAmount: money(),
-
-  // Money retained after completed refunds.
-  amountPaid: money(),
-  amountDue: money(),
-
-  advancePercentage: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 100,
-  },
-
-  advanceAmount: money(),
-  advancePaidAt: date(),
-
-  balanceStatus: {
-    type: String,
-    default: "not-applicable",
-    enum: [
-      "not-applicable",
-      "pending",
-      "collected",
-      "waived",
-    ],
-  },
-
-  balanceCollectedAt: date(),
-
-  grossCollected: money(false, null),
-  refundedAmount: money(),
-
-  amountsReconciled: {
-    type: Boolean,
-    default: false,
-  },
-
-  transactionId: {
-    type: String,
-    default: null,
-    trim: true,
-  },
-
-  razorpayOrderId: {
-    type: String,
-    default: null,
-    trim: true,
-  },
-
-  razorpayPaymentId: {
-    type: String,
-    default: null,
-    trim: true,
-  },
-
-  verifiedAt: date(),
-  paidAt: date(),
-  failedAt: date(),
-}, noId);
-
-const orderSchema = new mongoose.Schema({
-  orderNumber: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-    index: true,
-  },
-
-  checkoutToken: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-
-  source: {
-    type: String,
-    enum: ["cart", "selection", "buy-now"],
-    default: "cart",
-  },
-
-  status: {
-    type: String,
-    default: "confirmed",
-    index: true,
-    enum: [
-      "payment-pending",
-      "confirmed",
-      "processing",
-      "shipped",
-      "out-for-delivery",
-      "delivered",
-      "cancelled",
-    ],
-  },
-
-  giftMessage: {
-    type: String,
-    default: "",
-    maxlength: 250,
-  },
-
-  orderNote: {
-    type: String,
-    default: "",
-    maxlength: 300,
-  },
-
-  customer: {
-    name: { type: String, required: true },
-    email: { type: String, required: true },
-    phone: { type: String, required: true },
-  },
-
-  shippingAddress: {
-    type: shippingAddressSchema,
-    required: true,
-  },
-
-  items: {
-    type: [orderItemSchema],
-    required: true,
-    validate: {
-      validator: (value) =>
-        Array.isArray(value) && value.length > 0,
-      message: "Order must contain at least one item.",
-    },
-  },
-
-  kitSnapshots: {
-    type: [kitSnapshotSchema],
-    default: [],
-    immutable: true,
-    validate: {
-      validator: (value) =>
-        Array.isArray(value) && value.length <= 20,
-      message: "Use at most 20 kit groups per order.",
-    },
-  },
-
-  pricing: {
-    type: pricingSchema,
-    required: true,
-  },
-
-  coupon: {
-    code: { type: String, default: null },
-    type: { type: String, default: null },
-    value: { type: Number, default: null },
-    minimum: { type: Number, default: null },
-  },
-
-  payment: {
-    type: paymentSchema,
-    default: () => ({}),
-  },
-
-  paymentMethod: {
-    type: String,
-    enum: ["cod", "razorpay", "cod-partial"],
-    default: "cod",
-  },
-
-  delivery: {
-    method: {
+const returnRequestSchema = new mongoose.Schema(
+  {
+    id: {
       type: String,
-      enum: ["standard", "express"],
-      default: "standard",
+      default: null,
+    },
+
+    type: {
+      type: String,
+      default: null,
+
+      validate: {
+        validator: (value) =>
+          value == null ||
+          ["return", "exchange"].includes(value),
+
+        message: "Invalid return request type.",
+      },
     },
 
     status: {
       type: String,
-      default: "pending",
+      default: "not-requested",
+
+      enum: [
+        "not-requested",
+        "requested",
+        "approved",
+        "rejected",
+        "completed",
+      ],
     },
 
-    label: {
-      type: String,
-      default: "Standard delivery",
-    },
-
-    estimatedTime: {
-      type: String,
-      default: null,
-    },
-
-    deliveredAt: date(),
-  },
-
-  deliveryMethod: {
-    type: String,
-    enum: ["standard", "express"],
-    default: "standard",
-  },
-
-  tracking: {
-    carrier: {
-      type: String,
-      default: null,
-      maxlength: 100,
-    },
-
-    trackingNumber: {
-      type: String,
-      default: null,
-      maxlength: 150,
-    },
-
-    estimatedDelivery: date(),
-
-    events: {
-      type: [trackingEventSchema],
+    items: {
+      type: [returnItemSchema],
       default: [],
-    },
-  },
-
-  cancellation: {
-    status: {
-      type: String,
-      enum: ["not-cancelled", "cancelled"],
-      default: "not-cancelled",
     },
 
     reason: {
       type: String,
       default: "",
-      maxlength: 500,
+      maxlength: 1000,
     },
 
-    cancelledAt: date(),
-    inventoryRestoredAt: date(),
-  },
-
-  returnRequest: {
-    type: returnRequestSchema,
-    default: () => ({}),
-  },
-
-  refund: {
-    type: refundSchema,
-    default: () => ({}),
-  },
-
-  metadata: {
-    version: {
+    response: {
       type: String,
-      default: "7.0",
+      default: "",
+      maxlength: 1000,
     },
 
-    demo: {
-      type: Boolean,
-      default: true,
+    requestedAt: date(),
+    respondedAt: date(),
+    approvedAt: date(),
+    rejectedAt: date(),
+    completedAt: date(),
+
+    originalInventoryRestoredAt: date(),
+    exchangeInventoryReservedAt: date(),
+
+    inspectionCompletedAt: date(),
+
+    inspectedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
 
-    inventoryReserved: {
+    inspectionItems: {
+      type: [returnInspectionItemSchema],
+      default: [],
+    },
+  },
+  noId,
+);
+
+const refundSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      default: "not-requested",
+
+      enum: [
+        "not-requested",
+        "pending",
+        "manual-required",
+        "refunded",
+        "not-applicable",
+      ],
+    },
+
+    amount: money(),
+
+    reference: {
+      type: String,
+      default: "",
+      maxlength: 200,
+    },
+
+    requestedAt: date(),
+    refundedAt: date(),
+
+    // Reconcile an uncertain submission before another refund.
+    submissionState: {
+      type: String,
+      default: "not-started",
+
+      enum: [
+        "not-started",
+        "submitting",
+        "submitted",
+        "uncertain",
+        "manual",
+      ],
+    },
+
+    submissionKey: {
+      type: String,
+      default: "",
+      maxlength: 100,
+    },
+
+    submissionStartedAt: date(),
+  },
+  noId,
+);
+
+const paymentSchema = new mongoose.Schema(
+  {
+    method: {
+      type: String,
+      enum: ["cod", "razorpay", "cod-partial"],
+      default: "cod",
+    },
+
+    gateway: {
+      type: String,
+      enum: ["cod", "razorpay"],
+      default: "cod",
+    },
+
+    status: {
+      type: String,
+      default: "pending",
+
+      enum: [
+        "pending",
+        "partially-paid",
+        "paid",
+        "failed",
+        "refunded",
+        "partially-refunded",
+      ],
+    },
+
+    totalAmount: money(),
+
+    // Money retained after completed refunds.
+    amountPaid: money(),
+    amountDue: money(),
+
+    advancePercentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+
+    advanceAmount: money(),
+    advancePaidAt: date(),
+
+    balanceStatus: {
+      type: String,
+      default: "not-applicable",
+
+      enum: [
+        "not-applicable",
+        "pending",
+        "collected",
+        "waived",
+      ],
+    },
+
+    balanceCollectedAt: date(),
+
+    grossCollected: money(false, null),
+    refundedAmount: money(),
+
+    amountsReconciled: {
       type: Boolean,
       default: false,
     },
-  },
-}, {
-  timestamps: true,
-  optimisticConcurrency: true,
-});
 
-// Defense in depth: even explicitly selected sourcing data stays out of
+    transactionId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    razorpayOrderId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    razorpayPaymentId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    verifiedAt: date(),
+    paidAt: date(),
+    failedAt: date(),
+  },
+  noId,
+);
+
+const orderSchema = new mongoose.Schema(
+  {
+    orderNumber: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+
+    checkoutToken: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    source: {
+      type: String,
+      enum: ["cart", "selection", "buy-now"],
+      default: "cart",
+    },
+
+    status: {
+      type: String,
+      default: "confirmed",
+      index: true,
+
+      enum: [
+        "payment-pending",
+        "confirmed",
+        "processing",
+        "shipped",
+        "out-for-delivery",
+        "delivered",
+        "cancelled",
+      ],
+    },
+
+    giftMessage: {
+      type: String,
+      default: "",
+      maxlength: 250,
+    },
+
+    orderNote: {
+      type: String,
+      default: "",
+      maxlength: 300,
+    },
+
+    customer: {
+      name: {
+        type: String,
+        required: true,
+      },
+
+      email: {
+        type: String,
+        required: true,
+      },
+
+      phone: {
+        type: String,
+        required: true,
+      },
+    },
+
+    shippingAddress: {
+      type: shippingAddressSchema,
+      required: true,
+    },
+
+    items: {
+      type: [orderItemSchema],
+      required: true,
+
+      validate: {
+        validator: (value) =>
+          Array.isArray(value) && value.length > 0,
+
+        message: "Order must contain at least one item.",
+      },
+    },
+
+    kitSnapshots: {
+      type: [kitSnapshotSchema],
+      default: [],
+      immutable: true,
+
+      validate: {
+        validator: (value) =>
+          Array.isArray(value) && value.length <= 20,
+
+        message: "Use at most 20 kit groups per order.",
+      },
+    },
+
+    shippingSnapshot: {
+      type: PurchasedShippingSchema,
+      default: null,
+      immutable: true,
+    },
+
+    fulfillmentProgress: {
+      type: KitFulfillmentProgressSchema,
+      default: null,
+    },
+
+    pricing: {
+      type: pricingSchema,
+      required: true,
+    },
+
+    coupon: {
+      code: {
+        type: String,
+        default: null,
+      },
+
+      type: {
+        type: String,
+        default: null,
+      },
+
+      value: {
+        type: Number,
+        default: null,
+      },
+
+      minimum: {
+        type: Number,
+        default: null,
+      },
+    },
+
+    payment: {
+      type: paymentSchema,
+      default: () => ({}),
+    },
+
+    paymentMethod: {
+      type: String,
+      enum: ["cod", "razorpay", "cod-partial"],
+      default: "cod",
+    },
+
+    delivery: {
+      method: {
+        type: String,
+        enum: ["standard", "express"],
+        default: "standard",
+      },
+
+      status: {
+        type: String,
+        default: "pending",
+      },
+
+      label: {
+        type: String,
+        default: "Standard delivery",
+      },
+
+      estimatedTime: {
+        type: String,
+        default: null,
+      },
+
+      deliveredAt: date(),
+    },
+
+    deliveryMethod: {
+      type: String,
+      enum: ["standard", "express"],
+      default: "standard",
+    },
+
+    tracking: {
+      carrier: {
+        type: String,
+        default: null,
+        maxlength: 100,
+      },
+
+      trackingNumber: {
+        type: String,
+        default: null,
+        maxlength: 150,
+      },
+
+      estimatedDelivery: date(),
+
+      events: {
+        type: [trackingEventSchema],
+        default: [],
+      },
+    },
+
+    cancellation: {
+      status: {
+        type: String,
+        enum: ["not-cancelled", "cancelled"],
+        default: "not-cancelled",
+      },
+
+      reason: {
+        type: String,
+        default: "",
+        maxlength: 500,
+      },
+
+      cancelledAt: date(),
+      inventoryRestoredAt: date(),
+    },
+
+    returnRequest: {
+      type: returnRequestSchema,
+      default: () => ({}),
+    },
+
+    refund: {
+      type: refundSchema,
+      default: () => ({}),
+    },
+
+    metadata: {
+      version: {
+        type: String,
+        default: "7.0",
+      },
+
+      demo: {
+        type: Boolean,
+        default: true,
+      },
+
+      inventoryReserved: {
+        type: Boolean,
+        default: false,
+      },
+    },
+  },
+  {
+    timestamps: true,
+    optimisticConcurrency: true,
+  },
+);
+
+// Even explicitly selected sourcing data stays out of
 // ordinary serialization, customer emails and receipts.
 function hideSourcing(document, result) {
-  for (const item of result.items || []) delete item.sourcing;
+  for (const item of result.items || []) {
+    delete item.sourcing;
+  }
+
+  if (result.fulfillmentProgress) {
+    result.fulfillmentProgress =
+      publicKitFulfillmentFields(result);
+  }
+
   return result;
 }
-orderSchema.set("toJSON", { transform: hideSourcing });
-orderSchema.set("toObject", { transform: hideSourcing });
+
+orderSchema.set("toJSON", {
+  transform: hideSourcing,
+});
+
+orderSchema.set("toObject", {
+  transform: hideSourcing,
+});
+
 orderSchema.pre("validate", function () {
   if (!this.isNew && this.isModified("items")) {
-    this.invalidate("items", "Purchased items and internal sourcing snapshots cannot be replaced after order creation.");
+    this.invalidate(
+      "items",
+      "Purchased items and internal sourcing snapshots cannot be replaced after order creation.",
+    );
   }
 });
-for (const operation of ["updateOne", "updateMany", "findOneAndUpdate", "replaceOne", "findOneAndReplace"]) {
+
+for (const operation of [
+  "updateOne",
+  "updateMany",
+  "findOneAndUpdate",
+  "replaceOne",
+  "findOneAndReplace",
+]) {
   orderSchema.pre(operation, function () {
     const update = this.getUpdate();
-    if (["replaceOne", "findOneAndReplace"].includes(this.op) || Array.isArray(update)) throw new Error("Order replacements cannot overwrite purchased sourcing snapshots.");
+
+    if (
+      ["replaceOne", "findOneAndReplace"].includes(this.op) ||
+      Array.isArray(update)
+    ) {
+      throw new Error(
+        "Order replacements cannot overwrite purchased sourcing snapshots.",
+      );
+    }
+
     for (const [operator, values] of Object.entries(update || {})) {
-      const paths = operator.startsWith("$") ? Object.keys(values || {}) : [operator];
-      if (paths.some(path => path === "items" || path.startsWith("items.")) ||
-          (operator === "$rename" && Object.values(values || {}).some(path => path === "items" || String(path).startsWith("items.")))) {
-        throw new Error("Purchased items and sourcing snapshots cannot be changed.");
+      const paths = operator.startsWith("$")
+        ? Object.keys(values || {})
+        : [operator];
+
+      const purchasePath = (path) =>
+        [
+          "items",
+          "kitSnapshots",
+          "shippingSnapshot",
+        ].some(
+          (root) =>
+            path === root ||
+            String(path).startsWith(`${root}.`),
+        );
+
+      if (
+        paths.some(purchasePath) ||
+        (
+          operator === "$rename" &&
+          Object.values(values || {}).some(purchasePath)
+        )
+      ) {
+        throw new Error(
+          "Purchased items, kit details and shipping snapshots cannot be changed.",
+        );
       }
     }
   });
 }
 
+orderSchema.pre("validate", function () {
+  if (!this.isNew && this.isModified("shippingSnapshot")) {
+    this.invalidate(
+      "shippingSnapshot",
+      "Purchased shipping terms cannot be changed.",
+    );
+
+    return;
+  }
+
+  try {
+    validatePurchasedShipping(this);
+  } catch (error) {
+    this.invalidate(
+      "shippingSnapshot",
+      error.message,
+    );
+  }
+});
+
+orderSchema.pre("validate", function () {
+  try {
+    validateKitProgress(this);
+  } catch (error) {
+    this.invalidate(
+      "fulfillmentProgress",
+      error.message,
+    );
+  }
+});
+
 // Kit snapshots describe the purchase.
-// Procurement and shipment progress must be stored separately.
+// Procurement and shipment progress are stored separately.
 orderSchema.pre("validate", function () {
   const snapshotChanged =
     this.isModified("kitSnapshots") ||
@@ -787,6 +1123,7 @@ orderSchema.pre("validate", function () {
       "kitSnapshots",
       "Purchased kit snapshots and discount allocations cannot be edited.",
     );
+
     return;
   }
 
@@ -819,6 +1156,7 @@ orderSchema.pre("validate", function () {
       "items",
       "Load the complete order to validate kit purchase amounts.",
     );
+
     return;
   }
 
@@ -830,6 +1168,7 @@ orderSchema.pre("validate", function () {
         "kitSnapshots",
         "Each purchased kit must have a distinct group ID.",
       );
+
       return;
     }
 
@@ -856,6 +1195,7 @@ orderSchema.pre("validate", function () {
         `items.${index}.priceAllocation`,
         "Every item in a kit order needs its server-calculated discount allocation.",
       );
+
       continue;
     }
 
@@ -902,6 +1242,7 @@ orderSchema.pre("validate", function () {
           `items.${index}.kit`,
           "Kit components need a matching snapshot and distinct section keys.",
         );
+
         continue;
       }
 
@@ -968,8 +1309,13 @@ orderSchema.pre("validate", function () {
 });
 
 orderSchema.index(
-  { user: 1, checkoutToken: 1 },
-  { unique: true },
+  {
+    user: 1,
+    checkoutToken: 1,
+  },
+  {
+    unique: true,
+  },
 );
 
 orderSchema.index({
@@ -983,8 +1329,12 @@ orderSchema.index({
 });
 
 orderSchema.index(
-  { "payment.razorpayOrderId": 1 },
-  { sparse: true },
+  {
+    "payment.razorpayOrderId": 1,
+  },
+  {
+    sparse: true,
+  },
 );
 
 orderSchema.index({

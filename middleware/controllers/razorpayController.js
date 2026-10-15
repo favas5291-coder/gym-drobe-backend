@@ -1,4 +1,32 @@
-const { snapshotProductSourcing } = require("../../utils/orderSourcing");
+const {
+  selectedProductImage,
+} = require("../../utils/productImages");
+
+const {
+  kitReviewKey,
+} = require("../../utils/kitReviewKey");
+
+const {
+  loadCheckoutReview,
+} = require("../../utils/checkoutReview");
+
+const {
+  snapshotPurchasedShipping,
+} = require("../../utils/purchasedShipping");
+
+const {
+  initializeKitFulfillment,
+} = require("../../utils/kitFulfillmentProgress");
+
+const {
+  publicKitItemFields,
+  publicKitOrderFields,
+} = require("../../utils/publicKitOrder");
+
+const {
+  snapshotProductSourcing,
+} = require("../../utils/orderSourcing");
+
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 
@@ -275,6 +303,7 @@ function fail(
   const known = error?.gymdrobe === true;
 
   let status = known ? error.status : 503;
+
   let code = known
     ? error.code
     : "PAYMENT_UNAVAILABLE";
@@ -287,6 +316,7 @@ function fail(
 
   if (!known && error?.name === "ValidationError") {
     code = "ORDER_VALIDATION_FAILED";
+
     message =
       "Your order could not be saved. Contact support with the error reference.";
   }
@@ -294,6 +324,7 @@ function fail(
   if (!known && error?.code === 11000) {
     status = 409;
     code = "ORDER_CONFLICT";
+
     message =
       "An order conflict occurred. Check My orders before trying again.";
   }
@@ -321,10 +352,12 @@ function fail(
         }
       : {}),
 
-    ...((verification && !known) ||
-    error?.verificationUncertain
-      ? { verificationUncertain: true }
-      : {}),
+    ...(
+      (verification && !known) ||
+      error?.verificationUncertain
+        ? { verificationUncertain: true }
+        : {}
+    ),
   });
 }
 
@@ -387,8 +420,9 @@ function payable(order) {
   if (
     method === "cod-partial" &&
     (
-      amount !==
-        cents(advance(order.pricing).advanceAmount) ||
+      amount !== cents(
+        advance(order.pricing).advanceAmount,
+      ) ||
       payment.advancePercentage !== 10
     )
   ) {
@@ -452,7 +486,10 @@ function safeOrder(order) {
       returnsEligible: item.returnsEligible,
       returnConditions: item.returnConditions,
       returnWindowDays: item.returnWindowDays,
+      ...publicKitItemFields(item),
     })),
+
+    ...publicKitOrderFields(value),
 
     pricing: value.pricing,
     coupon: value.coupon,
@@ -569,8 +606,12 @@ function address(value) {
 
 async function findProduct(id) {
   if (mongoose.isObjectIdOrHexString(id)) {
-    const product = await Product.findById(id).select("+meeshoProductLink");
-    if (product) return product;
+    const product = await Product.findById(id)
+      .select("+meeshoProductLink");
+
+    if (product) {
+      return product;
+    }
   }
 
   if (
@@ -581,7 +622,9 @@ async function findProduct(id) {
       legacyId: Number(id),
     }).select("+meeshoProductLink");
 
-    if (product) return product;
+    if (product) {
+      return product;
+    }
   }
 
   return Product.findOne({
@@ -590,6 +633,92 @@ async function findProduct(id) {
 }
 
 async function snapshot(body) {
+  const hasKit = (
+    Array.isArray(body.items) &&
+    body.items.some(
+      (item) =>
+        item &&
+        Object.prototype.hasOwnProperty.call(
+          item,
+          "kitGroup",
+        ),
+    )
+  );
+
+  if (hasKit) {
+    const destination = address(
+      body.shippingAddress,
+    );
+
+    const {
+      quote: reviewed,
+      products,
+    } = await loadCheckoutReview({
+      ...body,
+      pincode: destination.pincode,
+    });
+
+    const shippingSnapshot =
+      snapshotPurchasedShipping(
+        reviewed,
+        destination.pincode,
+      );
+
+    if (
+      body.expectedTotal != null &&
+      cents(body.expectedTotal) !==
+        cents(reviewed.pricing.finalTotal)
+    ) {
+      throw problem(
+        409,
+        "Your kit total changed. Review the current total before paying.",
+        "CHECKOUT_TOTAL_CHANGED",
+      );
+    }
+
+    if (
+      typeof body.expectedReviewKey !== "string" ||
+      !/^[a-f0-9]{64}$/.test(
+        body.expectedReviewKey,
+      ) ||
+      body.expectedReviewKey !==
+        kitReviewKey(
+          reviewed,
+          destination.pincode,
+        )
+    ) {
+      throw problem(
+        409,
+        "Your kit prices, package contents or delivery terms changed. Refresh the checkout review before paying.",
+        "CHECKOUT_REVIEW_CHANGED",
+      );
+    }
+
+    const sourceProducts = new Map(
+      products.map((product) => [
+        String(product._id || product.id),
+        product,
+      ]),
+    );
+
+    return {
+      items: reviewed.items.map((item) => ({
+        ...item,
+        sourcing: snapshotProductSourcing(
+          sourceProducts.get(
+            String(item.product),
+          ),
+        ),
+      })),
+
+      kitSnapshots: reviewed.kitSnapshots,
+      shippingSnapshot,
+      coupon: reviewed.coupon,
+      pricing: reviewed.pricing,
+      method: reviewed.method,
+    };
+  }
+
   if (
     !Array.isArray(body.items) ||
     body.items.length < 1 ||
@@ -662,6 +791,7 @@ async function snapshot(body) {
       const key = String(product._id);
 
       product = products.get(key) || product;
+
       products.set(key, product);
       aliases.set(id, product);
     }
@@ -764,7 +894,12 @@ async function snapshot(body) {
 
         name: product.name,
         brand: product.brand || "",
-        image: product.image || "",
+
+        image: selectedProductImage(
+          product,
+          color,
+        ),
+
         originalPrice: getOriginalPrice(product),
         price: getDiscountedPrice(product),
         discount: Number(product.discount || 0),
@@ -793,8 +928,8 @@ async function snapshot(body) {
       });
     }
 
-    // Check combined stock in memory during quoting.
-    // Inventory is saved only when captured payment is finalized.
+    // Quote-time stock changes stay in memory.
+    // Database inventory changes happen during confirmation.
     reserveVariantStock(
       product,
       quantity,
@@ -923,6 +1058,88 @@ function quote(order) {
       cents(order.pricing[key]),
     ),
 
+    ...(order.kitSnapshots?.length
+      ? {
+          kitPurchase: {
+            items: (order.items || []).map(
+              (item) => [
+                String(item.product),
+                item.kit?.groupId || null,
+                item.kit?.slotKey || null,
+                item.kit?.role || null,
+
+                item.priceAllocation
+                  ? [
+                      item.priceAllocation.quantity,
+                      item.priceAllocation.lineSubtotalPaise,
+                      item.priceAllocation.kitDiscountPaise,
+                      item.priceAllocation.couponDiscountPaise,
+                      item.priceAllocation.linePaidPaise,
+                      item.priceAllocation.unitBasePaise,
+                      item.priceAllocation.extraPaiseUnits,
+                    ]
+                  : null,
+              ],
+            ),
+
+            templates: order.kitSnapshots.map(
+              (kit) => [
+                kit.groupId,
+                String(kit.template),
+                kit.templateVersion,
+                kit.name,
+                kit.fulfillmentMode,
+                kit.linePaidPaise,
+              ],
+            ),
+
+            shipping: order.shippingSnapshot
+              ? {
+                  destinationPincode:
+                    order.shippingSnapshot.destinationPincode,
+
+                  paymentMethod:
+                    order.shippingSnapshot.paymentMethod,
+
+                  shipments:
+                    order.shippingSnapshot.shipments.map(
+                      (parcel) => [
+                        parcel.key,
+                        parcel.groupId || null,
+                        parcel.label,
+                        parcel.carrier,
+                        parcel.service,
+                        parcel.merchandisePaise,
+                        parcel.shippingPaise,
+                        parcel.amountDuePaise,
+
+                        [
+                          parcel.preparationDays.minimum,
+                          parcel.preparationDays.maximum,
+                        ],
+
+                        [
+                          parcel.transitDays.minimum,
+                          parcel.transitDays.maximum,
+                        ],
+
+                        parcel.contents.map(
+                          (row) => [
+                            row.itemIndex,
+                            row.productId,
+                            row.quantity,
+                            row.selectedSize || null,
+                            row.selectedColor || null,
+                          ],
+                        ),
+                      ],
+                    ),
+                }
+              : null,
+          },
+        }
+      : {}),
+
     coupon: order.coupon?.code || null,
     deliveryMethod: order.deliveryMethod,
     address: address(order.shippingAddress),
@@ -981,6 +1198,7 @@ function recordPayment(order, payment) {
   }
 
   const now = new Date();
+
   const cod =
     order.payment.method === "cod-partial";
 
@@ -1023,6 +1241,7 @@ function recordPayment(order, payment) {
 
 function audit(order, status, description) {
   order.tracking = order.tracking || {};
+
   order.tracking.events =
     order.tracking.events || [];
 
@@ -1096,6 +1315,7 @@ function resultResponse(
   return res.json({
     success: true,
     paymentVerified: true,
+
     ...(alreadyPaid
       ? { alreadyPaid: true }
       : {}),
@@ -1164,6 +1384,7 @@ async function bindGateway(
           state: "ready",
           razorpayOrderId: gateway.id,
         },
+
         $inc: { __v: 1 },
       },
       {
@@ -1213,6 +1434,7 @@ async function bindGateway(
         $set: {
           "payment.razorpayOrderId":
             gateway.id,
+
           "payment.status": "pending",
           "payment.failedAt": null,
         },
@@ -1326,7 +1548,7 @@ async function providerOrder(order, config) {
       );
     }
 
-    // Recover an uncertain creation through its exact receipt.
+    // Recover uncertain creation using its exact receipt.
     const data = await gatewayCall(
       () =>
         config.client.orders.all({
@@ -1675,6 +1897,9 @@ async function createRazorpayOrder(req, res) {
           },
 
           items: current.items,
+          kitSnapshots: current.kitSnapshots || [],
+          shippingSnapshot:
+            current.shippingSnapshot || null,
 
           pricing: {
             ...current.pricing,
@@ -1697,6 +1922,7 @@ async function createRazorpayOrder(req, res) {
               current.pricing.finalTotal,
 
             amountPaid: 0,
+
             amountDue:
               current.pricing.finalTotal,
 
@@ -1944,6 +2170,7 @@ async function refundCancelled(order, payment) {
       }
 
       current.payment.amountDue = 0;
+
       current.payment.balanceStatus =
         "not-applicable";
 
@@ -2082,6 +2309,7 @@ async function refundCancelled(order, payment) {
       }
 
       current.refund.reference = result.id;
+
       current.refund.submissionState =
         "submitted";
 
@@ -2270,6 +2498,14 @@ async function finalizeCapturedPayment(
 
         current.status = "confirmed";
 
+        if (
+          current.kitSnapshots?.length &&
+          !current.fulfillmentProgress
+        ) {
+          current.fulfillmentProgress =
+            initializeKitFulfillment(current);
+        }
+
         audit(
           current,
           "confirmed",
@@ -2330,8 +2566,10 @@ async function finalizeCapturedPayment(
           current.cancellation,
           {
             status: "cancelled",
+
             reason:
               "Product stock changed after online payment.",
+
             cancelledAt: new Date(),
           },
         );
@@ -2467,7 +2705,7 @@ async function verifyRazorpayPayment(
             ),
         );
       } catch {
-        // Fetch the provider's actual state after an uncertain capture response.
+        // Fetch actual provider state after an uncertain capture.
       }
 
       payment = await gatewayCall(

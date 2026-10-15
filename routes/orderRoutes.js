@@ -10,6 +10,7 @@ const {
   getAdminOrders,
   getAdminOrderById,
   updateAdminOrderStatus,
+  updateAdminKitFulfillment,
 
   getAdminReturnRequests,
   reviewReturnRequest,
@@ -51,6 +52,12 @@ router.put(
   updateAdminOrderStatus,
 );
 
+router.put(
+  "/admin/orders/:id/kit-fulfillment",
+  adminOnly,
+  updateAdminKitFulfillment,
+);
+
 router.get(
   "/admin/orders/:id",
   adminOnly,
@@ -69,7 +76,7 @@ router.put(
   reviewReturnRequest,
 );
 
-// Completion now requires recorded inspection quantities.
+// Completion requires recorded inspection quantities.
 router.put(
   "/admin/returns/:id/complete",
   adminOnly,

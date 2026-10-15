@@ -1,3 +1,7 @@
+const {
+  calculateItemRefundPaise,
+} = require("../../utils/orderRefundAllocation");
+
 const mongoose = require("mongoose");
 
 const Order = require("../../models/Order");
@@ -96,101 +100,14 @@ function cents(value) {
 }
 
 function refundAmount(order, rows) {
-  const lines = order.items.map(item => {
-    const quantity = whole(
-      item.quantity,
-      "purchased quantity",
-      1,
-    );
-
-    const price = cents(item.price);
-    const value = price * quantity;
-
-    if (!Number.isSafeInteger(value)) {
-      throw problem(
-        409,
-        "Purchased prices need review.",
-        "REFUND_AMOUNT_INVALID",
-      );
-    }
-
-    return { quantity, price, value };
-  });
-
-  const subtotal = lines.reduce(
-    (sum, line) => sum + line.value,
-    0,
+  return calculateItemRefundPaise(
+    order,
+    rows.map((row) => ({
+      index: row.index,
+      returnedQuantity: row.returnedQuantity,
+    })),
+    "returnedQuantity",
   );
-
-  const discount = cents(
-    order.pricing.couponDiscount,
-  );
-
-  if (
-    !Number.isSafeInteger(subtotal) ||
-    subtotal !== cents(order.pricing.subtotal) ||
-    discount > subtotal ||
-    subtotal - discount !==
-      cents(order.pricing.totalAfterCoupon)
-  ) {
-    throw problem(
-      409,
-      "Purchased prices and coupon savings need reconciliation.",
-      "REFUND_AMOUNT_INVALID",
-    );
-  }
-
-  const allocations = lines.map((line, index) => {
-    const numerator =
-      BigInt(line.value) * BigInt(discount);
-
-    return {
-      index,
-      discount: subtotal
-        ? Number(numerator / BigInt(subtotal))
-        : 0,
-      remainder: subtotal
-        ? numerator % BigInt(subtotal)
-        : 0n,
-    };
-  });
-
-  let remaining =
-    discount -
-    allocations.reduce(
-      (sum, line) => sum + line.discount,
-      0,
-    );
-
-  const sorted = [...allocations].sort((a, b) =>
-    a.remainder === b.remainder
-      ? a.index - b.index
-      : a.remainder > b.remainder
-        ? -1
-        : 1,
-  );
-
-  for (const line of sorted) {
-    if (remaining-- <= 0) break;
-    line.discount += 1;
-  }
-
-  return rows.reduce((sum, row) => {
-    const line = lines[row.index];
-    const allocated =
-      allocations[row.index].discount;
-
-    return (
-      sum +
-      line.price * row.returnedQuantity -
-      Math.floor(allocated / line.quantity) *
-        row.returnedQuantity -
-      Math.min(
-        allocated % line.quantity,
-        row.returnedQuantity,
-      )
-    );
-  }, 0);
 }
 
 function paymentCheck(order) {
@@ -216,8 +133,10 @@ function paymentCheck(order) {
     (order.pricing.currency || "INR") !== "INR" ||
     payment.status !== "paid" ||
     !["razorpay", "cod-partial", "cod"].includes(method) ||
-    (order.paymentMethod &&
-      order.paymentMethod !== method)
+    (
+      order.paymentMethod &&
+      order.paymentMethod !== method
+    )
   ) {
     throw problem(
       409,
@@ -338,58 +257,60 @@ function inspectionRows(order, input) {
 
   const seen = new Set();
 
-  return requested.map(row => {
-    if (!row || typeof row !== "object") {
-      throw problem(
-        409,
-        "The recorded request items need reconciliation.",
-        "RETURN_ITEMS_INVALID",
+  return requested
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        throw problem(
+          409,
+          "The recorded request items need reconciliation.",
+          "RETURN_ITEMS_INVALID",
+        );
+      }
+
+      const index = whole(row.index, "item index");
+
+      const returnedQuantity = whole(
+        row.quantity,
+        "received quantity",
+        1,
       );
-    }
 
-    const index = whole(row.index, "item index");
+      const item = order.items?.[index];
+      const inspection = byIndex.get(index);
 
-    const returnedQuantity = whole(
-      row.quantity,
-      "received quantity",
-      1,
-    );
+      if (
+        !item ||
+        !inspection ||
+        seen.has(index) ||
+        returnedQuantity >
+          whole(item.quantity, "purchased quantity", 1) ||
+        inspection.restockQuantity > returnedQuantity ||
+        (
+          inspection.restockQuantity < returnedQuantity &&
+          inspection.note.length < 3
+        )
+      ) {
+        throw problem(
+          400,
+          "Check received and saleable quantities. Explain any items held out of stock.",
+          "INVALID_INSPECTION",
+        );
+      }
 
-    const item = order.items?.[index];
-    const inspection = byIndex.get(index);
+      seen.add(index);
 
-    if (
-      !item ||
-      !inspection ||
-      seen.has(index) ||
-      returnedQuantity >
-        whole(item.quantity, "purchased quantity", 1) ||
-      inspection.restockQuantity > returnedQuantity ||
-      (
-        inspection.restockQuantity < returnedQuantity &&
-        inspection.note.length < 3
-      )
-    ) {
-      throw problem(
-        400,
-        "Check received and saleable quantities. Explain any items held out of stock.",
-        "INVALID_INSPECTION",
-      );
-    }
-
-    seen.add(index);
-
-    return {
-      index,
-      returnedQuantity,
-      ...inspection,
-    };
-  }).sort((a, b) => a.index - b.index);
+      return {
+        index,
+        returnedQuantity,
+        ...inspection,
+      };
+    })
+    .sort((a, b) => a.index - b.index);
 }
 
 function fingerprint(rows) {
   return JSON.stringify(
-    rows.map(row => [
+    rows.map((row) => [
       row.index,
       row.returnedQuantity,
       row.restockQuantity,
@@ -675,12 +596,14 @@ async function completeInspectedReturn(req, res) {
       }
 
       order.tracking = order.tracking || {};
+
       order.tracking.events =
         order.tracking.events || [];
 
       order.tracking.events.push({
         status: `${request.type}-completed`,
         timestamp: now,
+
         description:
           `Original items received and inspected. ${restocked} accepted saleable units restored. ${
             request.type === "return"
@@ -704,22 +627,23 @@ async function completeInspectedReturn(req, res) {
       },
 
       json(data) {
-        return res.status(
-          this.responseStatus,
-        ).json({
-          ...data,
+        return res
+          .status(this.responseStatus)
+          .json({
+            ...data,
 
-          ...(data.success
-            ? {
-                existing,
-                message: existing
-                  ? "This inspection is already recorded."
-                  : "Inspection completed. Only accepted saleable quantities were restored.",
-              }
-            : {
-                saveResultUnknown: true,
-              }),
-        });
+            ...(data.success
+              ? {
+                  existing,
+
+                  message: existing
+                    ? "This inspection is already recorded."
+                    : "Inspection completed. Only accepted saleable quantities were restored.",
+                }
+              : {
+                  saveResultUnknown: true,
+                }),
+          });
       },
     });
   } catch (error) {
@@ -735,25 +659,25 @@ async function completeInspectedReturn(req, res) {
       );
     }
 
-    return res.status(
-      conflict ? 409 : error.status || 503,
-    ).json({
-      success: false,
+    return res
+      .status(conflict ? 409 : error.status || 503)
+      .json({
+        success: false,
 
-      code: conflict
-        ? "RETURN_CHANGED"
-        : error.code || "RETURN_SERVICE_UNAVAILABLE",
+        code: conflict
+          ? "RETURN_CHANGED"
+          : error.code || "RETURN_SERVICE_UNAVAILABLE",
 
-      message: conflict
-        ? "The request changed. Reload it before retrying."
-        : error.status
-          ? error.message
-          : "Inspection could not be confirmed. Reload the request before retrying.",
+        message: conflict
+          ? "The request changed. Reload it before retrying."
+          : error.status
+            ? error.message
+            : "Inspection could not be confirmed. Reload the request before retrying.",
 
-      ...(!error.status && !conflict
-        ? { saveResultUnknown: true }
-        : {}),
-    });
+        ...(!error.status && !conflict
+          ? { saveResultUnknown: true }
+          : {}),
+      });
   } finally {
     if (session) {
       await session.endSession();

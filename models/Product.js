@@ -1,4 +1,11 @@
-const { normalizeMeeshoLink } = require("../utils/meeshoUrl");
+const {
+  normalizeColorImages,
+} = require("../utils/productImages");
+
+const {
+  normalizeMeeshoLink,
+} = require("../utils/meeshoUrl");
+
 const mongoose = require("mongoose");
 const crypto = require("node:crypto");
 
@@ -18,16 +25,22 @@ function cleanArray(
   length = 200,
   caseSensitive = false
 ) {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
 
   const seen = new Set();
 
   return value
     .map((item) => clean(item))
     .filter((item) => {
-      const key = caseSensitive ? item : item.toLowerCase();
+      const key = caseSensitive
+        ? item
+        : item.toLowerCase();
 
-      if (!item || seen.has(key)) return false;
+      if (!item || seen.has(key)) {
+        return false;
+      }
 
       seen.add(key);
       return true;
@@ -51,7 +64,8 @@ function record(value) {
     value !== null &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    Object.prototype.toString.call(value) === "[object Object]"
+    Object.prototype.toString.call(value) ===
+      "[object Object]"
   );
 }
 
@@ -63,8 +77,10 @@ function optionalDays() {
     max: 365,
     validate: {
       validator: (value) =>
-        value == null || Number.isSafeInteger(value),
-      message: "Days must be a whole number from 0 to 365.",
+        value == null ||
+        Number.isSafeInteger(value),
+      message:
+        "Days must be a whole number from 0 to 365.",
     },
   };
 }
@@ -88,14 +104,19 @@ function stockRows(product) {
   const variants = product.variants ?? {};
 
   if (!record(variants)) {
-    throw new Error("Variant stock must be an object.");
+    throw new Error(
+      "Variant stock must be an object."
+    );
   }
 
   const sizes = product.sizes || [];
   const colors = product.colors || [];
 
   for (const option of [...sizes, ...colors]) {
-    if (!validKey(option) || option === "default") {
+    if (
+      !validKey(option) ||
+      option === "default"
+    ) {
       throw new Error(
         "Choose valid size and colour names. The name default is reserved."
       );
@@ -122,22 +143,32 @@ function stockRows(product) {
   }
 
   const own = (value, key) =>
-    Object.prototype.hasOwnProperty.call(value || {}, key);
+    Object.prototype.hasOwnProperty.call(
+      value || {},
+      key
+    );
 
   const rows = [];
   const normalized = {};
 
   function quantity(value, color, size) {
     if (
-      !["number", "string"].includes(typeof value) ||
-      (typeof value === "string" && !value.trim()) ||
+      !["number", "string"].includes(
+        typeof value
+      ) ||
+      (
+        typeof value === "string" &&
+        !value.trim()
+      ) ||
       !Number.isSafeInteger(Number(value)) ||
       Number(value) < 0 ||
       Number(value) > 1000000
     ) {
       throw new Error(
         `Enter a whole stock quantity for ${
-          [color, size].filter(Boolean).join(" / ")
+          [color, size]
+            .filter(Boolean)
+            .join(" / ")
         }.`
       );
     }
@@ -147,12 +178,16 @@ function stockRows(product) {
 
   function keys(value, allowed) {
     if (!record(value)) {
-      throw new Error("Provide stock quantities as an object.");
+      throw new Error(
+        "Provide stock quantities as an object."
+      );
     }
 
     if (
       Object.keys(value).some(
-        (key) => !validKey(key) || !allowed.includes(key)
+        (key) =>
+          !validKey(key) ||
+          !allowed.includes(key)
       )
     ) {
       throw new Error(
@@ -161,7 +196,10 @@ function stockRows(product) {
     }
   }
 
-  keys(variants, colors.length ? colors : sizes);
+  keys(
+    variants,
+    colors.length ? colors : sizes
+  );
 
   if (colors.length) {
     for (const color of colors) {
@@ -176,47 +214,79 @@ function stockRows(product) {
 
         for (const size of sizes) {
           const count = quantity(
-            own(group, size) ? group[size] : 0,
+            own(group, size)
+              ? group[size]
+              : 0,
             color,
             size
           );
 
           normalized[color][size] = count;
-          rows.push({ color, size, quantity: count });
+
+          rows.push({
+            color,
+            size,
+            quantity: count,
+          });
         }
       } else {
         let value;
 
         // Compatibility with older colour-only stock:
         // { Black: 5 }
-        if (["number", "string"].includes(typeof group)) {
+        if (
+          ["number", "string"].includes(
+            typeof group
+          )
+        ) {
           value = group;
         } else {
           keys(group, ["default"]);
-          value = own(group, "default") ? group.default : 0;
+
+          value = own(group, "default")
+            ? group.default
+            : 0;
         }
 
-        const count = quantity(value, color, "");
+        const count = quantity(
+          value,
+          color,
+          ""
+        );
 
         normalized[color].default = count;
-        rows.push({ color, size: "", quantity: count });
+
+        rows.push({
+          color,
+          size: "",
+          quantity: count,
+        });
       }
     }
   } else {
     for (const size of sizes) {
       const count = quantity(
-        own(variants, size) ? variants[size] : 0,
+        own(variants, size)
+          ? variants[size]
+          : 0,
         "",
         size
       );
 
       normalized[size] = count;
-      rows.push({ color: "", size, quantity: count });
+
+      rows.push({
+        color: "",
+        size,
+        quantity: count,
+      });
     }
   }
 
   if (rows.length > 2500) {
-    throw new Error("A product cannot exceed 2,500 variants.");
+    throw new Error(
+      "A product cannot exceed 2,500 variants."
+    );
   }
 
   return {
@@ -238,7 +308,9 @@ function variantSku(productCode, color, size) {
 
   const signature = crypto
     .createHash("sha256")
-    .update(JSON.stringify([color, size]))
+    .update(
+      JSON.stringify([color, size])
+    )
     .digest("hex")
     .slice(0, 16)
     .toUpperCase();
@@ -267,12 +339,17 @@ const reviewSchema = new mongoose.Schema(
       maxlength: 2000,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
 const deliverySchema = new mongoose.Schema(
   {
-    available: { type: Boolean, default: true },
+    available: {
+      type: Boolean,
+      default: true,
+    },
     estimatedDays: {
       type: String,
       default: null,
@@ -291,125 +368,176 @@ const deliverySchema = new mongoose.Schema(
     transitDaysMin: optionalDays(),
     transitDaysMax: optionalDays(),
   },
-  { _id: false }
-);
-
-deliverySchema.pre("validate", function () {
-  validateRange(this, "transitDaysMin", "transitDaysMax");
-});
-
-const fulfillmentSchema = new mongoose.Schema(
   {
-    stockSource: {
-      type: String,
-      enum: ["unconfirmed", "gymdrobe", "supplier"],
-      default: "unconfirmed",
-    },
-    dispatchBy: {
-      type: String,
-      enum: [
-        "unconfirmed",
-        "gymdrobe",
-        "supplier",
-        "fulfillment-partner",
-      ],
-      default: "unconfirmed",
-    },
-    preparationDaysMin: optionalDays(),
-    preparationDaysMax: optionalDays(),
-    canSendToPackingLocation: {
-      type: Boolean,
-      default: false,
-    },
-    supplierStockConfirmedAt: {
-      type: Date,
-      default: null,
-    },
-  },
-  { _id: false }
-);
-
-fulfillmentSchema.pre("validate", function () {
-  validateRange(
-    this,
-    "preparationDaysMin",
-    "preparationDaysMax"
-  );
-});
-
-const kitSettingsSchema = new mongoose.Schema(
-  {
-    eligible: { type: Boolean, default: false },
-    roles: {
-      type: [
-        {
-          type: String,
-          enum: [
-            "clothing",
-            "footwear",
-            "supplements",
-            "training-accessories",
-            "gym-bag",
-            "bottle-or-shaker",
-            "workout-essentials",
-          ],
-        },
-      ],
-      default: [],
-    },
-  },
-  { _id: false }
-);
-
-kitSettingsSchema.pre("validate", function () {
-  if (this.roles) {
-    this.roles = [...new Set(this.roles)];
+    _id: false,
   }
+);
 
-  if (this.eligible && !this.roles?.length) {
-    this.invalidate(
-      "roles",
-      "Choose at least one kit category before enabling kit eligibility."
+deliverySchema.pre(
+  "validate",
+  function () {
+    validateRange(
+      this,
+      "transitDaysMin",
+      "transitDaysMax"
     );
   }
-});
-
-const optionLabelsSchema = new mongoose.Schema(
-  {
-    // Reuse existing size/colour inventory axes and SKUs.
-    size: {
-      type: String,
-      enum: [
-        "Size",
-        "Pack size",
-        "Capacity",
-        "Weight",
-        "Length",
-        "Option",
-      ],
-      default: "Size",
-    },
-    color: {
-      type: String,
-      enum: ["Colour", "Flavour", "Style", "Material", "Option"],
-      default: "Colour",
-    },
-  },
-  { _id: false }
 );
 
-const variantSkuSchema = new mongoose.Schema(
-  {
-    color: { type: String, default: "" },
-    size: { type: String, default: "" },
-    sku: {
-      type: String,
-      required: true,
-      maxlength: 100,
+const fulfillmentSchema =
+  new mongoose.Schema(
+    {
+      stockSource: {
+        type: String,
+        enum: [
+          "unconfirmed",
+          "gymdrobe",
+          "supplier",
+        ],
+        default: "unconfirmed",
+      },
+      dispatchBy: {
+        type: String,
+        enum: [
+          "unconfirmed",
+          "gymdrobe",
+          "supplier",
+          "fulfillment-partner",
+        ],
+        default: "unconfirmed",
+      },
+      preparationDaysMin: optionalDays(),
+      preparationDaysMax: optionalDays(),
+      canSendToPackingLocation: {
+        type: Boolean,
+        default: false,
+      },
+      supplierStockConfirmedAt: {
+        type: Date,
+        default: null,
+      },
     },
-  },
-  { _id: false }
+    {
+      _id: false,
+    }
+  );
+
+fulfillmentSchema.pre(
+  "validate",
+  function () {
+    validateRange(
+      this,
+      "preparationDaysMin",
+      "preparationDaysMax"
+    );
+  }
 );
+
+const kitSettingsSchema =
+  new mongoose.Schema(
+    {
+      eligible: {
+        type: Boolean,
+        default: false,
+      },
+      roles: {
+        type: [
+          {
+            type: String,
+            enum: [
+              "clothing",
+              "footwear",
+              "supplements",
+              "training-accessories",
+              "gym-bag",
+              "bottle-or-shaker",
+              "workout-essentials",
+            ],
+          },
+        ],
+        default: [],
+      },
+    },
+    {
+      _id: false,
+    }
+  );
+
+kitSettingsSchema.pre(
+  "validate",
+  function () {
+    if (this.roles) {
+      this.roles = [
+        ...new Set(this.roles),
+      ];
+    }
+
+    if (
+      this.eligible &&
+      !this.roles?.length
+    ) {
+      this.invalidate(
+        "roles",
+        "Choose at least one kit category before enabling kit eligibility."
+      );
+    }
+  }
+);
+
+const optionLabelsSchema =
+  new mongoose.Schema(
+    {
+      // Reuse existing size/colour inventory axes and SKUs.
+      size: {
+        type: String,
+        enum: [
+          "Size",
+          "Pack size",
+          "Capacity",
+          "Weight",
+          "Length",
+          "Option",
+        ],
+        default: "Size",
+      },
+      color: {
+        type: String,
+        enum: [
+          "Colour",
+          "Flavour",
+          "Style",
+          "Material",
+          "Option",
+        ],
+        default: "Colour",
+      },
+    },
+    {
+      _id: false,
+    }
+  );
+
+const variantSkuSchema =
+  new mongoose.Schema(
+    {
+      color: {
+        type: String,
+        default: "",
+      },
+      size: {
+        type: String,
+        default: "",
+      },
+      sku: {
+        type: String,
+        required: true,
+        maxlength: 100,
+      },
+    },
+    {
+      _id: false,
+    }
+  );
 
 const productSchema = new mongoose.Schema(
   {
@@ -469,9 +597,23 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
     meeshoProductLink: {
-      type: String, default: "", select: false, maxlength: 2000,
+      type: String,
+      default: "",
+      select: false,
+      maxlength: 2000,
       set: normalizeMeeshoLink,
-      validate: { validator: value => { try { normalizeMeeshoLink(value); return true; } catch { return false; } }, message: "Enter a safe HTTPS Meesho product link." },
+      validate: {
+        validator: (value) => {
+          try {
+            normalizeMeeshoLink(value);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        message:
+          "Enter a safe HTTPS Meesho product link.",
+      },
     },
     purchaseCost: {
       type: Number,
@@ -485,7 +627,8 @@ const productSchema = new mongoose.Schema(
           (
             Number.isFinite(value) &&
             Math.abs(
-              value * 100 - Math.round(value * 100)
+              value * 100 -
+                Math.round(value * 100)
             ) < 0.00001
           ),
         message:
@@ -649,6 +792,31 @@ const productSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+
+    // One gallery per colour, shared across all sizes.
+    colorImages: {
+      type: [
+        new mongoose.Schema(
+          {
+            color: {
+              type: String,
+              required: true,
+              trim: true,
+              maxlength: 80,
+            },
+            images: {
+              type: [String],
+              default: [],
+            },
+          },
+          {
+            _id: false,
+          }
+        ),
+      ],
+      default: [],
+    },
+
     delivery: {
       type: deliverySchema,
       default: () => ({}),
@@ -662,7 +830,11 @@ const productSchema = new mongoose.Schema(
     },
     returnsEligible: {
       type: String,
-      enum: ["yes", "no", "unconfirmed"],
+      enum: [
+        "yes",
+        "no",
+        "unconfirmed",
+      ],
       default: "unconfirmed",
     },
     returnConditions: {
@@ -706,213 +878,268 @@ const productSchema = new mongoose.Schema(
   }
 );
 
-productSchema.pre("validate", function () {
-  this.name = clean(this.name);
-  this.slug = clean(this.slug).toLowerCase();
-  this.category = clean(this.category);
-  this.subcategory = clean(this.subcategory);
-  this.brand = clean(this.brand);
-  this.gender = clean(this.gender || "Unisex");
-
-  if (
-    this.returnsEligible === "yes" &&
-    (
-      this.isNew ||
-      this.isModified("returnsEligible") ||
-      this.isModified("returnPolicy") ||
-      this.isModified("returnConditions")
-    ) &&
-    !clean(this.returnPolicy) &&
-    !clean(this.returnConditions)
-  ) {
-    this.invalidate(
-      "returnConditions",
-      "Record the actual return conditions before marking this product returnable."
-    );
-  }
-
-  if (this.isNew && !this.brand) {
-    this.invalidate(
-      "brand",
-      "Choose the actual product brand."
-    );
-  }
-
-  if (!this.productCode) {
-    this.set(
-      "productCode",
-      `GD-${String(this._id).toUpperCase()}`,
-      { overwriteImmutable: true }
-    );
-  }
-
-  this.sku = clean(
-    this.sku || this.productCode
-  ).toUpperCase();
-
-  for (const [field, maximum, length] of [
-    ["tags", 50, 100],
-    ["highlights", 30, 500],
-    ["careInstructions", 30, 500],
-    ["sizes", 50, 50],
-    ["colors", 50, 80],
-    ["images", 20, 2000],
-  ]) {
-    const values = cleanArray(
-      this[field],
-      maximum,
-      length,
-      field === "images"
+productSchema.pre(
+  "validate",
+  function () {
+    this.name = clean(this.name);
+    this.slug = clean(this.slug).toLowerCase();
+    this.category = clean(this.category);
+    this.subcategory = clean(this.subcategory);
+    this.brand = clean(this.brand);
+    this.gender = clean(
+      this.gender || "Unisex"
     );
 
     if (
-      values.length > maximum ||
-      values.some((value) => value.length > length)
+      this.returnsEligible === "yes" &&
+      (
+        this.isNew ||
+        this.isModified("returnsEligible") ||
+        this.isModified("returnPolicy") ||
+        this.isModified("returnConditions")
+      ) &&
+      !clean(this.returnPolicy) &&
+      !clean(this.returnConditions)
     ) {
       this.invalidate(
-        field,
-        `${field} allows up to ${maximum} entries, each up to ${length} characters.`
+        "returnConditions",
+        "Record the actual return conditions before marking this product returnable."
       );
     }
 
-    this[field] = values;
-  }
-
-  this.image = clean(this.image);
-
-  if (!this.image && this.images.length) {
-    this.image = this.images[0];
-  }
-
-  if (this.image && !this.images.includes(this.image)) {
-    this.images = [this.image, ...this.images];
-
-    if (this.images.length > 20) {
+    if (this.isNew && !this.brand) {
       this.invalidate(
-        "images",
-        "Use no more than 20 photos including the main photo."
+        "brand",
+        "Choose the actual product brand."
       );
     }
-  }
 
-  try {
-    const result = stockRows(this);
-    const rows = result.rows;
+    if (!this.productCode) {
+      this.set(
+        "productCode",
+        `GD-${String(this._id).toUpperCase()}`,
+        {
+          overwriteImmutable: true,
+        }
+      );
+    }
 
-    if (rows.length) {
-      const total = rows.reduce(
-        (sum, row) => sum + row.quantity,
-        0
+    this.sku = clean(
+      this.sku || this.productCode
+    ).toUpperCase();
+
+    for (
+      const [field, maximum, length] of [
+        ["tags", 50, 100],
+        ["highlights", 30, 500],
+        ["careInstructions", 30, 500],
+        ["sizes", 50, 50],
+        ["colors", 50, 80],
+        ["images", 20, 2000],
+      ]
+    ) {
+      const values = cleanArray(
+        this[field],
+        maximum,
+        length,
+        field === "images"
       );
 
-      if (total > 1000000) {
-        throw new Error(
-          "Combined product stock cannot exceed 1,000,000."
+      if (
+        values.length > maximum ||
+        values.some(
+          (value) => value.length > length
+        )
+      ) {
+        this.invalidate(
+          field,
+          `${field} allows up to ${maximum} entries, each up to ${length} characters.`
         );
       }
 
-      this.stock = total;
+      this[field] = values;
+    }
+
+    try {
+      this.colorImages =
+        normalizeColorImages(
+          this.colorImages,
+          this.colors || []
+        );
+    } catch (error) {
+      this.invalidate(
+        "colorImages",
+        error.message
+      );
+    }
+
+    this.image = clean(this.image);
+
+    if (
+      !this.image &&
+      this.images.length
+    ) {
+      this.image = this.images[0];
+    }
+
+    if (
+      this.image &&
+      !this.images.includes(this.image)
+    ) {
+      this.images = [
+        this.image,
+        ...this.images,
+      ];
+
+      if (this.images.length > 20) {
+        this.invalidate(
+          "images",
+          "Use no more than 20 photos including the main photo."
+        );
+      }
+    }
+
+    try {
+      const result = stockRows(this);
+      const rows = result.rows;
+
+      if (rows.length) {
+        const total = rows.reduce(
+          (sum, row) =>
+            sum + row.quantity,
+          0
+        );
+
+        if (total > 1000000) {
+          throw new Error(
+            "Combined product stock cannot exceed 1,000,000."
+          );
+        }
+
+        this.stock = total;
+
+        if (
+          JSON.stringify(this.variants) !==
+          JSON.stringify(result.variants)
+        ) {
+          this.variants = result.variants;
+          this.markModified("variants");
+        }
+      } else if (
+        !Number.isSafeInteger(this.stock) ||
+        this.stock < 0 ||
+        this.stock > 1000000
+      ) {
+        this.invalidate(
+          "stock",
+          "Stock must be a whole number from 0 to 1,000,000."
+        );
+      }
+
+      const previous = new Map(
+        (this.variantSkus || []).map(
+          (row) => [
+            JSON.stringify([
+              row.color || "",
+              row.size || "",
+            ]),
+            row.sku,
+          ]
+        )
+      );
+
+      const next = rows.map((row) => ({
+        color: row.color,
+        size: row.size,
+        sku:
+          previous.get(
+            JSON.stringify([
+              row.color,
+              row.size,
+            ])
+          ) ||
+          variantSku(
+            this.productCode,
+            row.color,
+            row.size
+          ),
+      }));
+
+      const skuValues = next.map(
+        (row) => row.sku
+      );
 
       if (
-        JSON.stringify(this.variants) !==
-        JSON.stringify(result.variants)
+        new Set(skuValues).size !==
+        skuValues.length
       ) {
-        this.variants = result.variants;
-        this.markModified("variants");
+        this.invalidate(
+          "variantSkus",
+          "Variant SKUs must be unique."
+        );
       }
-    } else if (
-      !Number.isSafeInteger(this.stock) ||
-      this.stock < 0 ||
-      this.stock > 1000000
-    ) {
-      this.invalidate(
-        "stock",
-        "Stock must be a whole number from 0 to 1,000,000."
-      );
-    }
 
-    const previous = new Map(
-      (this.variantSkus || []).map((row) => [
-        JSON.stringify([
-          row.color || "",
-          row.size || "",
-        ]),
-        row.sku,
-      ])
-    );
-
-    const next = rows.map((row) => ({
-      color: row.color,
-      size: row.size,
-      sku:
-        previous.get(
-          JSON.stringify([row.color, row.size])
-        ) ||
-        variantSku(
-          this.productCode,
-          row.color,
-          row.size
-        ),
-    }));
-
-    const skuValues = next.map((row) => row.sku);
-
-    if (new Set(skuValues).size !== skuValues.length) {
-      this.invalidate(
-        "variantSkus",
-        "Variant SKUs must be unique."
-      );
-    }
-
-    const current = (this.variantSkus || []).map(
-      (row) => ({
+      const current = (
+        this.variantSkus || []
+      ).map((row) => ({
         color: row.color,
         size: row.size,
         sku: row.sku,
-      })
+      }));
+
+      if (
+        JSON.stringify(current) !==
+        JSON.stringify(next)
+      ) {
+        this.variantSkus = next;
+      }
+    } catch (error) {
+      this.invalidate(
+        "variants",
+        error.message
+      );
+    }
+
+    this.stockStatus =
+      this.stock <= 0
+        ? "out-of-stock"
+        : this.stock <= 10
+          ? "low-stock"
+          : "in-stock";
+
+    const validReviews = (
+      this.reviews || []
+    ).filter(
+      (review) =>
+        review.rating >= 1 &&
+        review.rating <= 5
     );
 
-    if (
-      JSON.stringify(current) !== JSON.stringify(next)
-    ) {
-      this.variantSkus = next;
+    this.reviewCount =
+      validReviews.length;
+
+    this.rating = validReviews.length
+      ? Math.round(
+          (
+            validReviews.reduce(
+              (total, review) =>
+                total + review.rating,
+              0
+            ) / validReviews.length
+          ) * 10
+        ) / 10
+      : 0;
+
+    if (!this.delivery) {
+      this.delivery = {};
     }
-  } catch (error) {
-    this.invalidate("variants", error.message);
   }
-
-  this.stockStatus =
-    this.stock <= 0
-      ? "out-of-stock"
-      : this.stock <= 10
-        ? "low-stock"
-        : "in-stock";
-
-  const validReviews = (this.reviews || []).filter(
-    (review) =>
-      review.rating >= 1 && review.rating <= 5
-  );
-
-  this.reviewCount = validReviews.length;
-
-  this.rating = validReviews.length
-    ? Math.round(
-        (
-          validReviews.reduce(
-            (total, review) => total + review.rating,
-            0
-          ) / validReviews.length
-        ) * 10
-      ) / 10
-    : 0;
-
-  if (!this.delivery) {
-    this.delivery = {};
-  }
-});
+);
 
 function transformProduct(document, result) {
-  result.isNew = Boolean(result.isNewArrival);
+  result.isNew = Boolean(
+    result.isNewArrival
+  );
 
   result.productCode =
     result.productCode ||
@@ -940,21 +1167,29 @@ productSchema.set("toObject", {
 });
 
 productSchema.index(
-  { productCode: 1 },
+  {
+    productCode: 1,
+  },
   {
     unique: true,
     partialFilterExpression: {
-      productCode: { $type: "string" },
+      productCode: {
+        $type: "string",
+      },
     },
   }
 );
 
 productSchema.index(
-  { "variantSkus.sku": 1 },
+  {
+    "variantSkus.sku": 1,
+  },
   {
     unique: true,
     partialFilterExpression: {
-      "variantSkus.sku": { $type: "string" },
+      "variantSkus.sku": {
+        $type: "string",
+      },
     },
   }
 );

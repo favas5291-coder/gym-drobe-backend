@@ -11,15 +11,23 @@ const authRoutes = require("./routes/authRoutes");
 const addressRoutes = require("./routes/addressRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
-const paymentWebhookRoutes = require("./routes/paymentWebhookRoutes");
+
+const paymentWebhookRoutes = require(
+  "./routes/paymentWebhookRoutes",
+);
+
 const supportRoutes = require("./routes/supportRoutes");
 const adminRoutes = require("./routes/adminRoutes");
-const customerAdminRoutes = require("./routes/customerAdminRoutes");
 const supplierRoutes = require("./routes/supplierRoutes");
 const kitRoutes = require("./routes/kitRoutes");
-const packingLocationRoutes = require("./routes/packingLocationRoutes");
-const shippingProfileRoutes = require("./routes/shippingProfileRoutes");
-const packagePlanRoutes = require("./routes/packagePlanRoutes");
+
+const packingLocationRoutes = require(
+  "./routes/packingLocationRoutes",
+);
+
+const shippingProfileRoutes = require(
+  "./routes/shippingProfileRoutes",
+);
 
 const SupportTicket = require("./models/SupportTicket");
 const Supplier = require("./models/Supplier");
@@ -27,26 +35,27 @@ const KitTemplate = require("./models/KitTemplate");
 const PackingLocation = require("./models/PackingLocation");
 const ShippingProfile = require("./models/ShippingProfile");
 const PackagePlan = require("./models/PackagePlan");
+const packagePlanRoutes = require("./routes/packagePlanRoutes");
 
 const app = express();
 
 app.use(cors());
 
-// Razorpay requires the original raw request body.
-// Keep this route before express.json().
+// Razorpay signature verification requires the raw body.
+// Keep this before express.json().
 app.use(
   "/api/payment-webhooks",
   express.raw({
     type: "application/json",
     limit: "1mb",
   }),
-  paymentWebhookRoutes
+  paymentWebhookRoutes,
 );
 
 app.use(
   express.json({
     limit: "1mb",
-  })
+  }),
 );
 
 app.get("/api/health", (req, res) => {
@@ -62,30 +71,19 @@ app.use("/api/addresses", addressRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/support", supportRoutes);
-
-// Specific customer routes must run before the general admin router.
-app.use(
-  "/api/admin/customers",
-  customerAdminRoutes
-);
-
 app.use("/api/admin", adminRoutes);
+app.use("/api/package-plans", packagePlanRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/kits", kitRoutes);
 
 app.use(
   "/api/packing-locations",
-  packingLocationRoutes
+  packingLocationRoutes,
 );
 
 app.use(
   "/api/shipping-profiles",
-  shippingProfileRoutes
-);
-
-app.use(
-  "/api/package-plans",
-  packagePlanRoutes
+  shippingProfileRoutes,
 );
 
 app.use((req, res) => {
@@ -133,13 +131,13 @@ async function startServer() {
 
     app.listen(PORT, () => {
       console.log(
-        `GymDrobe server running on http://localhost:${PORT}`
+        `GymDrobe server running on http://localhost:${PORT}`,
       );
     });
   } catch (error) {
     console.error(
       "Server startup failed:",
-      error.message
+      error.message,
     );
 
     process.exit(1);

@@ -1,4 +1,6 @@
-"use strict";
+const {
+  selectedProductImage,
+} = require("./productImages");
 
 const {
   calculateKitQuote,
@@ -112,10 +114,15 @@ function allocate(amount, weights) {
 
   let remaining =
     amount -
-    rows.reduce((sum, row) => sum + row.value, 0);
+    rows.reduce(
+      (sum, row) => sum + row.value,
+      0,
+    );
 
   for (const row of ranked) {
-    if (!remaining) break;
+    if (!remaining) {
+      break;
+    }
 
     row.value += 1;
     remaining -= 1;
@@ -142,7 +149,9 @@ function snapshotItem(
     typeof product.price !== "number" ||
     !Number.isFinite(product.price) ||
     product.price < 0 ||
-    !Number.isFinite(Number(product.discount ?? 0)) ||
+    !Number.isFinite(
+      Number(product.discount ?? 0),
+    ) ||
     Number(product.discount ?? 0) < 0 ||
     Number(product.discount ?? 0) > 100
   ) {
@@ -162,13 +171,20 @@ function snapshotItem(
   }
 
   return {
-    product: reference(product._id || product.id),
+    product: reference(
+      product._id || product.id,
+    ),
+
     legacyId: product.legacyId ?? null,
     slug: product.slug || "",
     sku,
     name: product.name,
     brand: product.brand || "",
-    image: product.image || "",
+
+    image: selectedProductImage(
+      product,
+      color,
+    ),
 
     originalPrice: getOriginalPrice(product),
     price: getDiscountedPrice(product),
@@ -186,10 +202,13 @@ function snapshotItem(
       ? product.returnsEligible
       : "unconfirmed",
 
-    returnConditions: product.returnConditions || "",
+    returnConditions:
+      product.returnConditions || "",
 
     returnWindowDays:
-      Number.isSafeInteger(product.returnWindowDays) &&
+      Number.isSafeInteger(
+        product.returnWindowDays,
+      ) &&
       product.returnWindowDays >= 1 &&
       product.returnWindowDays <= 7
         ? product.returnWindowDays
@@ -200,7 +219,7 @@ function snapshotItem(
 // Products and templates must be loaded by the backend.
 // Never supply browser-provided catalogue documents here.
 //
-// This function prepares prices and snapshots only.
+// This prepares prices and snapshots only.
 // It does not authorize payment or reserve database inventory.
 function buildKitCheckoutPricing({
   items,
@@ -217,12 +236,18 @@ function buildKitCheckoutPricing({
     !Array.isArray(kits) ||
     !Array.isArray(products)
   ) {
-    fail("Choose between 1 and 50 order components.");
+    fail(
+      "Choose between 1 and 50 order components.",
+    );
   }
 
   if (
-    !["standard", "express"].includes(deliveryMethod) ||
-    !["razorpay", "cod-partial"].includes(paymentMethod)
+    !["standard", "express"].includes(
+      deliveryMethod,
+    ) ||
+    !["razorpay", "cod-partial"].includes(
+      paymentMethod,
+    )
   ) {
     fail(
       "Choose a supported delivery and payment method.",
@@ -266,7 +291,9 @@ function buildKitCheckoutPricing({
       raw.id ?? raw.productId ?? raw.product;
 
     if (
-      !["string", "number"].includes(typeof supplied)
+      !["string", "number"].includes(
+        typeof supplied,
+      )
     ) {
       fail("Choose an existing product ID.");
     }
@@ -306,7 +333,9 @@ function buildKitCheckoutPricing({
       quantity < 1 ||
       quantity > 99
     ) {
-      fail("Choose whole-number quantities from 1 to 99.");
+      fail(
+        "Choose whole-number quantities from 1 to 99.",
+      );
     }
 
     const size =
@@ -333,7 +362,9 @@ function buildKitCheckoutPricing({
       fail("Check the selected variants.");
     }
 
-    const id = reference(product._id || product.id);
+    const id = reference(
+      product._id || product.id,
+    );
 
     if (
       Object.prototype.hasOwnProperty.call(
@@ -350,11 +381,15 @@ function buildKitCheckoutPricing({
         typeof group.id !== "string" ||
         typeof group.kitId !== "string" ||
         typeof group.slotKey !== "string" ||
-        !/^[a-zA-Z0-9_-]{8,80}$/.test(group.id) ||
+        !/^[a-zA-Z0-9_-]{8,80}$/.test(
+          group.id,
+        ) ||
         !reference(group.kitId) ||
         !Number.isSafeInteger(group.version) ||
         group.version < 0 ||
-        !/^[a-z][a-z0-9-]{0,59}$/.test(group.slotKey)
+        !/^[a-z][a-z0-9-]{0,59}$/.test(
+          group.slotKey,
+        )
       ) {
         fail(
           "A kit grouping is invalid. Reopen the kit builder.",
@@ -431,7 +466,9 @@ function buildKitCheckoutPricing({
   }
 
   if (groups.size > 20) {
-    fail("Use at most 20 kit groups per order.");
+    fail(
+      "Use at most 20 kit groups per order.",
+    );
   }
 
   const rows = [];
@@ -521,6 +558,7 @@ function buildKitCheckoutPricing({
       explanation: kit.explanation || "",
       supplementNote: kit.supplementNote || "",
       fulfillmentMode: kit.fulfillment.mode,
+
       customerNote:
         kit.fulfillment.customerNote || "",
 
@@ -551,7 +589,9 @@ function buildKitCheckoutPricing({
           role: item.role,
         },
 
-        kitDiscountPaise: paise(item.kitDiscount),
+        kitDiscountPaise: paise(
+          item.kitDiscount,
+        ),
       });
     }
   }
@@ -566,7 +606,9 @@ function buildKitCheckoutPricing({
   );
 
   for (const row of rows) {
-    const product = inventory.get(row.product);
+    const product = inventory.get(
+      row.product,
+    );
 
     if (
       getVariantStock(
@@ -608,7 +650,8 @@ function buildKitCheckoutPricing({
   );
 
   const kitDiscount = rows.reduce(
-    (sum, row) => sum + row.kitDiscountPaise,
+    (sum, row) =>
+      sum + row.kitDiscountPaise,
     0,
   );
 
@@ -665,7 +708,8 @@ function buildKitCheckoutPricing({
     couponDiscount,
     subtotals.map(
       (amount, index) =>
-        amount - rows[index].kitDiscountPaise,
+        amount -
+        rows[index].kitDiscountPaise,
     ),
   );
 
@@ -676,53 +720,57 @@ function buildKitCheckoutPricing({
     ]),
   );
 
-  const purchasedItems = rows.map((row, index) => {
-    const {
-      kitDiscountPaise,
-      ...item
-    } = row;
+  const purchasedItems = rows.map(
+    (row, index) => {
+      const {
+        kitDiscountPaise,
+        ...item
+      } = row;
 
-    const linePaidPaise =
-      subtotals[index] -
-      kitDiscountPaise -
-      allocations[index];
+      const linePaidPaise =
+        subtotals[index] -
+        kitDiscountPaise -
+        allocations[index];
 
-    const allocation = {
-      quantity: row.quantity,
-      lineSubtotalPaise: subtotals[index],
-      kitDiscountPaise,
-      couponDiscountPaise: allocations[index],
-      linePaidPaise,
+      const allocation = {
+        quantity: row.quantity,
+        lineSubtotalPaise: subtotals[index],
+        kitDiscountPaise,
+        couponDiscountPaise: allocations[index],
+        linePaidPaise,
 
-      unitBasePaise: Math.floor(
-        linePaidPaise / row.quantity,
-      ),
+        unitBasePaise: Math.floor(
+          linePaidPaise / row.quantity,
+        ),
 
-      extraPaiseUnits:
-        linePaidPaise % row.quantity,
-    };
+        extraPaiseUnits:
+          linePaidPaise % row.quantity,
+      };
 
-    if (row.kit) {
-      const kit = snapshots.get(row.kit.groupId);
+      if (row.kit) {
+        const kit = snapshots.get(
+          row.kit.groupId,
+        );
 
-      kit.subtotalPaise +=
-        allocation.lineSubtotalPaise;
+        kit.subtotalPaise +=
+          allocation.lineSubtotalPaise;
 
-      kit.kitDiscountPaise +=
-        allocation.kitDiscountPaise;
+        kit.kitDiscountPaise +=
+          allocation.kitDiscountPaise;
 
-      kit.couponDiscountPaise +=
-        allocation.couponDiscountPaise;
+        kit.couponDiscountPaise +=
+          allocation.couponDiscountPaise;
 
-      kit.linePaidPaise +=
-        allocation.linePaidPaise;
-    }
+        kit.linePaidPaise +=
+          allocation.linePaidPaise;
+      }
 
-    return {
-      ...item,
-      priceAllocation: allocation,
-    };
-  });
+      return {
+        ...item,
+        priceAllocation: allocation,
+      };
+    },
+  );
 
   const merchandise =
     afterKit - couponDiscount;
@@ -779,6 +827,7 @@ function buildKitCheckoutPricing({
       method: paymentMethod,
       amountToPayNow: payNow / 100,
       amountDue: (total - payNow) / 100,
+
       advancePercentage:
         paymentMethod === "cod-partial"
           ? 10

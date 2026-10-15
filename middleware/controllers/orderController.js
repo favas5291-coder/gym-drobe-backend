@@ -1,4 +1,22 @@
-const { withAdminSourcing } = require("../../utils/orderSourcing");
+const {
+  collectedKitCodPaise,
+  applyKitFulfillmentAction,
+} = require("../../utils/kitFulfillmentProgress");
+
+const {
+  adminKitFulfillmentFields,
+  publicKitItemFields,
+  publicKitOrderFields,
+} = require("../../utils/publicKitOrder");
+
+const {
+  calculateItemRefundPaise,
+} = require("../../utils/orderRefundAllocation");
+
+const {
+  withAdminSourcing,
+} = require("../../utils/orderSourcing");
+
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 
@@ -94,12 +112,7 @@ function bodyOf(req) {
 }
 
 function orderId(req) {
-  return inputText(
-    req.params?.id,
-    "Order ID",
-    150,
-    1,
-  );
+  return inputText(req.params?.id, "Order ID", 150, 1);
 }
 
 function lookup(id) {
@@ -113,10 +126,7 @@ function lookup(id) {
 }
 
 function own(object, field) {
-  return Object.prototype.hasOwnProperty.call(
-    object,
-    field,
-  );
+  return Object.prototype.hasOwnProperty.call(object, field);
 }
 
 function handler(action, admin = false) {
@@ -135,8 +145,7 @@ function handler(action, admin = false) {
       return res.status(403).json({
         success: false,
         code: "ACCOUNT_DISABLED",
-        message:
-          "This account is disabled. Contact support.",
+        message: "This account is disabled. Contact support.",
       });
     }
 
@@ -178,9 +187,11 @@ function handler(action, admin = false) {
         code: conflict
           ? "ORDER_CHANGED"
           : error.code ||
-            (validation
-              ? "INVALID_ORDER_DATA"
-              : "ORDER_SERVICE_UNAVAILABLE"),
+            (
+              validation
+                ? "INVALID_ORDER_DATA"
+                : "ORDER_SERVICE_UNAVAILABLE"
+            ),
 
         message: conflict
           ? "The order changed. Reload it before trying again."
@@ -270,9 +281,7 @@ function safeOrder(order) {
     raw && typeof raw === "object" && raw._id;
 
   const user = {
-    id: String(
-      populated ? raw._id : raw || "",
-    ),
+    id: String(populated ? raw._id : raw || ""),
   };
 
   if (populated) {
@@ -289,16 +298,12 @@ function safeOrder(order) {
   }
 
   return {
-    id:
-      value.orderNumber ||
-      String(value._id || ""),
-
+    id: value.orderNumber || String(value._id || ""),
     orderNumber: value.orderNumber,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     status: value.status,
     source: value.source,
-
     giftMessage: value.giftMessage || "",
     orderNote: value.orderNote || "",
 
@@ -309,38 +314,34 @@ function safeOrder(order) {
     items: (value.items || []).map((item) => ({
       id: String(item.product),
       productId: String(item.product),
-
       legacyId: item.legacyId,
       slug: item.slug,
       sku: item.sku,
-
       name: item.name,
       brand: item.brand,
       image: item.image,
-
       originalPrice: item.originalPrice,
       price: item.price,
       discount: item.discount,
       quantity: item.quantity,
-
       selectedSize: item.selectedSize,
       selectedColor: item.selectedColor,
-
       returnPolicy: item.returnPolicy,
       returnsEligible: item.returnsEligible,
       returnConditions: item.returnConditions,
       returnWindowDays: item.returnWindowDays,
+
+      ...publicKitItemFields(item),
     })),
+
+    ...publicKitOrderFields(value),
 
     pricing: value.pricing,
     coupon: value.coupon,
-
     payment: value.payment,
     paymentMethod: value.paymentMethod,
-
     delivery: value.delivery,
     deliveryMethod: value.deliveryMethod,
-
     tracking: value.tracking,
     cancellation: value.cancellation,
     returnRequest: value.returnRequest,
@@ -349,8 +350,7 @@ function safeOrder(order) {
     metadata: {
       version: value.metadata?.version,
       demo: value.metadata?.demo,
-      inventoryReserved:
-        value.metadata?.inventoryReserved,
+      inventoryReserved: value.metadata?.inventoryReserved,
       checkoutToken: value.checkoutToken,
     },
   };
@@ -412,11 +412,11 @@ function methodOf(order) {
 
   if (
     !order.payment ||
-    !["razorpay", "cod-partial", "cod"].includes(
-      method,
-    ) ||
-    (order.paymentMethod &&
-      order.paymentMethod !== method)
+    !["razorpay", "cod-partial", "cod"].includes(method) ||
+    (
+      order.paymentMethod &&
+      order.paymentMethod !== method
+    )
   ) {
     throw problem(
       409,
@@ -428,22 +428,15 @@ function methodOf(order) {
   return method;
 }
 
-// Supports older records whose return refund left
-// amountPaid unchanged.
+// Supports older records whose return refund left amountPaid unchanged.
 function ledger(order) {
   const payment = order.payment || {};
 
-  const paid = cents(
-    payment.amountPaid,
-    "Amount paid",
-  );
+  const paid = cents(payment.amountPaid, "Amount paid");
 
   const completed =
     order.refund?.status === "refunded"
-      ? cents(
-          order.refund.amount,
-          "Completed refund",
-        )
+      ? cents(order.refund.amount, "Completed refund")
       : 0;
 
   if (payment.amountsReconciled === true) {
@@ -567,8 +560,10 @@ function paymentState(order, fullyPaid = false) {
 
   const verified = Boolean(
     order.payment.verifiedAt &&
-      (order.payment.razorpayPaymentId ||
-        order.payment.transactionId),
+      (
+        order.payment.razorpayPaymentId ||
+        order.payment.transactionId
+      ),
   );
 
   if (method === "razorpay" && (!paid || !verified)) {
@@ -585,26 +580,39 @@ function paymentState(order, fullyPaid = false) {
       "COD advance",
     );
 
-    const expectedAdvance = Math.round(
-      merchandise / 10,
-    );
+    const expectedAdvance = Math.round(merchandise / 10);
 
     if (
       advance <= 0 ||
       advance !== expectedAdvance ||
       advance > total ||
-      (due > 0 && amounts.gross !== advance) ||
+      (
+        due > 0 &&
+        amounts.gross !==
+          advance +
+            (
+              order.shippingSnapshot
+                ? collectedKitCodPaise(order)
+                : 0
+            )
+      ) ||
       !verified ||
       !["paid", "partially-paid"].includes(
         order.payment.status,
       ) ||
-      (due > 0 &&
-        order.payment.balanceStatus !== "pending") ||
-      (due === 0 &&
-        (!paid ||
+      (
+        due > 0 &&
+        order.payment.balanceStatus !== "pending"
+      ) ||
+      (
+        due === 0 &&
+        (
+          !paid ||
           !["collected", "not-applicable"].includes(
             order.payment.balanceStatus,
-          )))
+          )
+        )
+      )
     ) {
       throw problem(
         409,
@@ -616,9 +624,7 @@ function paymentState(order, fullyPaid = false) {
 
   if (
     method === "cod" &&
-    !["pending", "paid"].includes(
-      order.payment.status,
-    )
+    !["pending", "paid"].includes(order.payment.status)
   ) {
     throw problem(
       409,
@@ -643,18 +649,10 @@ function paymentState(order, fullyPaid = false) {
   };
 }
 
-function recordRefund(
-  order,
-  amount,
-  reference,
-  now,
-) {
+function recordRefund(order, amount, reference, now) {
   const amounts = ledger(order);
 
-  if (
-    amount <= 0 ||
-    amount > amounts.retained
-  ) {
+  if (amount <= 0 || amount > amounts.retained) {
     throw problem(
       409,
       "The refund exceeds the recorded money available to refund.",
@@ -664,12 +662,8 @@ function recordRefund(
 
   const refunded = amounts.refunded + amount;
 
-  order.payment.grossCollected =
-    amounts.gross / 100;
-
-  order.payment.refundedAmount =
-    refunded / 100;
-
+  order.payment.grossCollected = amounts.gross / 100;
+  order.payment.refundedAmount = refunded / 100;
   order.payment.amountsReconciled = true;
 
   order.payment.amountPaid =
@@ -685,17 +679,12 @@ function recordRefund(
   order.refund.refundedAt = now;
 }
 
-async function inventoryProduct(
-  item,
-  session,
-  cache,
-) {
+async function inventoryProduct(item, session, cache) {
   const key = String(item.product);
 
   if (!cache.has(key)) {
-    const product = await Product.findById(
-      item.product,
-    ).session(session);
+    const product = await Product.findById(item.product)
+      .session(session);
 
     if (!product) {
       throw problem(
@@ -711,11 +700,7 @@ async function inventoryProduct(
   return cache.get(key);
 }
 
-function restorePurchasedStock(
-  product,
-  item,
-  quantity,
-) {
+function restorePurchasedStock(product, item, quantity) {
   try {
     restoreVariantStock(
       product,
@@ -756,17 +741,8 @@ function storedReturnRows(order) {
   const seen = new Set();
 
   return rows.map((row) => {
-    const index = numberOf(
-      row.index,
-      "item index",
-    );
-
-    const quantity = numberOf(
-      row.quantity,
-      "quantity",
-      1,
-    );
-
+    const index = numberOf(row.index, "item index");
+    const quantity = numberOf(row.quantity, "quantity", 1);
     const item = order.items?.[index];
 
     if (
@@ -793,127 +769,14 @@ function storedReturnRows(order) {
 }
 
 function returnRefundCents(order, rows) {
-  const lines = (order.items || []).map(
-    (item) => {
-      const quantity = numberOf(
-        item.quantity,
-        "purchased quantity",
-        1,
-      );
-
-      const price = cents(
-        item.price,
-        "Purchased item price",
-      );
-
-      const value = price * quantity;
-
-      if (!Number.isSafeInteger(value)) {
-        throw problem(
-          409,
-          "The purchased item amount is invalid.",
-          "REFUND_AMOUNT_INVALID",
-        );
-      }
-
-      return {
-        quantity,
-        price,
-        value,
-      };
-    },
+  return calculateItemRefundPaise(
+    order,
+    rows.map((row) => ({
+      index: row.index,
+      quantity: row.quantity,
+    })),
+    "quantity",
   );
-
-  const subtotal = lines.reduce(
-    (sum, line) => sum + line.value,
-    0,
-  );
-
-  const discount = cents(
-    order.pricing?.couponDiscount,
-    "Coupon discount",
-  );
-
-  if (
-    !Number.isSafeInteger(subtotal) ||
-    subtotal !== cents(
-      order.pricing?.subtotal,
-      "Subtotal",
-    ) ||
-    discount > subtotal
-  ) {
-    throw problem(
-      409,
-      "Purchased prices and discounts need reconciliation.",
-      "REFUND_AMOUNT_INVALID",
-    );
-  }
-
-  // Allocate every coupon paise exactly once.
-  const allocations = lines.map(
-    (line, index) => {
-      const numerator =
-        BigInt(line.value) * BigInt(discount);
-
-      return {
-        index,
-
-        discount: subtotal
-          ? Number(
-              numerator / BigInt(subtotal),
-            )
-          : 0,
-
-        remainder: subtotal
-          ? numerator % BigInt(subtotal)
-          : 0n,
-      };
-    },
-  );
-
-  let remaining =
-    discount -
-    allocations.reduce(
-      (sum, line) => sum + line.discount,
-      0,
-    );
-
-  const sorted = [...allocations].sort(
-    (a, b) =>
-      a.remainder === b.remainder
-        ? a.index - b.index
-        : a.remainder > b.remainder
-          ? -1
-          : 1,
-  );
-
-  for (const line of sorted) {
-    if (remaining-- <= 0) {
-      break;
-    }
-
-    line.discount += 1;
-  }
-
-  return rows.reduce((sum, row) => {
-    const line = lines[row.index];
-    const allocated =
-      allocations[row.index].discount;
-
-    const perUnit = Math.floor(
-      allocated / line.quantity,
-    );
-
-    const extra =
-      allocated % line.quantity;
-
-    return (
-      sum +
-      line.price * row.quantity -
-      perUnit * row.quantity -
-      Math.min(extra, row.quantity)
-    );
-  }, 0);
 }
 
 function blankRefund() {
@@ -930,9 +793,7 @@ function blankRefund() {
 }
 
 function deliveryTime(order) {
-  const events = Array.isArray(
-    order.tracking?.events,
-  )
+  const events = Array.isArray(order.tracking?.events)
     ? order.tracking.events
     : [];
 
@@ -940,18 +801,12 @@ function deliveryTime(order) {
     order.delivery?.deliveredAt ||
     [...events]
       .reverse()
-      .find(
-        (row) => row.status === "delivered",
-      )?.timestamp;
+      .find((row) => row.status === "delivered")
+      ?.timestamp;
 
-  const time = new Date(
-    value || "invalid",
-  ).getTime();
+  const time = new Date(value || "invalid").getTime();
 
-  if (
-    !Number.isFinite(time) ||
-    time > Date.now()
-  ) {
+  if (!Number.isFinite(time) || time > Date.now()) {
     throw problem(
       409,
       "Contact support to confirm the delivery date and return eligibility.",
@@ -967,9 +822,7 @@ function validateEligibility(order, rows) {
 
   for (const row of rows) {
     const item = order.items[row.index];
-
-    const days =
-      item.returnWindowDays ?? 7;
+    const days = item.returnWindowDays ?? 7;
 
     if (
       !Number.isInteger(days) ||
@@ -991,10 +844,7 @@ function validateEligibility(order, rows) {
       );
     }
 
-    if (
-      Date.now() >
-      delivered + days * 86400000
-    ) {
+    if (Date.now() > delivered + days * 86400000) {
       throw problem(
         409,
         `${item.name}: the ${days}-day request window has ended. Contact support for help.`,
@@ -1031,10 +881,8 @@ async function reserveReplacements(
     }
 
     if (
-      (row.size ?? null) ===
-        (item.selectedSize ?? null) &&
-      (row.color ?? null) ===
-        (item.selectedColor ?? null)
+      (row.size ?? null) === (item.selectedSize ?? null) &&
+      (row.color ?? null) === (item.selectedColor ?? null)
     ) {
       throw problem(
         409,
@@ -1044,11 +892,8 @@ async function reserveReplacements(
     }
 
     if (
-      getVariantStock(
-        product,
-        row.size,
-        row.color,
-      ) < row.quantity
+      getVariantStock(product, row.size, row.color) <
+      row.quantity
     ) {
       throw problem(
         409,
@@ -1068,107 +913,95 @@ async function reserveReplacements(
 
 // New orders are created by paymentController.
 // This endpoint only retrieves an existing checkout.
-const createOrder = handler(
-  async (req, res) => {
-    const token = inputText(
-      bodyOf(req).checkoutToken,
-      "Checkout token",
-      200,
-      1,
+const createOrder = handler(async (req, res) => {
+  const token = inputText(
+    bodyOf(req).checkoutToken,
+    "Checkout token",
+    200,
+    1,
+  );
+
+  const existing = await Order.findOne({
+    user: req.user._id,
+    checkoutToken: token,
+  });
+
+  if (!existing) {
+    throw problem(
+      409,
+      "Complete payment through GymDrobe checkout first.",
+      "PAYMENT_REQUIRED",
+      { paymentRequired: true },
     );
+  }
 
-    const existing = await Order.findOne({
-      user: req.user._id,
-      checkoutToken: token,
-    });
+  return res.json({
+    success: true,
+    existing: true,
+    order: safeOrder(existing),
+  });
+});
 
-    if (!existing) {
-      throw problem(
-        409,
-        "Complete payment through GymDrobe checkout first.",
-        "PAYMENT_REQUIRED",
-        { paymentRequired: true },
-      );
-    }
+const getOrders = handler(async (req, res) => {
+  const orders = await Order.find({
+    user: req.user._id,
+  }).sort({
+    createdAt: -1,
+  });
 
-    return res.json({
-      success: true,
-      existing: true,
-      order: safeOrder(existing),
-    });
-  },
-);
+  return res.json({
+    success: true,
+    count: orders.length,
+    orders: orders.map(safeOrder),
+  });
+});
 
-const getOrders = handler(
-  async (req, res) => {
-    const orders = await Order.find({
-      user: req.user._id,
-    }).sort({
-      createdAt: -1,
-    });
+const getOrderById = handler(async (req, res) => {
+  const order = await loadOrder(
+    orderId(req),
+    null,
+    req.user._id,
+  );
 
-    return res.json({
-      success: true,
-      count: orders.length,
-      orders: orders.map(safeOrder),
-    });
-  },
-);
-
-const getOrderById = handler(
-  async (req, res) => {
-    const order = await loadOrder(
-      orderId(req),
-      null,
-      req.user._id,
-    );
-
-    return res.json({
-      success: true,
-      order: safeOrder(order),
-    });
-  },
-);
+  return res.json({
+    success: true,
+    order: safeOrder(order),
+  });
+});
 
 // Gateway requests run after the cancellation transaction.
 // An uncertain submission is never automatically sent again.
 async function submitCancellationRefund(id) {
-  const claim = await transaction(
-    async (session) => {
-      const order = await Order.findById(
-        id,
-      ).session(session);
+  const claim = await transaction(async (session) => {
+    const order = await Order.findById(id).session(session);
 
-      if (
-        !order ||
-        order.status !== "cancelled" ||
-        order.refund?.status !== "pending" ||
-        order.refund.reference ||
-        (order.refund.submissionState &&
-          order.refund.submissionState !==
-            "not-started")
-      ) {
-        return null;
-      }
+    if (
+      !order ||
+      order.status !== "cancelled" ||
+      order.refund?.status !== "pending" ||
+      order.refund.reference ||
+      (
+        order.refund.submissionState &&
+        order.refund.submissionState !== "not-started"
+      )
+    ) {
+      return null;
+    }
 
-      order.refund.submissionState =
-        "submitting";
+    order.refund.submissionState = "submitting";
+    order.refund.submissionStartedAt = new Date();
 
-      order.refund.submissionStartedAt =
-        new Date();
+    order.refund.submissionKey =
+      `GD-CANCEL-${crypto
+        .createHash("sha256")
+        .update(String(id))
+        .digest("hex")
+        .slice(0, 40)}`;
 
-      order.refund.submissionKey =
-        `GD-CANCEL-${crypto
-          .createHash("sha256")
-          .update(String(id))
-          .digest("hex")
-          .slice(0, 40)}`;
+    await order.save({ session });
 
-      await order.save({ session });
-
-      return order;
-    },
-  );
+    return order;
+  });
 
   if (!claim) {
     return;
@@ -1187,14 +1020,10 @@ async function submitCancellationRefund(id) {
 
   try {
     if (
-      !/^pay_[A-Za-z0-9]+$/.test(
-        paymentId || "",
-      ) ||
+      !/^pay_[A-Za-z0-9]+$/.test(paymentId || "") ||
       amount < 100
     ) {
-      throw new Error(
-        "Refund requires manual review",
-      );
+      throw new Error("Refund requires manual review");
     }
 
     const keyId = String(
@@ -1206,14 +1035,10 @@ async function submitCancellationRefund(id) {
     ).trim();
 
     if (
-      !/^rzp_(test|live)_[A-Za-z0-9]+$/.test(
-        keyId,
-      ) ||
+      !/^rzp_(test|live)_[A-Za-z0-9]+$/.test(keyId) ||
       !secret ||
-      typeof claim.metadata?.demo !==
-        "boolean" ||
-      claim.metadata.demo !==
-        keyId.startsWith("rzp_test_")
+      typeof claim.metadata?.demo !== "boolean" ||
+      claim.metadata.demo !== keyId.startsWith("rzp_test_")
     ) {
       throw new Error(
         "Payment service unavailable or mode mismatch",
@@ -1226,9 +1051,7 @@ async function submitCancellationRefund(id) {
       ).toString("base64")}`;
 
     const paymentResponse = await fetch(
-      `https://api.razorpay.com/v1/payments/${encodeURIComponent(
-        paymentId,
-      )}`,
+      `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,
       {
         headers: {
           Accept: "application/json",
@@ -1239,42 +1062,34 @@ async function submitCancellationRefund(id) {
     );
 
     if (!paymentResponse.ok) {
-      throw new Error(
-        "Payment could not be verified",
-      );
+      throw new Error("Payment could not be verified");
     }
 
-    const payment =
-      await paymentResponse.json();
+    const payment = await paymentResponse.json();
 
     if (
       payment.id !== paymentId ||
       payment.status !== "captured" ||
       payment.currency !== "INR" ||
       Number(payment.amount) !== amount ||
-      Number(payment.amount_refunded || 0) !==
-        0 ||
-      (claim.payment.razorpayOrderId &&
-        payment.order_id !==
-          claim.payment.razorpayOrderId)
+      Number(payment.amount_refunded || 0) !== 0 ||
+      (
+        claim.payment.razorpayOrderId &&
+        payment.order_id !== claim.payment.razorpayOrderId
+      )
     ) {
-      throw new Error(
-        "Payment requires reconciliation",
-      );
+      throw new Error("Payment requires reconciliation");
     }
 
     const response = await fetch(
-      `https://api.razorpay.com/v1/payments/${encodeURIComponent(
-        paymentId,
-      )}/refund`,
+      `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}/refund`,
       {
         method: "POST",
         signal: AbortSignal.timeout(25000),
 
         headers: {
           "Content-Type": "application/json",
-          "X-Refund-Idempotency":
-            claim.refund.submissionKey,
+          "X-Refund-Idempotency": claim.refund.submissionKey,
           Authorization: authorization,
         },
 
@@ -1295,41 +1110,29 @@ async function submitCancellationRefund(id) {
     if (
       !response.ok ||
       typeof result.id !== "string" ||
-      !/^rfnd_[A-Za-z0-9]+$/.test(
-        result.id,
-      ) ||
+      !/^rfnd_[A-Za-z0-9]+$/.test(result.id) ||
       result.payment_id !== paymentId ||
       result.currency !== "INR" ||
       Number(result.amount) !== amount ||
-      !["pending", "processed"].includes(
-        result.status,
-      )
+      !["pending", "processed"].includes(result.status)
     ) {
-      throw new Error(
-        "Refund outcome requires review",
-      );
+      throw new Error("Refund outcome requires review");
     }
   } catch {
     await transaction(async (session) => {
-      const order = await Order.findById(
-        id,
-      ).session(session);
+      const order = await Order.findById(id).session(session);
 
       if (
         !order ||
         order.refund.status === "refunded" ||
-        order.refund.submissionKey !==
-          claim.refund.submissionKey ||
+        order.refund.submissionKey !== claim.refund.submissionKey ||
         order.refund.reference
       ) {
         return;
       }
 
-      order.refund.status =
-        "manual-required";
-
-      order.refund.submissionState =
-        "uncertain";
+      order.refund.status = "manual-required";
+      order.refund.submissionState = "uncertain";
 
       event(
         order,
@@ -1344,15 +1147,12 @@ async function submitCancellationRefund(id) {
   }
 
   await transaction(async (session) => {
-    const order = await Order.findById(
-      id,
-    ).session(session);
+    const order = await Order.findById(id).session(session);
 
     if (
       !order ||
       order.refund.status === "refunded" ||
-      order.refund.submissionKey !==
-        claim.refund.submissionKey
+      order.refund.submissionKey !== claim.refund.submissionKey
     ) {
       return;
     }
@@ -1369,8 +1169,7 @@ async function submitCancellationRefund(id) {
     }
 
     order.refund.reference = result.id;
-    order.refund.submissionState =
-      "submitted";
+    order.refund.submissionState = "submitted";
 
     if (result.status === "processed") {
       recordRefund(
@@ -1388,6 +1187,7 @@ async function submitCancellationRefund(id) {
       result.status === "processed"
         ? "refund-completed"
         : "refund-requested",
+
       result.status === "processed"
         ? "Cancellation refund completed through Razorpay."
         : "Cancellation refund submitted to Razorpay; completion is pending.",
@@ -1397,478 +1197,400 @@ async function submitCancellationRefund(id) {
   });
 }
 
-const cancelOrder = handler(
-  async (req, res) => {
-    const id = orderId(req);
+const cancelOrder = handler(async (req, res) => {
+  const id = orderId(req);
 
-    const reason = inputText(
-      bodyOf(req).reason,
-      "Cancellation reason",
-      500,
-      5,
-      true,
-    );
+  const reason = inputText(
+    bodyOf(req).reason,
+    "Cancellation reason",
+    500,
+    5,
+    true,
+  );
 
-    const result = await transaction(
-      async (session) => {
-        const order = await loadOrder(
-          id,
-          session,
-          req.user._id,
-        );
-
-        if (
-          order.status === "cancelled" ||
-          order.cancellation?.status ===
-            "cancelled"
-        ) {
-          return {
-            order,
-            existing: true,
-          };
-        }
-
-        if (
-          !["confirmed", "processing"].includes(
-            order.status,
-          )
-        ) {
-          throw problem(
-            409,
-            "This order cannot be cancelled at its current fulfilment step.",
-            "CANCELLATION_UNAVAILABLE",
-          );
-        }
-
-        const {
-          method,
-          ...amounts
-        } = paymentState(order);
-
-        if (
-          amounts.refunded > 0 ||
-          ![
-            "not-requested",
-            "not-applicable",
-          ].includes(
-            order.refund?.status ||
-              "not-requested",
-          )
-        ) {
-          throw problem(
-            409,
-            "An existing refund needs review before cancellation.",
-            "REFUND_REVIEW_REQUIRED",
-          );
-        }
-
-        const now = new Date();
-
-        if (!order.cancellation) {
-          order.cancellation = {};
-        }
-
-        if (
-          order.metadata?.inventoryReserved ===
-            true &&
-          !order.cancellation
-            .inventoryRestoredAt
-        ) {
-          const cache = new Map();
-
-          for (const item of order.items || []) {
-            const product =
-              await inventoryProduct(
-                item,
-                session,
-                cache,
-              );
-
-            restorePurchasedStock(
-              product,
-              item,
-              item.quantity,
-            );
-          }
-
-          await saveProducts(cache, session);
-
-          order.metadata.inventoryReserved =
-            false;
-
-          order.cancellation
-            .inventoryRestoredAt = now;
-        }
-
-        order.status = "cancelled";
-        order.cancellation.status =
-          "cancelled";
-        order.cancellation.reason = reason;
-        order.cancellation.cancelledAt = now;
-
-        if (!order.delivery) {
-          order.delivery = {};
-        }
-
-        order.delivery.status = "cancelled";
-        order.payment.amountDue = 0;
-
-        order.payment.balanceStatus =
-          "not-applicable";
-
-        order.refund = blankRefund();
-
-        if (amounts.retained > 0) {
-          order.refund.status =
-            method === "cod"
-              ? "manual-required"
-              : "pending";
-
-          order.refund.amount =
-            amounts.retained / 100;
-
-          order.refund.requestedAt = now;
-
-          if (method === "cod") {
-            order.refund.submissionState =
-              "manual";
-          }
-        }
-
-        event(
-          order,
-          "cancelled",
-          amounts.retained > 0
-            ? "Order cancelled. Refund of recorded money paid requested."
-            : "Order cancelled by customer.",
-          now,
-        );
-
-        await order.save({ session });
-
-        return {
-          order,
-          existing: false,
-        };
-      },
-    );
-
-    if (
-      result.order.refund.status === "pending"
-    ) {
-      await submitCancellationRefund(
-        result.order._id,
-      );
-    }
-
-    const latest = await loadOrder(
+  const result = await transaction(async (session) => {
+    const order = await loadOrder(
       id,
-      null,
+      session,
       req.user._id,
     );
 
-    const status =
-      latest.refund?.status ||
-      "not-requested";
-
-    const message =
-      status === "refunded"
-        ? "Order cancelled. The refund is recorded as completed."
-        : status === "manual-required"
-          ? "Order cancelled. The refund requires payment-provider review."
-          : status === "pending"
-            ? "Order cancelled. Refund confirmation is pending."
-            : result.existing
-              ? "This order is already cancelled."
-              : "Order cancelled successfully.";
-
-    return res.json({
-      success: true,
-      existing: result.existing,
-      message,
-
-      refundStatus: status,
-      refundAmount:
-        latest.refund?.amount || 0,
-
-      manualReviewRequired:
-        status === "manual-required",
-
-      order: safeOrder(latest),
-    });
-  },
-);
-
-const requestReturn = handler(
-  async (req, res) => {
-    const id = orderId(req);
-    const body = bodyOf(req);
-
-    const type = inputText(
-      body.type,
-      "Request type",
-      20,
-      1,
-    ).toLowerCase();
-
     if (
-      !["return", "exchange"].includes(type)
+      order.status === "cancelled" ||
+      order.cancellation?.status === "cancelled"
     ) {
+      return {
+        order,
+        existing: true,
+      };
+    }
+
+    if (!["confirmed", "processing"].includes(order.status)) {
       throw problem(
-        400,
-        "Choose return or exchange.",
-        "INVALID_RETURN_TYPE",
+        409,
+        "This order cannot be cancelled at its current fulfilment step.",
+        "CANCELLATION_UNAVAILABLE",
       );
     }
 
-    const reason = inputText(
-      body.reason,
-      "Request reason",
-      1000,
-      5,
-      true,
-    );
+    const {
+      method,
+      ...amounts
+    } = paymentState(order);
 
     if (
-      !Array.isArray(body.items) ||
-      !body.items.length ||
-      body.items.length > 50
+      amounts.refunded > 0 ||
+      !["not-requested", "not-applicable"].includes(
+        order.refund?.status || "not-requested",
+      )
     ) {
       throw problem(
-        400,
-        "Select 1–50 valid return items.",
-        "INVALID_RETURN_ITEMS",
+        409,
+        "An existing refund needs review before cancellation.",
+        "REFUND_REVIEW_REQUIRED",
       );
     }
 
-    const order = await transaction(
-      async (session) => {
-        const order = await loadOrder(
-          id,
+    const now = new Date();
+
+    if (!order.cancellation) {
+      order.cancellation = {};
+    }
+
+    if (
+      order.metadata?.inventoryReserved === true &&
+      !order.cancellation.inventoryRestoredAt
+    ) {
+      const cache = new Map();
+
+      for (const item of order.items || []) {
+        const product = await inventoryProduct(
+          item,
           session,
-          req.user._id,
+          cache,
         );
 
-        if (order.status !== "delivered") {
-          throw problem(
-            409,
-            "Returns and exchanges open after delivery.",
-            "ORDER_NOT_DELIVERED",
-          );
-        }
-
-        paymentState(order, true);
-
-        if (
-          ![
-            "not-requested",
-            "rejected",
-          ].includes(
-            order.returnRequest?.status ||
-              "not-requested",
-          )
-        ) {
-          throw problem(
-            409,
-            "A request is already recorded for this order.",
-            "RETURN_ALREADY_RECORDED",
-          );
-        }
-
-        if (
-          ![
-            "not-requested",
-            "not-applicable",
-          ].includes(
-            order.refund?.status ||
-              "not-requested",
-          )
-        ) {
-          throw problem(
-            409,
-            "An existing refund needs review.",
-            "REFUND_REVIEW_REQUIRED",
-          );
-        }
-
-        const seen = new Set();
-        const rows = [];
-
-        for (const raw of body.items) {
-          const index = numberOf(
-            raw?.index,
-            "item index",
-          );
-
-          const quantity = numberOf(
-            raw?.quantity,
-            "quantity",
-            1,
-          );
-
-          const item = order.items[index];
-
-          if (
-            !item ||
-            seen.has(index) ||
-            quantity > item.quantity
-          ) {
-            throw problem(
-              400,
-              "Choose valid item quantities.",
-              "INVALID_RETURN_ITEMS",
-            );
-          }
-
-          let size =
-            raw.size == null
-              ? null
-              : inputText(
-                  raw.size,
-                  "Replacement size",
-                  50,
-                  1,
-                );
-
-          let color =
-            raw.color == null
-              ? null
-              : inputText(
-                  raw.color,
-                  "Replacement colour",
-                  50,
-                  1,
-                );
-
-          if (type === "exchange") {
-            const product =
-              await Product.findById(
-                item.product,
-              ).session(session);
-
-            if (
-              !product ||
-              product.isActive === false
-            ) {
-              throw problem(
-                409,
-                `${item.name}: the replacement is unavailable.`,
-                "REPLACEMENT_UNAVAILABLE",
-              );
-            }
-
-            size = product.sizes?.length
-              ? size
-              : null;
-
-            color = product.colors?.length
-              ? color
-              : null;
-
-            if (
-              getVariantStock(
-                product,
-                size,
-                color,
-              ) < quantity
-            ) {
-              throw problem(
-                409,
-                `${item.name}: the requested replacement is out of stock.`,
-                "REPLACEMENT_OUT_OF_STOCK",
-              );
-            }
-
-            if (
-              size ===
-                (item.selectedSize ?? null) &&
-              color ===
-                (item.selectedColor ?? null)
-            ) {
-              throw problem(
-                400,
-                "Choose a different size or colour for an exchange.",
-                "UNCHANGED_EXCHANGE_VARIANT",
-              );
-            }
-          } else {
-            size = null;
-            color = null;
-          }
-
-          rows.push({
-            index,
-            quantity,
-            size,
-            color,
-          });
-
-          seen.add(index);
-        }
-
-        validateEligibility(order, rows);
-
-        // Validate combined replacement quantities
-        // without saving or reserving stock yet.
-        if (type === "exchange") {
-          await reserveReplacements(
-            order,
-            rows,
-            session,
-            new Map(),
-          );
-        }
-
-        const now = new Date();
-
-        order.returnRequest = {
-          id:
-            `RET-${Date.now()
-              .toString(36)
-              .toUpperCase()}-${crypto
-              .randomBytes(6)
-              .toString("hex")
-              .toUpperCase()}`,
-
-          type,
-          status: "requested",
-          items: rows,
-          reason,
-          requestedAt: now,
-          response: "",
-
-          respondedAt: null,
-          approvedAt: null,
-          rejectedAt: null,
-          completedAt: null,
-          originalInventoryRestoredAt: null,
-          exchangeInventoryReservedAt: null,
-        };
-
-        order.refund = blankRefund();
-
-        event(
-          order,
-          `${type}-requested`,
-          "Customer request submitted for review.",
-          now,
+        restorePurchasedStock(
+          product,
+          item,
+          item.quantity,
         );
+      }
 
-        await order.save({ session });
+      await saveProducts(cache, session);
 
-        return order;
-      },
+      order.metadata.inventoryReserved = false;
+      order.cancellation.inventoryRestoredAt = now;
+    }
+
+    order.status = "cancelled";
+    order.cancellation.status = "cancelled";
+    order.cancellation.reason = reason;
+    order.cancellation.cancelledAt = now;
+
+    if (!order.delivery) {
+      order.delivery = {};
+    }
+
+    order.delivery.status = "cancelled";
+    order.payment.amountDue = 0;
+    order.payment.balanceStatus = "not-applicable";
+    order.refund = blankRefund();
+
+    if (amounts.retained > 0) {
+      order.refund.status =
+        method === "cod"
+          ? "manual-required"
+          : "pending";
+
+      order.refund.amount = amounts.retained / 100;
+      order.refund.requestedAt = now;
+
+      if (method === "cod") {
+        order.refund.submissionState = "manual";
+      }
+    }
+
+    event(
+      order,
+      "cancelled",
+
+      amounts.retained > 0
+        ? "Order cancelled. Refund of recorded money paid requested."
+        : "Order cancelled by customer.",
+
+      now,
     );
 
-    return res.status(201).json({
-      success: true,
-      message:
-        "Request submitted successfully for review.",
-      order: safeOrder(order),
-      returnRequest: order.returnRequest,
-    });
-  },
-);
+    await order.save({ session });
+
+    return {
+      order,
+      existing: false,
+    };
+  });
+
+  if (result.order.refund.status === "pending") {
+    await submitCancellationRefund(result.order._id);
+  }
+
+  const latest = await loadOrder(
+    id,
+    null,
+    req.user._id,
+  );
+
+  const status = latest.refund?.status || "not-requested";
+
+  const message =
+    status === "refunded"
+      ? "Order cancelled. The refund is recorded as completed."
+      : status === "manual-required"
+        ? "Order cancelled. The refund requires payment-provider review."
+        : status === "pending"
+          ? "Order cancelled. Refund confirmation is pending."
+          : result.existing
+            ? "This order is already cancelled."
+            : "Order cancelled successfully.";
+
+  return res.json({
+    success: true,
+    existing: result.existing,
+    message,
+    refundStatus: status,
+    refundAmount: latest.refund?.amount || 0,
+    manualReviewRequired: status === "manual-required",
+    order: safeOrder(latest),
+  });
+});
+
+const requestReturn = handler(async (req, res) => {
+  const id = orderId(req);
+  const body = bodyOf(req);
+
+  const type = inputText(
+    body.type,
+    "Request type",
+    20,
+    1,
+  ).toLowerCase();
+
+  if (!["return", "exchange"].includes(type)) {
+    throw problem(
+      400,
+      "Choose return or exchange.",
+      "INVALID_RETURN_TYPE",
+    );
+  }
+
+  const reason = inputText(
+    body.reason,
+    "Request reason",
+    1000,
+    5,
+    true,
+  );
+
+  if (
+    !Array.isArray(body.items) ||
+    !body.items.length ||
+    body.items.length > 50
+  ) {
+    throw problem(
+      400,
+      "Select 1–50 valid return items.",
+      "INVALID_RETURN_ITEMS",
+    );
+  }
+
+  const order = await transaction(async (session) => {
+    const order = await loadOrder(
+      id,
+      session,
+      req.user._id,
+    );
+
+    if (order.status !== "delivered") {
+      throw problem(
+        409,
+        "Returns and exchanges open after delivery.",
+        "ORDER_NOT_DELIVERED",
+      );
+    }
+
+    paymentState(order, true);
+
+    if (
+      !["not-requested", "rejected"].includes(
+        order.returnRequest?.status || "not-requested",
+      )
+    ) {
+      throw problem(
+        409,
+        "A request is already recorded for this order.",
+        "RETURN_ALREADY_RECORDED",
+      );
+    }
+
+    if (
+      !["not-requested", "not-applicable"].includes(
+        order.refund?.status || "not-requested",
+      )
+    ) {
+      throw problem(
+        409,
+        "An existing refund needs review.",
+        "REFUND_REVIEW_REQUIRED",
+      );
+    }
+
+    const seen = new Set();
+    const rows = [];
+
+    for (const raw of body.items) {
+      const index = numberOf(raw?.index, "item index");
+      const quantity = numberOf(raw?.quantity, "quantity", 1);
+      const item = order.items[index];
+
+      if (
+        !item ||
+        seen.has(index) ||
+        quantity > item.quantity
+      ) {
+        throw problem(
+          400,
+          "Choose valid item quantities.",
+          "INVALID_RETURN_ITEMS",
+        );
+      }
+
+      let size =
+        raw.size == null
+          ? null
+          : inputText(
+              raw.size,
+              "Replacement size",
+              50,
+              1,
+            );
+
+      let color =
+        raw.color == null
+          ? null
+          : inputText(
+              raw.color,
+              "Replacement colour",
+              50,
+              1,
+            );
+
+      if (type === "exchange") {
+        const product = await Product.findById(item.product)
+          .session(session);
+
+        if (!product || product.isActive === false) {
+          throw problem(
+            409,
+            `${item.name}: the replacement is unavailable.`,
+            "REPLACEMENT_UNAVAILABLE",
+          );
+        }
+
+        size = product.sizes?.length ? size : null;
+        color = product.colors?.length ? color : null;
+
+        if (getVariantStock(product, size, color) < quantity) {
+          throw problem(
+            409,
+            `${item.name}: the requested replacement is out of stock.`,
+            "REPLACEMENT_OUT_OF_STOCK",
+          );
+        }
+
+        if (
+          size === (item.selectedSize ?? null) &&
+          color === (item.selectedColor ?? null)
+        ) {
+          throw problem(
+            400,
+            "Choose a different size or colour for an exchange.",
+            "UNCHANGED_EXCHANGE_VARIANT",
+          );
+        }
+      } else {
+        size = null;
+        color = null;
+      }
+
+      rows.push({
+        index,
+        quantity,
+        size,
+        color,
+      });
+
+      seen.add(index);
+    }
+
+    validateEligibility(order, rows);
+
+    // Validate combined replacement quantities
+    // without saving or reserving stock yet.
+    if (type === "exchange") {
+      await reserveReplacements(
+        order,
+        rows,
+        session,
+        new Map(),
+      );
+    }
+
+    const now = new Date();
+
+    order.returnRequest = {
+      id:
+        `RET-${Date.now()
+          .toString(36)
+          .toUpperCase()}-${crypto
+          .randomBytes(6)
+          .toString("hex")
+          .toUpperCase()}`,
+
+      type,
+      status: "requested",
+      items: rows,
+      reason,
+      requestedAt: now,
+      response: "",
+      respondedAt: null,
+      approvedAt: null,
+      rejectedAt: null,
+      completedAt: null,
+      originalInventoryRestoredAt: null,
+      exchangeInventoryReservedAt: null,
+    };
+
+    order.refund = blankRefund();
+
+    event(
+      order,
+      `${type}-requested`,
+      "Customer request submitted for review.",
+      now,
+    );
+
+    await order.save({ session });
+
+    return order;
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: "Request submitted successfully for review.",
+    order: safeOrder(order),
+    returnRequest: order.returnRequest,
+  });
+});
 
 const getAdminReturnRequests = handler(
   async (req, res) => {
@@ -1896,10 +1618,7 @@ const getAdminReturnRequests = handler(
           ? status
           : { $in: RETURNS },
     })
-      .populate(
-        "user",
-        "name email phone role",
-      )
+      .populate("user", "name email phone role")
       .sort({
         "returnRequest.requestedAt": -1,
         createdAt: -1,
@@ -1931,11 +1650,7 @@ const getAdminOrders = handler(
     if (
       status &&
       status !== "all" &&
-      ![
-        "payment-pending",
-        ...FLOW,
-        "cancelled",
-      ].includes(status)
+      !["payment-pending", ...FLOW, "cancelled"].includes(status)
     ) {
       throw problem(
         400,
@@ -1946,20 +1661,12 @@ const getAdminOrders = handler(
 
     const page = Math.min(
       1000000,
-      numberOf(
-        req.query?.page ?? 1,
-        "page",
-        1,
-      ),
+      numberOf(req.query?.page ?? 1, "page", 1),
     );
 
     const limit = Math.min(
       100,
-      numberOf(
-        req.query?.limit ?? 25,
-        "page size",
-        1,
-      ),
+      numberOf(req.query?.limit ?? 25, "page size", 1),
     );
 
     const query = {};
@@ -1970,10 +1677,7 @@ const getAdminOrders = handler(
 
     if (search) {
       const pattern = new RegExp(
-        search.replace(
-          /[.*+?^${}()|[\]\\]/g,
-          "\\$&",
-        ),
+        search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
         "i",
       );
 
@@ -1991,31 +1695,86 @@ const getAdminOrders = handler(
       }));
     }
 
-    const [orders, total] =
-      await Promise.all([
-        Order.find(query)
-          .populate(
-            "user",
-            "name email phone role",
-          )
-          .sort({ createdAt: -1 })
-          .skip((page - 1) * limit)
-          .limit(limit),
+    const [orders, total] = await Promise.all([
+      Order.find(query)
+        .populate("user", "name email phone role")
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
 
-        Order.countDocuments(query),
-      ]);
+      Order.countDocuments(query),
+    ]);
 
     return res.json({
       success: true,
       count: orders.length,
       total,
       page,
-      pages: Math.max(
-        1,
-        Math.ceil(total / limit),
-      ),
+      pages: Math.max(1, Math.ceil(total / limit)),
       limit,
       orders: orders.map(safeOrder),
+    });
+  },
+  true,
+);
+
+async function serializeAdminOrder(order, user) {
+  const result = await withAdminSourcing(
+    order,
+    safeOrder(order),
+    user,
+  );
+
+  if (order.kitSnapshots?.length) {
+    result.kitFulfillmentAdmin =
+      adminKitFulfillmentFields(order);
+  }
+
+  return result;
+}
+
+const updateAdminKitFulfillment = handler(
+  async (req, res) => {
+    const id = orderId(req);
+    const body = bodyOf(req);
+
+    const updated = await transaction(async (session) => {
+      const order = await loadOrder(id, session);
+
+      paymentState(order);
+
+      const changed = applyKitFulfillmentAction(
+        order,
+        body,
+        String(req.user._id),
+      );
+
+      order.fulfillmentProgress = changed.progress;
+      order.set("payment", changed.payment);
+      order.set("delivery", changed.delivery);
+      order.status = changed.status;
+
+      event(
+        order,
+        body.action === "cod"
+          ? "cod-parcel-collected"
+          : `kit-${body.action}`,
+        changed.description,
+      );
+
+      await order.save({ session });
+
+      return order;
+    });
+
+    return res.json({
+      success: true,
+      message: "Kit fulfillment saved.",
+
+      order: await serializeAdminOrder(
+        updated,
+        req.user,
+      ),
     });
   },
   true,
@@ -2025,10 +1784,9 @@ const getAdminOrderById = handler(
   async (req, res) => {
     const order = await Order.findOne(
       lookup(orderId(req)),
-    ).select("+items.sourcing").populate(
-      "user",
-      "name email phone role",
-    );
+    )
+      .select("+items.sourcing")
+      .populate("user", "name email phone role");
 
     if (!order) {
       throw problem(
@@ -2040,7 +1798,11 @@ const getAdminOrderById = handler(
 
     return res.json({
       success: true,
-      order: await withAdminSourcing(order, safeOrder(order), req.user),
+
+      order: await serializeAdminOrder(
+        order,
+        req.user,
+      ),
     });
   },
   true,
@@ -2068,8 +1830,7 @@ const updateAdminOrderStatus = handler(
 
     if (
       own(body, "codBalanceCollected") &&
-      typeof body.codBalanceCollected !==
-        "boolean"
+      typeof body.codBalanceCollected !== "boolean"
     ) {
       throw problem(
         400,
@@ -2078,8 +1839,7 @@ const updateAdminOrderStatus = handler(
       );
     }
 
-    const collect =
-      body.codBalanceCollected === true;
+    const collect = body.codBalanceCollected === true;
 
     if (collect && status !== "delivered") {
       throw problem(
@@ -2116,16 +1876,15 @@ const updateAdminOrderStatus = handler(
         10,
       );
 
-      const parsed = new Date(
-        `${raw}T00:00:00Z`,
-      );
+      const parsed = new Date(`${raw}T00:00:00Z`);
 
       if (
         raw &&
-        (!/^\d{4}-\d{2}-\d{2}$/.test(raw) ||
+        (
+          !/^\d{4}-\d{2}-\d{2}$/.test(raw) ||
           Number.isNaN(parsed.getTime()) ||
-          parsed.toISOString().slice(0, 10) !==
-            raw)
+          parsed.toISOString().slice(0, 10) !== raw
+        )
       ) {
         throw problem(
           400,
@@ -2134,254 +1893,221 @@ const updateAdminOrderStatus = handler(
         );
       }
 
-      tracking.estimatedDelivery =
-        raw ? parsed : null;
+      tracking.estimatedDelivery = raw ? parsed : null;
     }
 
-    const result = await transaction(
-      async (session) => {
-        const order = await loadOrder(
-          id,
-          session,
+    const result = await transaction(async (session) => {
+      const order = await loadOrder(id, session);
+
+      if (
+        order.status === "cancelled" ||
+        order.cancellation?.status === "cancelled"
+      ) {
+        throw problem(
+          409,
+          "A cancelled order cannot move through fulfilment.",
+          "ORDER_CANCELLED",
         );
+      }
 
-        if (
-          order.status === "cancelled" ||
-          order.cancellation?.status ===
-            "cancelled"
-        ) {
-          throw problem(
-            409,
-            "A cancelled order cannot move through fulfilment.",
-            "ORDER_CANCELLED",
-          );
-        }
-
-        const current =
-          FLOW.indexOf(order.status);
-
-        const next = FLOW.indexOf(status);
-
-        if (current < 0) {
-          throw problem(
-            409,
-            "This order is awaiting verified payment or has an unsupported status.",
-            "ORDER_NOT_READY",
-          );
-        }
-
-        if (
-          next < current ||
-          next > current + 1
-        ) {
-          throw problem(
-            409,
-            "Complete fulfilment steps in order without skipping or moving backwards.",
-            "INVALID_STATUS_TRANSITION",
-          );
-        }
-
-        if (
-          order.returnRequest?.status &&
-          ![
-            "not-requested",
-            "rejected",
-          ].includes(
-            order.returnRequest.status,
-          )
-        ) {
-          throw problem(
-            409,
-            "This order has a return or exchange under management. Use the returns section.",
-            "RETURN_IN_PROGRESS",
-          );
-        }
-
-        if (
-          order.metadata
-            ?.inventoryReserved !== true
-        ) {
-          throw problem(
-            409,
-            "Stock deduction is not confirmed. Reconcile inventory before fulfilment.",
-            "INVENTORY_RECONCILIATION_REQUIRED",
-          );
-        }
-
-        const payment = paymentState(order);
-
-        if (
-          collect &&
-          payment.method !== "cod-partial"
-        ) {
-          throw problem(
-            409,
-            "This collection action is only for configured advance-plus-COD orders.",
-            "INVALID_COD_CONFIRMATION",
-          );
-        }
-
-        if (
-          status === "delivered" &&
-          payment.due > 0 &&
-          (payment.method !== "cod-partial" ||
-            !collect)
-        ) {
-          throw problem(
-            409,
-            payment.method === "cod-partial"
-              ? `Confirm that the remaining ₹${(
-                  payment.due / 100
-                ).toFixed(
-                  2,
-                )} COD balance was collected before confirming delivery.`
-              : "Reconcile the legacy COD balance before confirming delivery.",
-            "COD_COLLECTION_REQUIRED",
-            {
-              requiresCodBalanceConfirmation:
-                payment.method ===
-                "cod-partial",
-              amountDue: payment.due / 100,
-            },
-          );
-        }
-
-        if (!order.tracking) {
-          order.tracking = {};
-        }
-
-        Object.assign(
-          order.tracking,
-          tracking,
+      if (order.kitSnapshots?.length) {
+        throw problem(
+          409,
+          "Use the kit parcel controls to record dispatch, delivery and COD collection.",
+          "KIT_PARCEL_CONTROLS_REQUIRED",
         );
+      }
 
-        if (
-          next >= FLOW.indexOf("shipped") &&
-          (!String(
-            order.tracking.carrier || "",
-          ).trim() ||
-            !String(
-              order.tracking.trackingNumber ||
-                "",
-            ).trim())
-        ) {
-          throw problem(
-            409,
-            "Record the courier and tracking number before shipping or confirming delivery.",
-            "TRACKING_REQUIRED",
-          );
-        }
+      const current = FLOW.indexOf(order.status);
+      const next = FLOW.indexOf(status);
 
-        const now = new Date();
+      if (current < 0) {
+        throw problem(
+          409,
+          "This order is awaiting verified payment or has an unsupported status.",
+          "ORDER_NOT_READY",
+        );
+      }
 
-        const collected =
-          status === "delivered" &&
-          payment.method === "cod-partial" &&
-          payment.due > 0 &&
-          collect;
+      if (next < current || next > current + 1) {
+        throw problem(
+          409,
+          "Complete fulfilment steps in order without skipping or moving backwards.",
+          "INVALID_STATUS_TRANSITION",
+        );
+      }
 
-        if (collected) {
-          order.payment.amountPaid =
-            payment.total / 100;
+      if (
+        order.returnRequest?.status &&
+        !["not-requested", "rejected"].includes(
+          order.returnRequest.status,
+        )
+      ) {
+        throw problem(
+          409,
+          "This order has a return or exchange under management. Use the returns section.",
+          "RETURN_IN_PROGRESS",
+        );
+      }
 
-          order.payment.amountDue = 0;
+      if (order.metadata?.inventoryReserved !== true) {
+        throw problem(
+          409,
+          "Stock deduction is not confirmed. Reconcile inventory before fulfilment.",
+          "INVENTORY_RECONCILIATION_REQUIRED",
+        );
+      }
 
-          order.payment.grossCollected =
-            payment.total / 100;
+      const payment = paymentState(order);
 
-          order.payment.refundedAmount = 0;
+      if (collect && payment.method !== "cod-partial") {
+        throw problem(
+          409,
+          "This collection action is only for configured advance-plus-COD orders.",
+          "INVALID_COD_CONFIRMATION",
+        );
+      }
 
-          order.payment.amountsReconciled =
-            true;
+      if (
+        status === "delivered" &&
+        payment.due > 0 &&
+        (payment.method !== "cod-partial" || !collect)
+      ) {
+        throw problem(
+          409,
 
-          order.payment.balanceStatus =
-            "collected";
+          payment.method === "cod-partial"
+            ? `Confirm that the remaining ₹${(
+                payment.due / 100
+              ).toFixed(2)} COD balance was collected before confirming delivery.`
+            : "Reconcile the legacy COD balance before confirming delivery.",
 
-          order.payment.balanceCollectedAt =
-            now;
+          "COD_COLLECTION_REQUIRED",
 
-          order.payment.status = "paid";
-          order.payment.paidAt = now;
+          {
+            requiresCodBalanceConfirmation:
+              payment.method === "cod-partial",
 
-          event(
-            order,
-            "cod-balance-collected",
-            `Remaining COD balance of ₹${(
-              payment.due / 100
-            ).toFixed(
-              2,
-            )} recorded as collected.`,
-            now,
-          );
-        }
+            amountDue: payment.due / 100,
+          },
+        );
+      }
 
-        const changed =
-          order.status !== status;
+      if (!order.tracking) {
+        order.tracking = {};
+      }
 
-        order.status = status;
+      Object.assign(order.tracking, tracking);
 
-        if (!order.delivery) {
-          order.delivery = {};
-        }
+      if (
+        next >= FLOW.indexOf("shipped") &&
+        (
+          !String(order.tracking.carrier || "").trim() ||
+          !String(order.tracking.trackingNumber || "").trim()
+        )
+      ) {
+        throw problem(
+          409,
+          "Record the courier and tracking number before shipping or confirming delivery.",
+          "TRACKING_REQUIRED",
+        );
+      }
 
-        order.delivery.status =
-          status === "confirmed"
-            ? "pending"
-            : status;
+      const now = new Date();
 
-        if (
-          status === "delivered" &&
-          !order.delivery.deliveredAt
-        ) {
-          order.delivery.deliveredAt = now;
-        }
+      const collected =
+        status === "delivered" &&
+        payment.method === "cod-partial" &&
+        payment.due > 0 &&
+        collect;
 
-        if (changed) {
-          event(
-            order,
-            status,
-            status === "delivered"
-              ? "Order delivered. Recorded payment is completed."
-              : `Order moved to ${status}.`,
-            now,
-          );
-        } else if (
-          Object.keys(tracking).length
-        ) {
-          event(
-            order,
-            "tracking-updated",
-            "Tracking information updated by GymDrobe.",
-            now,
-          );
-        }
+      if (collected) {
+        order.payment.amountPaid = payment.total / 100;
+        order.payment.amountDue = 0;
+        order.payment.grossCollected = payment.total / 100;
+        order.payment.refundedAmount = 0;
+        order.payment.amountsReconciled = true;
+        order.payment.balanceStatus = "collected";
+        order.payment.balanceCollectedAt = now;
+        order.payment.status = "paid";
+        order.payment.paidAt = now;
 
-        if (
-          changed ||
-          collected ||
-          Object.keys(tracking).length
-        ) {
-          await order.save({ session });
-        }
-
-        return {
+        event(
           order,
-          collected,
-        };
-      },
-    );
+          "cod-balance-collected",
+
+          `Remaining COD balance of ₹${(
+            payment.due / 100
+          ).toFixed(2)} recorded as collected.`,
+
+          now,
+        );
+      }
+
+      const changed = order.status !== status;
+
+      order.status = status;
+
+      if (!order.delivery) {
+        order.delivery = {};
+      }
+
+      order.delivery.status =
+        status === "confirmed" ? "pending" : status;
+
+      if (
+        status === "delivered" &&
+        !order.delivery.deliveredAt
+      ) {
+        order.delivery.deliveredAt = now;
+      }
+
+      if (changed) {
+        event(
+          order,
+          status,
+
+          status === "delivered"
+            ? "Order delivered. Recorded payment is completed."
+            : `Order moved to ${status}.`,
+
+          now,
+        );
+      } else if (Object.keys(tracking).length) {
+        event(
+          order,
+          "tracking-updated",
+          "Tracking information updated by GymDrobe.",
+          now,
+        );
+      }
+
+      if (
+        changed ||
+        collected ||
+        Object.keys(tracking).length
+      ) {
+        await order.save({ session });
+      }
+
+      return {
+        order,
+        collected,
+      };
+    });
 
     return res.json({
       success: true,
-
-      codBalanceCollected:
-        result.collected,
+      codBalanceCollected: result.collected,
 
       message: result.collected
         ? "Order delivered and COD balance recorded as collected."
         : "Order information confirmed.",
 
-      order: await withAdminSourcing(result.order, safeOrder(result.order), req.user),
+      order: await serializeAdminOrder(
+        result.order,
+        req.user,
+      ),
     });
   },
   true,
@@ -2407,11 +2133,7 @@ const reviewReturnRequest = handler(
       true,
     );
 
-    if (
-      !["approve", "reject"].includes(
-        decision,
-      )
-    ) {
+    if (!["approve", "reject"].includes(decision)) {
       throw problem(
         400,
         "Choose approve or reject.",
@@ -2419,198 +2141,149 @@ const reviewReturnRequest = handler(
       );
     }
 
-    const result = await transaction(
-      async (session) => {
-        const order = await loadOrder(
-          id,
-          session,
+    const result = await transaction(async (session) => {
+      const order = await loadOrder(id, session);
+
+      const target =
+        decision === "approve" ? "approved" : "rejected";
+
+      if (order.returnRequest?.status === target) {
+        return {
+          order,
+          existing: true,
+        };
+      }
+
+      if (
+        order.status !== "delivered" ||
+        order.returnRequest?.status !== "requested"
+      ) {
+        throw problem(
+          409,
+          "This request is no longer waiting for review.",
+          "RETURN_NOT_REVIEWABLE",
         );
+      }
 
-        const target =
-          decision === "approve"
-            ? "approved"
-            : "rejected";
+      const type = order.returnRequest.type;
+
+      if (!["return", "exchange"].includes(type)) {
+        throw problem(
+          409,
+          "This return request needs review.",
+          "RETURN_ITEMS_INVALID",
+        );
+      }
+
+      if (
+        !["not-requested", "not-applicable"].includes(
+          order.refund?.status || "not-requested",
+        ) ||
+        Number(order.refund?.amount || 0) > 0 ||
+        order.refund?.reference
+      ) {
+        throw problem(
+          409,
+          "An existing refund needs reconciliation before reviewing this request.",
+          "REFUND_REVIEW_REQUIRED",
+        );
+      }
+
+      const rows = storedReturnRows(order);
+      const now = new Date();
+
+      if (decision === "approve") {
+        const paid = paymentState(order, true);
 
         if (
-          order.returnRequest?.status ===
-          target
-        ) {
-          return {
-            order,
-            existing: true,
-          };
-        }
-
-        if (
-          order.status !== "delivered" ||
-          order.returnRequest?.status !==
-            "requested"
-        ) {
-          throw problem(
-            409,
-            "This request is no longer waiting for review.",
-            "RETURN_NOT_REVIEWABLE",
-          );
-        }
-
-        const type =
-          order.returnRequest.type;
-
-        if (
-          !["return", "exchange"].includes(
-            type,
+          rows.some(
+            (row) =>
+              order.items[row.index].returnsEligible !== "yes",
           )
         ) {
           throw problem(
             409,
-            "This return request needs review.",
-            "RETURN_ITEMS_INVALID",
+            "A purchased item has an unconfirmed or ineligible return policy. Resolve it with support before approval.",
+            "RETURN_POLICY_UNCONFIRMED",
           );
         }
 
-        if (
-          ![
-            "not-requested",
-            "not-applicable",
-          ].includes(
-            order.refund?.status ||
-              "not-requested",
-          ) ||
-          Number(
-            order.refund?.amount || 0,
-          ) > 0 ||
-          order.refund?.reference
-        ) {
-          throw problem(
-            409,
-            "An existing refund needs reconciliation before reviewing this request.",
-            "REFUND_REVIEW_REQUIRED",
-          );
-        }
+        if (type === "exchange") {
+          const cache = new Map();
 
-        const rows = storedReturnRows(order);
-        const now = new Date();
-
-        if (decision === "approve") {
-          const paid = paymentState(
+          await reserveReplacements(
             order,
-            true,
+            rows,
+            session,
+            cache,
           );
 
-          if (
-            rows.some(
-              (row) =>
-                order.items[row.index]
-                  .returnsEligible !== "yes",
-            )
-          ) {
+          await saveProducts(cache, session);
+
+          order.returnRequest.exchangeInventoryReservedAt = now;
+
+          order.refund = {
+            ...blankRefund(),
+            status: "not-applicable",
+          };
+        } else {
+          const amount = returnRefundCents(order, rows);
+
+          if (amount > paid.retained) {
             throw problem(
               409,
-              "A purchased item has an unconfirmed or ineligible return policy. Resolve it with support before approval.",
-              "RETURN_POLICY_UNCONFIRMED",
+              "The calculated refund exceeds recorded money paid. Reconcile the payment first.",
+              "REFUND_AMOUNT_INVALID",
             );
           }
 
-          if (type === "exchange") {
-            const cache = new Map();
+          order.refund = {
+            ...blankRefund(),
 
-            await reserveReplacements(
-              order,
-              rows,
-              session,
-              cache,
-            );
+            status:
+              amount > 0
+                ? "pending"
+                : "not-applicable",
 
-            await saveProducts(
-              cache,
-              session,
-            );
-
-            order.returnRequest
-              .exchangeInventoryReservedAt =
-              now;
-
-            order.refund = {
-              ...blankRefund(),
-              status: "not-applicable",
-            };
-          } else {
-            const amount =
-              returnRefundCents(
-                order,
-                rows,
-              );
-
-            if (amount > paid.retained) {
-              throw problem(
-                409,
-                "The calculated refund exceeds recorded money paid. Reconcile the payment first.",
-                "REFUND_AMOUNT_INVALID",
-              );
-            }
-
-            order.refund = {
-              ...blankRefund(),
-
-              status:
-                amount > 0
-                  ? "pending"
-                  : "not-applicable",
-
-              amount: amount / 100,
-
-              requestedAt:
-                amount > 0 ? now : null,
-            };
-          }
-        } else {
-          order.refund = blankRefund();
+            amount: amount / 100,
+            requestedAt: amount > 0 ? now : null,
+          };
         }
+      } else {
+        order.refund = blankRefund();
+      }
 
-        order.returnRequest.status =
-          target;
+      order.returnRequest.status = target;
+      order.returnRequest.response = response;
+      order.returnRequest.respondedAt = now;
 
-        order.returnRequest.response =
-          response;
+      order.returnRequest.approvedAt =
+        decision === "approve" ? now : null;
 
-        order.returnRequest.respondedAt =
-          now;
+      order.returnRequest.rejectedAt =
+        decision === "reject" ? now : null;
 
-        order.returnRequest.approvedAt =
-          decision === "approve"
-            ? now
-            : null;
+      order.returnRequest.completedAt = null;
+      order.returnRequest.originalInventoryRestoredAt = null;
 
-        order.returnRequest.rejectedAt =
-          decision === "reject"
-            ? now
-            : null;
+      event(
+        order,
+        `${type}-${target}`,
 
-        order.returnRequest.completedAt =
-          null;
+        type === "exchange" && target === "approved"
+          ? "Exchange approved. Replacement stock reserved."
+          : `Customer ${type} request ${target}.`,
 
-        order.returnRequest
-          .originalInventoryRestoredAt =
-          null;
+        now,
+      );
 
-        event(
-          order,
-          `${type}-${target}`,
-          type === "exchange" &&
-            target === "approved"
-            ? "Exchange approved. Replacement stock reserved."
-            : `Customer ${type} request ${target}.`,
-          now,
-        );
+      await order.save({ session });
 
-        await order.save({ session });
-
-        return {
-          order,
-          existing: false,
-        };
-      },
-    );
+      return {
+        order,
+        existing: false,
+      };
+    });
 
     return res.json({
       success: true,
@@ -2638,190 +2311,139 @@ const completeReturnRequest = handler(
       true,
     );
 
-    const result = await transaction(
-      async (session) => {
-        const order = await loadOrder(
-          id,
-          session,
-        );
+    const result = await transaction(async (session) => {
+      const order = await loadOrder(id, session);
 
-        if (
-          order.returnRequest?.status ===
-          "completed"
-        ) {
-          return {
-            order,
-            existing: true,
-          };
-        }
-
-        if (
-          order.status !== "delivered" ||
-          order.returnRequest?.status !==
-            "approved"
-        ) {
-          throw problem(
-            409,
-            "Only an approved return or exchange can be completed.",
-            "RETURN_NOT_APPROVED",
-          );
-        }
-
-        const type =
-          order.returnRequest.type;
-
-        if (
-          !["return", "exchange"].includes(
-            type,
-          )
-        ) {
-          throw problem(
-            409,
-            "This return request needs review.",
-            "RETURN_ITEMS_INVALID",
-          );
-        }
-
-        const rows = storedReturnRows(order);
-
-        const paid = paymentState(
+      if (order.returnRequest?.status === "completed") {
+        return {
           order,
-          true,
+          existing: true,
+        };
+      }
+
+      if (
+        order.status !== "delivered" ||
+        order.returnRequest?.status !== "approved"
+      ) {
+        throw problem(
+          409,
+          "Only an approved return or exchange can be completed.",
+          "RETURN_NOT_APPROVED",
+        );
+      }
+
+      const type = order.returnRequest.type;
+
+      if (!["return", "exchange"].includes(type)) {
+        throw problem(
+          409,
+          "This return request needs review.",
+          "RETURN_ITEMS_INVALID",
+        );
+      }
+
+      const rows = storedReturnRows(order);
+      const paid = paymentState(order, true);
+      const now = new Date();
+      const cache = new Map();
+
+      if (order.metadata?.inventoryReserved !== true) {
+        throw problem(
+          409,
+          "The original stock deduction is not confirmed. Reconcile inventory before adding returned stock.",
+          "INVENTORY_RECONCILIATION_REQUIRED",
+        );
+      }
+
+      if (
+        type === "exchange" &&
+        !order.returnRequest.exchangeInventoryReservedAt
+      ) {
+        await reserveReplacements(
+          order,
+          rows,
+          session,
+          cache,
         );
 
-        const now = new Date();
-        const cache = new Map();
+        order.returnRequest.exchangeInventoryReservedAt = now;
+      }
 
-        if (
-          order.metadata
-            ?.inventoryReserved !== true
-        ) {
-          throw problem(
-            409,
-            "The original stock deduction is not confirmed. Reconcile inventory before adding returned stock.",
-            "INVENTORY_RECONCILIATION_REQUIRED",
-          );
-        }
+      // This completion action means the administrator received,
+      // inspected and accepted the originals as saleable inventory.
+      if (!order.returnRequest.originalInventoryRestoredAt) {
+        for (const row of rows) {
+          const item = order.items[row.index];
 
-        if (
-          type === "exchange" &&
-          !order.returnRequest
-            .exchangeInventoryReservedAt
-        ) {
-          await reserveReplacements(
-            order,
-            rows,
+          const product = await inventoryProduct(
+            item,
             session,
             cache,
           );
 
-          order.returnRequest
-            .exchangeInventoryReservedAt =
-            now;
+          restorePurchasedStock(
+            product,
+            item,
+            row.quantity,
+          );
         }
 
-        // This completion action means the administrator
-        // received, inspected and accepted the originals
-        // as saleable inventory.
+        order.returnRequest.originalInventoryRestoredAt = now;
+      }
+
+      await saveProducts(cache, session);
+
+      if (type === "return") {
+        const amount = returnRefundCents(order, rows);
+
         if (
-          !order.returnRequest
-            .originalInventoryRestoredAt
+          amount > paid.retained ||
+          cents(order.refund?.amount, "Approved refund") !== amount ||
+          !["pending", "not-applicable"].includes(
+            order.refund?.status,
+          )
         ) {
-          for (const row of rows) {
-            const item =
-              order.items[row.index];
-
-            const product =
-              await inventoryProduct(
-                item,
-                session,
-                cache,
-              );
-
-            restorePurchasedStock(
-              product,
-              item,
-              row.quantity,
-            );
-          }
-
-          order.returnRequest
-            .originalInventoryRestoredAt =
-            now;
+          throw problem(
+            409,
+            "The approved refund changed. Reconcile it before completing the return.",
+            "REFUND_CHANGED",
+          );
         }
 
-        await saveProducts(
-          cache,
-          session,
-        );
+        order.refund.status =
+          amount > 0
+            ? "manual-required"
+            : "not-applicable";
 
-        if (type === "return") {
-          const amount =
-            returnRefundCents(
-              order,
-              rows,
-            );
+        order.refund.submissionState = "manual";
+      }
 
-          if (
-            amount > paid.retained ||
-            cents(
-              order.refund?.amount,
-              "Approved refund",
-            ) !== amount ||
-            ![
-              "pending",
-              "not-applicable",
-            ].includes(
-              order.refund?.status,
-            )
-          ) {
-            throw problem(
-              409,
-              "The approved refund changed. Reconcile it before completing the return.",
-              "REFUND_CHANGED",
-            );
-          }
+      order.returnRequest.status = "completed";
+      order.returnRequest.completedAt = now;
+      order.returnRequest.respondedAt = now;
 
-          order.refund.status =
-            amount > 0
-              ? "manual-required"
-              : "not-applicable";
+      if (response) {
+        order.returnRequest.response = response;
+      }
 
-          order.refund.submissionState =
-            "manual";
-        }
+      event(
+        order,
+        `${type}-completed`,
 
-        order.returnRequest.status =
-          "completed";
+        type === "return"
+          ? "Returned items received and inspected. Any due refund requires separate processing."
+          : "Exchange completed after inspecting returned items.",
 
-        order.returnRequest.completedAt =
-          now;
+        now,
+      );
 
-        order.returnRequest.respondedAt =
-          now;
+      await order.save({ session });
 
-        if (response) {
-          order.returnRequest.response =
-            response;
-        }
-
-        event(
-          order,
-          `${type}-completed`,
-          type === "return"
-            ? "Returned items received and inspected. Any due refund requires separate processing."
-            : "Exchange completed after inspecting returned items.",
-          now,
-        );
-
-        await order.save({ session });
-
-        return {
-          order,
-          existing: false,
-        };
-      },
-    );
+      return {
+        order,
+        existing: false,
+      };
+    });
 
     return res.json({
       success: true,
@@ -2850,118 +2472,87 @@ const recordReturnRefund = handler(
       3,
     );
 
-    const result = await transaction(
-      async (session) => {
-        const order = await loadOrder(
-          id,
-          session,
-        );
+    const result = await transaction(async (session) => {
+      const order = await loadOrder(id, session);
 
-        if (
-          order.status !== "delivered" ||
-          order.returnRequest?.type !==
-            "return" ||
-          order.returnRequest.status !==
-            "completed"
-        ) {
+      if (
+        order.status !== "delivered" ||
+        order.returnRequest?.type !== "return" ||
+        order.returnRequest.status !== "completed"
+      ) {
+        throw problem(
+          409,
+          "Complete the return before recording its refund.",
+          "RETURN_NOT_COMPLETED",
+        );
+      }
+
+      if (order.refund?.status === "refunded") {
+        if (order.refund.reference !== reference) {
           throw problem(
             409,
-            "Complete the return before recording its refund.",
-            "RETURN_NOT_COMPLETED",
+            "A different refund reference is already recorded. Reload the order.",
+            "REFUND_ALREADY_RECORDED",
           );
         }
-
-        if (
-          order.refund?.status ===
-          "refunded"
-        ) {
-          if (
-            order.refund.reference !==
-            reference
-          ) {
-            throw problem(
-              409,
-              "A different refund reference is already recorded. Reload the order.",
-              "REFUND_ALREADY_RECORDED",
-            );
-          }
-
-          return {
-            order,
-            existing: true,
-          };
-        }
-
-        if (
-          ![
-            "pending",
-            "manual-required",
-          ].includes(
-            order.refund?.status,
-          ) ||
-          [
-            "submitting",
-            "submitted",
-            "uncertain",
-          ].includes(
-            order.refund.submissionState,
-          )
-        ) {
-          throw problem(
-            409,
-            "This refund needs provider reconciliation before manual recording.",
-            "REFUND_REVIEW_REQUIRED",
-          );
-        }
-
-        const rows = storedReturnRows(order);
-
-        const amount =
-          returnRefundCents(
-            order,
-            rows,
-          );
-
-        if (
-          amount !== cents(
-            order.refund.amount,
-            "Approved refund",
-          )
-        ) {
-          throw problem(
-            409,
-            "The approved refund does not match purchased items.",
-            "REFUND_AMOUNT_INVALID",
-          );
-        }
-
-        const now = new Date();
-
-        recordRefund(
-          order,
-          amount,
-          reference,
-          now,
-        );
-
-        order.refund.submissionState =
-          "manual";
-
-        event(
-          order,
-          "refund-recorded",
-          "Return refund already transferred and recorded by GymDrobe.",
-          now,
-        );
-
-        await order.save({ session });
 
         return {
           order,
-          existing: false,
+          existing: true,
         };
-      },
-    );
+      }
+
+      if (
+        !["pending", "manual-required"].includes(
+          order.refund?.status,
+        ) ||
+        ["submitting", "submitted", "uncertain"].includes(
+          order.refund.submissionState,
+        )
+      ) {
+        throw problem(
+          409,
+          "This refund needs provider reconciliation before manual recording.",
+          "REFUND_REVIEW_REQUIRED",
+        );
+      }
+
+      const rows = storedReturnRows(order);
+      const amount = returnRefundCents(order, rows);
+
+      if (
+        amount !== cents(
+          order.refund.amount,
+          "Approved refund",
+        )
+      ) {
+        throw problem(
+          409,
+          "The approved refund does not match purchased items.",
+          "REFUND_AMOUNT_INVALID",
+        );
+      }
+
+      const now = new Date();
+
+      recordRefund(order, amount, reference, now);
+
+      order.refund.submissionState = "manual";
+
+      event(
+        order,
+        "refund-recorded",
+        "Return refund already transferred and recorded by GymDrobe.",
+        now,
+      );
+
+      await order.save({ session });
+
+      return {
+        order,
+        existing: false,
+      };
+    });
 
     return res.json({
       success: true,
@@ -2978,6 +2569,8 @@ const recordReturnRefund = handler(
 );
 
 module.exports = {
+  updateAdminKitFulfillment,
+  serializeAdminOrder,
   createOrder,
   getOrders,
   getOrderById,
