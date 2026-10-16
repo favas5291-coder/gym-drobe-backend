@@ -1,18 +1,26 @@
 const mongoose = require("mongoose");
 
 const {
+  normalizeCourierUrl,
+} = require("../utils/trackingUpdates");
+
+const {
   PARCEL_STAGES,
   PROCUREMENT_STAGES,
 } = require("../utils/kitFulfillmentProgress");
 
-const noId = { _id: false };
+const noId = {
+  _id: false,
+};
 
-const integer = () => ({
-  type: Number,
-  required: true,
-  min: 0,
-  validate: Number.isSafeInteger,
-});
+function integer() {
+  return {
+    type: Number,
+    required: true,
+    min: 0,
+    validate: Number.isSafeInteger,
+  };
+}
 
 const audit = {
   updatedAt: {
@@ -30,6 +38,7 @@ const audit = {
 const component = new mongoose.Schema(
   {
     itemIndex: integer(),
+
     receivedQuantity: integer(),
 
     procurementStatus: {
@@ -69,6 +78,25 @@ const parcel = new mongoose.Schema(
       required: true,
     },
 
+    courierUrl: {
+      type: String,
+      default: "",
+      maxlength: 2000,
+
+      validate: {
+        validator(value) {
+          try {
+            return normalizeCourierUrl(value) === value;
+          } catch {
+            return false;
+          }
+        },
+
+        message:
+          "Use a valid HTTPS courier tracking link.",
+      },
+    },
+
     carrier: {
       type: String,
       default: "",
@@ -96,9 +124,37 @@ const parcel = new mongoose.Schema(
       default: null,
     },
 
+    outForDeliveryAt: {
+      type: Date,
+      default: null,
+    },
+
     deliveredAt: {
       type: Date,
       default: null,
+    },
+
+    exception: {
+      type: {
+        type: String,
+        enum: [
+          "none",
+          "delayed",
+          "delivery-attempt-failed",
+        ],
+        default: "none",
+      },
+
+      message: {
+        type: String,
+        default: "",
+        maxlength: 500,
+      },
+
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
     },
 
     codCollectedPaise: integer(),
