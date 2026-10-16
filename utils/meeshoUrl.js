@@ -1,5 +1,6 @@
-// Existing names preserve compatibility with saved products and orders.
-// This helper validates URL formatting; it never fetches the URL.
+// Existing names are retained for compatibility.
+// Supports product pages from brands and suppliers.
+// This helper validates links without visiting them.
 
 function normalizeMeeshoLink(value) {
   if (value == null || value === "") {
@@ -8,7 +9,7 @@ function normalizeMeeshoLink(value) {
 
   if (typeof value !== "string") {
     throw new Error(
-      "Supplier Product Link must be a URL.",
+      "Product Website Link must be a URL.",
     );
   }
 
@@ -23,7 +24,7 @@ function normalizeMeeshoLink(value) {
     /[\u0000-\u0020\u007f\\<>"`]/.test(input)
   ) {
     throw new Error(
-      "Use a valid HTTPS supplier product link without spaces, backslashes or markup.",
+      "Use a valid HTTPS product website link without spaces, backslashes or markup.",
     );
   }
 
@@ -33,13 +34,11 @@ function normalizeMeeshoLink(value) {
     url = new URL(input);
   } catch {
     throw new Error(
-      "Enter a valid HTTPS supplier product link.",
+      "Enter a valid HTTPS product website link.",
     );
   }
 
-  const host =
-    url.hostname.toLowerCase();
-
+  const host = url.hostname.toLowerCase();
   const labels = host.split(".");
 
   const publicHostname =
@@ -53,21 +52,22 @@ function normalizeMeeshoLink(value) {
       labels.at(-1),
     );
 
-  const localHostname = [
-    "localhost",
-    "local",
-    "internal",
-    "lan",
-    "home",
-    "test",
-    "invalid",
-    "example",
-    "onion",
-  ].some(
-    (suffix) =>
-      host === suffix ||
-      host.endsWith(`.${suffix}`),
-  ) ||
+  const localHostname =
+    [
+      "localhost",
+      "local",
+      "internal",
+      "lan",
+      "home",
+      "test",
+      "invalid",
+      "example",
+      "onion",
+    ].some(
+      (suffix) =>
+        host === suffix ||
+        host.endsWith(`.${suffix}`),
+    ) ||
     host === "home.arpa" ||
     host.endsWith(".home.arpa");
 
@@ -88,7 +88,7 @@ function normalizeMeeshoLink(value) {
 
   if (url.href.length > 2000) {
     throw new Error(
-      "Supplier Product Link cannot exceed 2,000 characters.",
+      "Product Website Link cannot exceed 2,000 characters.",
     );
   }
 

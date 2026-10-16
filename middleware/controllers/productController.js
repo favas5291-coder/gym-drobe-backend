@@ -72,6 +72,7 @@ const DISPATCH_METHODS = [
 
 function httpError(status, message, code) {
   const error = new Error(message);
+
   error.status = status;
 
   if (code) {
@@ -82,13 +83,10 @@ function httpError(status, message, code) {
 }
 
 function text(value, maximum = 500) {
-  if (
-    value != null &&
-    typeof value !== "string"
-  ) {
+  if (value != null && typeof value !== "string") {
     throw httpError(
       400,
-      "Text fields must contain text."
+      "Text fields must contain text.",
     );
   }
 
@@ -97,7 +95,7 @@ function text(value, maximum = 500) {
   if (result.length > maximum) {
     throw httpError(
       400,
-      `Text cannot exceed ${maximum} characters.`
+      `Text cannot exceed ${maximum} characters.`,
     );
   }
 
@@ -117,46 +115,36 @@ function slugify(value) {
 function escapeRegex(value) {
   return String(value).replace(
     /[.*+?^${}()|[\]\\]/g,
-    "\\$&"
+    "\\$&",
   );
 }
 
 function boolean(value) {
-  if (
-    [true, "true", 1, "1"].includes(value)
-  ) {
+  if ([true, "true", 1, "1"].includes(value)) {
     return true;
   }
 
-  if (
-    [false, "false", 0, "0"].includes(value)
-  ) {
+  if ([false, "false", 0, "0"].includes(value)) {
     return false;
   }
 
-  throw httpError(
-    400,
-    "Invalid checkbox value."
-  );
+  throw httpError(400, "Invalid checkbox value.");
 }
 
 function number(
   value,
   label,
   maximum,
-  integer = false
+  integer = false,
 ) {
   if (
     value == null ||
-    (
-      typeof value === "string" &&
-      !value.trim()
-    ) ||
+    (typeof value === "string" && !value.trim()) ||
     !["number", "string"].includes(typeof value)
   ) {
     throw httpError(
       400,
-      `Enter a valid ${label}.`
+      `Enter a valid ${label}.`,
     );
   }
 
@@ -166,16 +154,13 @@ function number(
     !Number.isFinite(result) ||
     result < 0 ||
     result > maximum ||
-    (
-      integer &&
-      !Number.isSafeInteger(result)
-    )
+    (integer && !Number.isSafeInteger(result))
   ) {
     throw httpError(
       400,
       `${label} must be ${
         integer ? "a whole number" : "a number"
-      } from 0 to ${maximum}.`
+      } from 0 to ${maximum}.`,
     );
   }
 
@@ -186,7 +171,7 @@ function array(
   value,
   maximum = 100,
   length = 300,
-  caseSensitive = false
+  caseSensitive = false,
 ) {
   if (
     !Array.isArray(value) ||
@@ -194,7 +179,7 @@ function array(
   ) {
     throw httpError(
       400,
-      `Provide a list containing no more than ${maximum} entries.`
+      `Provide a list containing no more than ${maximum} entries.`,
     );
   }
 
@@ -212,6 +197,7 @@ function array(
       }
 
       seen.add(key);
+
       return true;
     });
 }
@@ -226,7 +212,7 @@ function object(value, label) {
   ) {
     throw httpError(
       400,
-      `${label} must be an object.`
+      `${label} must be an object.`,
     );
   }
 }
@@ -244,7 +230,7 @@ function safeKey(value, maximum = 100) {
     throw httpError(
       400,
       "Option and specification names cannot contain dots, " +
-        "control characters, start with $, or use reserved names."
+        "control characters, start with $, or use reserved names.",
     );
   }
 
@@ -257,7 +243,7 @@ function choice(value, choices, label) {
   if (!choices.includes(result)) {
     throw httpError(
       400,
-      `Choose a valid ${label}.`
+      `Choose a valid ${label}.`,
     );
   }
 
@@ -274,7 +260,7 @@ function reference(value, label) {
   if (!/^[a-f0-9]{24}$/i.test(result)) {
     throw httpError(
       400,
-      `Choose a valid ${label}.`
+      `Choose a valid ${label}.`,
     );
   }
 
@@ -292,12 +278,12 @@ function knownKeys(value, allowed, label) {
 
   if (
     Object.keys(value).some(
-      (key) => !allowed.includes(key)
+      (key) => !allowed.includes(key),
     )
   ) {
     throw httpError(
       400,
-      `${label} contains an unsupported setting.`
+      `${label} contains an unsupported setting.`,
     );
   }
 }
@@ -314,7 +300,7 @@ function normalizeVariants(value) {
   if (entries.length > 50) {
     throw httpError(
       400,
-      "Use no more than 50 size or colour groups."
+      "Use no more than 50 size or colour groups.",
     );
   }
 
@@ -326,14 +312,11 @@ function normalizeVariants(value) {
     if (own(result, key)) {
       throw httpError(
         400,
-        "Variant group names must be unique."
+        "Variant group names must be unique.",
       );
     }
 
-    if (
-      group &&
-      typeof group === "object"
-    ) {
+    if (group && typeof group === "object") {
       object(group, "Variant options");
 
       const options = Object.entries(group);
@@ -341,21 +324,19 @@ function normalizeVariants(value) {
       if (options.length > 50) {
         throw httpError(
           400,
-          "Use no more than 50 options per group."
+          "Use no more than 50 options per group.",
         );
       }
 
       result[key] = {};
 
-      for (
-        const [second, quantity] of options
-      ) {
+      for (const [second, quantity] of options) {
         const option = safeKey(second, 80);
 
         if (own(result[key], option)) {
           throw httpError(
             400,
-            "Variant option names must be unique."
+            "Variant option names must be unique.",
           );
         }
 
@@ -363,7 +344,7 @@ function normalizeVariants(value) {
           quantity,
           `${key} / ${option} stock`,
           1000000,
-          true
+          true,
         );
       }
     } else {
@@ -371,7 +352,7 @@ function normalizeVariants(value) {
         group,
         `${key} stock`,
         1000000,
-        true
+        true,
       );
     }
   }
@@ -387,7 +368,7 @@ function normalizeSpecifications(value) {
   if (entries.length > 100) {
     throw httpError(
       400,
-      "Use no more than 100 specifications."
+      "Use no more than 100 specifications.",
     );
   }
 
@@ -399,13 +380,12 @@ function normalizeSpecifications(value) {
     if (
       Object.keys(result).some(
         (existing) =>
-          existing.toLowerCase() ===
-          key.toLowerCase()
+          existing.toLowerCase() === key.toLowerCase(),
       )
     ) {
       throw httpError(
         400,
-        `The specification "${key}" is repeated.`
+        `The specification "${key}" is repeated.`,
       );
     }
 
@@ -437,15 +417,13 @@ function normalizeDelivery(value) {
       "transitDaysMin",
       "transitDaysMax",
     ],
-    "Delivery settings"
+    "Delivery settings",
   );
 
   const result = {};
 
   if (own(value, "available")) {
-    result.available = boolean(
-      value.available
-    );
+    result.available = boolean(value.available);
   }
 
   if (own(value, "estimatedDays")) {
@@ -457,20 +435,18 @@ function normalizeDelivery(value) {
     result.freeDeliveryAbove = number(
       value.freeDeliveryAbove,
       "free delivery threshold",
-      100000000
+      100000000,
     );
   }
 
-  for (
-    const key of [
-      "transitDaysMin",
-      "transitDaysMax",
-    ]
-  ) {
+  for (const key of [
+    "transitDaysMin",
+    "transitDaysMax",
+  ]) {
     if (own(value, key)) {
       result[key] = days(
         value[key],
-        "transit days"
+        "transit days",
       );
     }
   }
@@ -489,7 +465,7 @@ function normalizeFulfillment(value) {
       "canSendToPackingLocation",
       "supplierStockConfirmedAt",
     ],
-    "Fulfillment settings"
+    "Fulfillment settings",
   );
 
   const result = {};
@@ -498,7 +474,7 @@ function normalizeFulfillment(value) {
     result.stockSource = choice(
       value.stockSource,
       STOCK_SOURCES,
-      "stock source"
+      "stock source",
     );
   }
 
@@ -506,35 +482,30 @@ function normalizeFulfillment(value) {
     result.dispatchBy = choice(
       value.dispatchBy,
       DISPATCH_METHODS,
-      "dispatch responsibility"
+      "dispatch responsibility",
     );
   }
 
-  for (
-    const key of [
-      "preparationDaysMin",
-      "preparationDaysMax",
-    ]
-  ) {
+  for (const key of [
+    "preparationDaysMin",
+    "preparationDaysMax",
+  ]) {
     if (own(value, key)) {
       result[key] = days(
         value[key],
-        "preparation days"
+        "preparation days",
       );
     }
   }
 
-  if (
-    own(value, "canSendToPackingLocation")
-  ) {
-    result.canSendToPackingLocation =
-      boolean(
-        value.canSendToPackingLocation
-      );
+  if (own(value, "canSendToPackingLocation")) {
+    result.canSendToPackingLocation = boolean(
+      value.canSendToPackingLocation,
+    );
   }
 
-  // A form can clear the confirmation timestamp.
-  // Only confirmSupplierStock records a new confirmation.
+  // Forms may clear this timestamp.
+  // Only confirmSupplierStock records a fresh confirmation.
   if (
     own(value, "supplierStockConfirmedAt") &&
     value.supplierStockConfirmedAt == null
@@ -549,28 +520,22 @@ function normalizeKitSettings(value) {
   knownKeys(
     value,
     ["eligible", "roles"],
-    "Kit settings"
+    "Kit settings",
   );
 
   const result = {};
 
   if (own(value, "eligible")) {
-    result.eligible = boolean(
-      value.eligible
-    );
+    result.eligible = boolean(value.eligible);
   }
 
   if (own(value, "roles")) {
     result.roles = array(
       value.roles,
       7,
-      40
+      40,
     ).map((role) =>
-      choice(
-        role,
-        KIT_ROLES,
-        "kit category"
-      )
+      choice(role, KIT_ROLES, "kit category"),
     );
   }
 
@@ -581,7 +546,7 @@ function normalizeOptionLabels(value) {
   knownKeys(
     value,
     ["size", "color"],
-    "Option labels"
+    "Option labels",
   );
 
   const result = {};
@@ -590,7 +555,7 @@ function normalizeOptionLabels(value) {
     result.size = choice(
       value.size,
       SIZE_LABELS,
-      "size option label"
+      "size option label",
     );
   }
 
@@ -598,7 +563,7 @@ function normalizeOptionLabels(value) {
     result.color = choice(
       value.color,
       COLOR_LABELS,
-      "colour option label"
+      "colour option label",
     );
   }
 
@@ -614,7 +579,7 @@ function normalizePayload(body) {
     try {
       result.meeshoProductLink =
         normalizeMeeshoLink(
-          body.meeshoProductLink
+          body.meeshoProductLink,
         );
     } catch (error) {
       throw httpError(400, error.message);
@@ -636,15 +601,9 @@ function normalizePayload(body) {
     returnConditions: 2000,
   };
 
-  for (
-    const [key, maximum] of
-    Object.entries(strings)
-  ) {
+  for (const [key, maximum] of Object.entries(strings)) {
     if (own(body, key)) {
-      result[key] = text(
-        body[key],
-        maximum
-      );
+      result[key] = text(body[key], maximum);
     }
   }
 
@@ -654,20 +613,15 @@ function normalizePayload(body) {
   ) {
     throw httpError(
       400,
-      "Product name must contain at least 2 characters."
+      "Product name must contain at least 2 characters.",
     );
   }
 
-  for (
-    const key of ["category", "brand"]
-  ) {
-    if (
-      own(result, key) &&
-      !result[key]
-    ) {
+  for (const key of ["category", "brand"]) {
+    if (own(result, key) && !result[key]) {
       throw httpError(
         400,
-        `Choose a product ${key}.`
+        `Choose a product ${key}.`,
       );
     }
   }
@@ -678,7 +632,7 @@ function normalizePayload(body) {
     if (!result.slug) {
       throw httpError(
         400,
-        "Enter a valid product URL name."
+        "Enter a valid product URL name.",
       );
     }
   }
@@ -687,7 +641,7 @@ function normalizePayload(body) {
     result.price = number(
       body.price,
       "price",
-      100000000
+      100000000,
     );
   }
 
@@ -695,7 +649,7 @@ function normalizePayload(body) {
     result.discount = number(
       body.discount,
       "discount",
-      100
+      100,
     );
   }
 
@@ -704,7 +658,7 @@ function normalizePayload(body) {
       body.stock,
       "stock",
       1000000,
-      true
+      true,
     );
   }
 
@@ -717,13 +671,13 @@ function normalizePayload(body) {
             body.legacyId,
             "legacy ID",
             Number.MAX_SAFE_INTEGER,
-            true
+            true,
           );
 
     if (result.legacyId === 0) {
       throw httpError(
         400,
-        "Legacy ID must be a positive integer."
+        "Legacy ID must be a positive integer.",
       );
     }
   }
@@ -731,7 +685,7 @@ function normalizePayload(body) {
   if (own(body, "supplier")) {
     result.supplier = reference(
       body.supplier,
-      "supplier"
+      "supplier",
     );
   }
 
@@ -743,21 +697,19 @@ function normalizePayload(body) {
         : number(
             body.purchaseCost,
             "purchase cost",
-            100000000
+            100000000,
           );
 
     if (
       result.purchaseCost != null &&
       Math.abs(
         result.purchaseCost * 100 -
-          Math.round(
-            result.purchaseCost * 100
-          )
+          Math.round(result.purchaseCost * 100),
       ) >= 0.00001
     ) {
       throw httpError(
         400,
-        "Purchase cost cannot contain more than two decimal places."
+        "Purchase cost cannot contain more than two decimal places.",
       );
     }
   }
@@ -766,7 +718,7 @@ function normalizePayload(body) {
     result.returnsEligible = choice(
       body.returnsEligible,
       ["yes", "no", "unconfirmed"],
-      "return eligibility"
+      "return eligibility",
     );
   }
 
@@ -775,13 +727,13 @@ function normalizePayload(body) {
       body.returnWindowDays,
       "return window",
       7,
-      true
+      true,
     );
 
     if (result.returnWindowDays < 1) {
       throw httpError(
         400,
-        "The current return window must be 1–7 days."
+        "The current return window must be 1–7 days.",
       );
     }
   }
@@ -795,26 +747,22 @@ function normalizePayload(body) {
     images: [20, 2000],
   };
 
-  for (
-    const [key, limits] of
-    Object.entries(lists)
-  ) {
+  for (const [key, limits] of Object.entries(lists)) {
     if (own(body, key)) {
       result[key] = array(
         body[key],
         ...limits,
-        key === "images"
+        key === "images",
       );
     }
   }
 
   if (own(body, "colorImages")) {
     try {
-      result.colorImages =
-        normalizeColorImages(
-          body.colorImages,
-          result.colors || null
-        );
+      result.colorImages = normalizeColorImages(
+        body.colorImages,
+        result.colors || null,
+      );
     } catch (error) {
       throw httpError(400, error.message);
     }
@@ -829,22 +777,17 @@ function normalizePayload(body) {
     optionLabels: normalizeOptionLabels,
   };
 
-  for (
-    const [key, normalize] of
-    Object.entries(normalizers)
-  ) {
+  for (const [key, normalize] of Object.entries(normalizers)) {
     if (own(body, key)) {
       result[key] = normalize(body[key]);
     }
   }
 
-  for (
-    const key of [
-      "isFeatured",
-      "isBestSeller",
-      "isActive",
-    ]
-  ) {
+  for (const key of [
+    "isFeatured",
+    "isBestSeller",
+    "isActive",
+  ]) {
     if (own(body, key)) {
       result[key] = boolean(body[key]);
     }
@@ -852,15 +795,13 @@ function normalizePayload(body) {
 
   if (own(body, "isNewArrival")) {
     result.isNewArrival = boolean(
-      body.isNewArrival
+      body.isNewArrival,
     );
   } else if (own(body, "isNew")) {
-    result.isNewArrival = boolean(
-      body.isNew
-    );
+    result.isNewArrival = boolean(body.isNew);
   }
 
-  // Codes, SKUs and review ratings stay server-managed.
+  // Codes, SKUs and review ratings remain server-managed.
   return result;
 }
 
@@ -889,8 +830,7 @@ function ensureAdmin(req, res) {
   ) {
     res.status(403).json({
       success: false,
-      message:
-        "Admin access is required.",
+      message: "Admin access is required.",
     });
 
     return false;
@@ -917,9 +857,7 @@ function sendError(res, error, fallback) {
 
   if (error.code === 11000) {
     const field = Object.keys(
-      error.keyPattern ||
-        error.keyValue ||
-        {}
+      error.keyPattern || error.keyValue || {},
     )[0];
 
     return res.status(409).json({
@@ -935,9 +873,7 @@ function sendError(res, error, fallback) {
     return res.status(400).json({
       success: false,
       message:
-        Object.values(
-          error.errors || {}
-        )[0]?.message ||
+        Object.values(error.errors || {})[0]?.message ||
         "Please check the product details.",
     });
   }
@@ -945,8 +881,7 @@ function sendError(res, error, fallback) {
   if (error.name === "CastError") {
     return res.status(400).json({
       success: false,
-      message:
-        "A product value is invalid.",
+      message: "A product value is invalid.",
     });
   }
 
@@ -960,7 +895,7 @@ function sendError(res, error, fallback) {
   if (status >= 500) {
     console.error(
       "Product request failed:",
-      error.name || "Error"
+      error.name || "Error",
     );
   }
 
@@ -976,10 +911,7 @@ function sendError(res, error, fallback) {
   });
 }
 
-function serializeProduct(
-  product,
-  admin = false
-) {
+function serializeProduct(product, admin = false) {
   const data =
     typeof product.toObject === "function"
       ? product.toObject({
@@ -997,7 +929,7 @@ function serializeProduct(
   }
 
   data.isNew = Boolean(
-    data.isNewArrival ?? data.isNew
+    data.isNewArrival ?? data.isNew,
   );
 
   delete data.isNewArrival;
@@ -1012,10 +944,9 @@ function serializeProduct(
     data.purchaseCost =
       data.purchaseCost ?? null;
 
-    data.meeshoProductLink =
-      safeMeeshoLink(
-        data.meeshoProductLink
-      );
+    data.meeshoProductLink = safeMeeshoLink(
+      data.meeshoProductLink,
+    );
   } else {
     delete data.supplier;
     delete data.purchaseCost;
@@ -1029,7 +960,7 @@ function serializeProduct(
 async function findProduct(
   identifier,
   activeOnly = false,
-  admin = false
+  admin = false,
 ) {
   const value = text(identifier, 200);
 
@@ -1038,15 +969,11 @@ async function findProduct(
   }
 
   const alternatives = [
-    {
-      slug: value.toLowerCase(),
-    },
+    { slug: value.toLowerCase() },
   ];
 
   if (/^[a-f0-9]{24}$/i.test(value)) {
-    alternatives.push({
-      _id: value,
-    });
+    alternatives.push({ _id: value });
   }
 
   if (/^\d+$/.test(value)) {
@@ -1056,9 +983,7 @@ async function findProduct(
       Number.isSafeInteger(legacyId) &&
       legacyId > 0
     ) {
-      alternatives.push({
-        legacyId,
-      });
+      alternatives.push({ legacyId });
     }
   }
 
@@ -1079,15 +1004,11 @@ async function findProduct(
 
 function hasVariants(value) {
   return Boolean(
-    value &&
-      Object.keys(value).length
+    value && Object.keys(value).length,
   );
 }
 
-function normalizeInventory(
-  product,
-  payload
-) {
+function normalizeInventory(product, payload) {
   if (
     ![
       "stock",
@@ -1107,30 +1028,25 @@ function normalizeInventory(
     ? payload.colors
     : product.colors || [];
 
-  for (
-    const name of [...sizes, ...colors]
-  ) {
+  for (const name of [...sizes, ...colors]) {
     safeKey(name, 80);
 
     if (name === "default") {
       throw httpError(
         400,
-        "The option name default is reserved."
+        "The option name default is reserved.",
       );
     }
   }
 
-  if (
-    !sizes.length &&
-    !colors.length
-  ) {
+  if (!sizes.length && !colors.length) {
     if (
       own(payload, "variants") &&
       hasVariants(payload.variants)
     ) {
       throw httpError(
         400,
-        "List sizes or colours before providing variant quantities."
+        "List sizes or colours before providing variant quantities.",
       );
     }
 
@@ -1140,7 +1056,7 @@ function normalizeInventory(
     ) {
       throw httpError(
         400,
-        "Clear the old variants and provide the new total stock together."
+        "Clear the old variants and provide the new total stock together.",
       );
     }
 
@@ -1150,7 +1066,7 @@ function normalizeInventory(
     ) {
       throw httpError(
         400,
-        "Provide total stock when removing all product options."
+        "Provide total stock when removing all product options.",
       );
     }
 
@@ -1160,14 +1076,14 @@ function normalizeInventory(
   if (own(payload, "stock")) {
     throw httpError(
       400,
-      "Update individual variant quantities instead of total stock."
+      "Update individual variant quantities instead of total stock.",
     );
   }
 
   if (!own(payload, "variants")) {
     throw httpError(
       400,
-      "Provide a complete stock matrix for these sizes and colours."
+      "Provide a complete stock matrix for these sizes and colours.",
     );
   }
 
@@ -1183,7 +1099,7 @@ function normalizeInventory(
     ) {
       throw httpError(
         400,
-        "Enter whole variant stock quantities."
+        "Enter whole variant stock quantities.",
       );
     }
 
@@ -1192,7 +1108,7 @@ function normalizeInventory(
     if (total > 1000000) {
       throw httpError(
         400,
-        "Combined product stock cannot exceed 1,000,000."
+        "Combined product stock cannot exceed 1,000,000.",
       );
     }
 
@@ -1202,7 +1118,7 @@ function normalizeInventory(
   function exactKeys(
     value,
     expected,
-    label
+    label,
   ) {
     object(value, label);
 
@@ -1211,22 +1127,18 @@ function normalizeInventory(
     if (
       keys.length !== expected.length ||
       keys.some(
-        (key) => !expected.includes(key)
+        (key) => !expected.includes(key),
       )
     ) {
       throw httpError(
         400,
-        `Provide stock for every listed ${label}, with no unlisted options.`
+        `Provide stock for every listed ${label}, with no unlisted options.`,
       );
     }
   }
 
   if (colors.length) {
-    exactKeys(
-      source,
-      colors,
-      "colour"
-    );
+    exactKeys(source, colors, "colour");
 
     for (const color of colors) {
       const group = source[color];
@@ -1235,19 +1147,17 @@ function normalizeInventory(
         exactKeys(
           group,
           sizes,
-          `size in ${color}`
+          `size in ${color}`,
         );
 
         result[color] = {};
 
         for (const size of sizes) {
           result[color][size] = add(
-            group[size]
+            group[size],
           );
         }
-      } else if (
-        typeof group === "number"
-      ) {
+      } else if (typeof group === "number") {
         result[color] = {
           default: add(group),
         };
@@ -1255,7 +1165,7 @@ function normalizeInventory(
         exactKeys(
           group,
           ["default"],
-          `stock entry in ${color}`
+          `stock entry in ${color}`,
         );
 
         result[color] = {
@@ -1264,11 +1174,7 @@ function normalizeInventory(
       }
     }
   } else {
-    exactKeys(
-      source,
-      sizes,
-      "size"
-    );
+    exactKeys(source, sizes, "size");
 
     for (const size of sizes) {
       if (
@@ -1276,7 +1182,7 @@ function normalizeInventory(
       ) {
         throw httpError(
           400,
-          "Size-only products need a numeric quantity for each size."
+          "Size-only products need a numeric quantity for each size.",
         );
       }
 
@@ -1298,19 +1204,17 @@ function protectSave(product) {
     ...(product.$where || {}),
   };
 
-  for (
-    const key of [
-      "stock",
-      "variants",
-      "sizes",
-      "colors",
-      "isActive",
-      "price",
-      "discount",
-      "updatedAt",
-      "__v",
-    ]
-  ) {
+  for (const key of [
+    "stock",
+    "variants",
+    "sizes",
+    "colors",
+    "isActive",
+    "price",
+    "discount",
+    "updatedAt",
+    "__v",
+  ]) {
     conditions[key] =
       product.$isDefault?.(key) ||
       snapshot[key] === undefined
@@ -1322,25 +1226,21 @@ function protectSave(product) {
 }
 
 function applyPatch(product, payload) {
-  const patch = {
-    ...payload,
-  };
+  const patch = { ...payload };
 
   const oldSupplier = String(
-    product.supplier || ""
+    product.supplier || "",
   );
 
   const oldSource =
     product.fulfillment?.stockSource;
 
-  for (
-    const key of [
-      "delivery",
-      "fulfillment",
-      "kitSettings",
-      "optionLabels",
-    ]
-  ) {
+  for (const key of [
+    "delivery",
+    "fulfillment",
+    "kitSettings",
+    "optionLabels",
+  ]) {
     if (!own(patch, key)) {
       continue;
     }
@@ -1371,16 +1271,14 @@ function applyPatch(product, payload) {
         product.fulfillment.stockSource
     )
   ) {
-    product.fulfillment
-      .supplierStockConfirmedAt = null;
+    product.fulfillment.supplierStockConfirmedAt =
+      null;
   }
 
-  for (
-    const key of [
-      "variants",
-      "specifications",
-    ]
-  ) {
+  for (const key of [
+    "variants",
+    "specifications",
+  ]) {
     if (own(payload, key)) {
       product.markModified(key);
     }
@@ -1396,8 +1294,7 @@ function supplierProblem(supplier) {
     return "The selected supplier is not active.";
   }
 
-  const verified =
-    supplier.verification;
+  const verified = supplier.verification;
 
   if (
     verified?.status !== "verified" ||
@@ -1434,10 +1331,10 @@ function supplierProblem(supplier) {
 
   if (
     !Number.isSafeInteger(
-      setup.preparationDaysMin
+      setup.preparationDaysMin,
     ) ||
     !Number.isSafeInteger(
-      setup.preparationDaysMax
+      setup.preparationDaysMax,
     ) ||
     setup.preparationDaysMin < 0 ||
     setup.preparationDaysMax <
@@ -1452,7 +1349,7 @@ function supplierProblem(supplier) {
 
 async function validateSupply(
   product,
-  confirmStock = false
+  confirmStock = false,
 ) {
   const setup =
     product.fulfillment || {};
@@ -1474,7 +1371,7 @@ async function validateSupply(
         400,
         "Choose a supplier for these fulfillment settings, or save " +
           "the product as archived while setting it up.",
-        "SUPPLIER_REQUIRED"
+        "SUPPLIER_REQUIRED",
       );
     }
 
@@ -1483,14 +1380,14 @@ async function validateSupply(
 
   const supplier =
     await Supplier.findById(
-      product.supplier
+      product.supplier,
     ).select(SUPPLIER_FIELDS);
 
   if (!supplier) {
     throw httpError(
       400,
       "The selected supplier no longer exists.",
-      "SUPPLIER_NOT_FOUND"
+      "SUPPLIER_NOT_FOUND",
     );
   }
 
@@ -1505,31 +1402,29 @@ async function validateSupply(
       throw httpError(
         400,
         `${problem} Save the product as archived while completing setup.`,
-        "SUPPLIER_UNAVAILABLE"
+        "SUPPLIER_UNAVAILABLE",
       );
     }
 
     if (
       setup.dispatchBy === "supplier" &&
-      !supplier.fulfillment
-        .dispatchToCustomer
+      !supplier.fulfillment.dispatchToCustomer
     ) {
       throw httpError(
         400,
         "This supplier is not configured to dispatch directly to customers.",
-        "FULFILLMENT_NOT_CONFIGURED"
+        "FULFILLMENT_NOT_CONFIGURED",
       );
     }
 
     if (
       setup.canSendToPackingLocation &&
-      !supplier.fulfillment
-        .sendToPackingLocation
+      !supplier.fulfillment.sendToPackingLocation
     ) {
       throw httpError(
         400,
         "This supplier is not configured to send products to a packing location.",
-        "FULFILLMENT_NOT_CONFIGURED"
+        "FULFILLMENT_NOT_CONFIGURED",
       );
     }
   }
@@ -1545,16 +1440,16 @@ async function validateSupply(
         400,
         "Record where this product's stock is held and who " +
           "dispatches it before publishing.",
-        "FULFILLMENT_NOT_CONFIGURED"
+        "FULFILLMENT_NOT_CONFIGURED",
       );
     }
 
     if (
       !Number.isSafeInteger(
-        setup.preparationDaysMin
+        setup.preparationDaysMin,
       ) ||
       !Number.isSafeInteger(
-        setup.preparationDaysMax
+        setup.preparationDaysMax,
       ) ||
       setup.preparationDaysMin < 0 ||
       setup.preparationDaysMax <
@@ -1564,7 +1459,7 @@ async function validateSupply(
       throw httpError(
         400,
         "Record valid product preparation times before publishing.",
-        "FULFILLMENT_NOT_CONFIGURED"
+        "FULFILLMENT_NOT_CONFIGURED",
       );
     }
 
@@ -1576,7 +1471,7 @@ async function validateSupply(
       throw httpError(
         400,
         "Confirm the supplier-to-packing arrangement for this dispatch method.",
-        "FULFILLMENT_NOT_CONFIGURED"
+        "FULFILLMENT_NOT_CONFIGURED",
       );
     }
   }
@@ -1587,37 +1482,39 @@ async function validateSupply(
     ) {
       throw httpError(
         400,
-        "Supplier stock confirmation applies only to stock held by a supplier."
+        "Supplier stock confirmation applies only to stock held by a supplier.",
       );
     }
 
-    product.fulfillment
-      .supplierStockConfirmedAt =
+    product.fulfillment.supplierStockConfirmedAt =
       new Date();
   }
 
   if (
     product.isActive &&
     setup.stockSource === "supplier" &&
-    !product.fulfillment
-      .supplierStockConfirmedAt
+    !product.fulfillment.supplierStockConfirmedAt
   ) {
     throw httpError(
       400,
       "Check the supplier's actual variant quantities, then " +
         "confirm supplier stock before publishing.",
-      "SUPPLIER_STOCK_UNCONFIRMED"
+      "SUPPLIER_STOCK_UNCONFIRMED",
     );
   }
 }
 
 async function getProducts(req, res) {
-  res.set("Cache-Control", "no-store");
+  res.set(
+    "Cache-Control",
+    "no-store",
+  );
 
   try {
-    const products = await Product.find({
-      isActive: true,
-    });
+    const products =
+      await Product.find({
+        isActive: true,
+      });
 
     const reviewed =
       await attachReviews(products);
@@ -1627,31 +1524,38 @@ async function getProducts(req, res) {
       count: reviewed.length,
       products: reviewed.map(
         (product) =>
-          serializeProduct(product)
+          serializeProduct(product),
       ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to load products."
+      "Unable to load products.",
     );
   }
 }
 
-async function getProductById(req, res) {
-  res.set("Cache-Control", "no-store");
+async function getProductById(
+  req,
+  res,
+) {
+  res.set(
+    "Cache-Control",
+    "no-store",
+  );
 
   try {
-    const product = await findProduct(
-      req.params.id,
-      true
-    );
+    const product =
+      await findProduct(
+        req.params.id,
+        true,
+      );
 
     if (!product) {
       throw httpError(
         404,
-        "Product not found."
+        "Product not found.",
       );
     }
 
@@ -1667,14 +1571,14 @@ async function getProductById(req, res) {
     return sendError(
       res,
       error,
-      "Unable to load this product."
+      "Unable to load this product.",
     );
   }
 }
 
 async function getAdminProductOptions(
   req,
-  res
+  res,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
@@ -1706,7 +1610,8 @@ async function getAdminProductOptions(
           $group: {
             _id: {
               category: "$category",
-              subcategory: "$subcategory",
+              subcategory:
+                "$subcategory",
             },
           },
         },
@@ -1737,15 +1642,15 @@ async function getAdminProductOptions(
       if (
         !own(
           subcategories,
-          _id.category
+          _id.category,
         )
       ) {
         subcategories[_id.category] = [];
       }
 
-      subcategories[
-        _id.category
-      ].push(_id.subcategory);
+      subcategories[_id.category].push(
+        _id.subcategory,
+      );
     }
 
     return res.json({
@@ -1755,7 +1660,7 @@ async function getAdminProductOptions(
         .filter(
           (value) =>
             typeof value === "string" &&
-            value.trim()
+            value.trim(),
         )
         .sort(),
 
@@ -1763,7 +1668,7 @@ async function getAdminProductOptions(
         .filter(
           (value) =>
             typeof value === "string" &&
-            value.trim()
+            value.trim(),
         )
         .sort(),
 
@@ -1786,7 +1691,7 @@ async function getAdminProductOptions(
           sendToPackingLocation:
             supplier.fulfillment
               ?.sendToPackingLocation === true,
-        })
+        }),
       ),
 
       kitRoles: KIT_ROLES,
@@ -1794,11 +1699,13 @@ async function getAdminProductOptions(
       colorOptionLabels: COLOR_LABELS,
       stockSources: STOCK_SOURCES,
       dispatchMethods: DISPATCH_METHODS,
+
       returnEligibility: [
         "unconfirmed",
         "yes",
         "no",
       ],
+
       returnWindow: {
         minimumDays: 1,
         maximumDays: 7,
@@ -1808,14 +1715,14 @@ async function getAdminProductOptions(
     return sendError(
       res,
       error,
-      "Unable to load product options."
+      "Unable to load product options.",
     );
   }
 }
 
 async function getAdminProducts(
   req,
-  res
+  res,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
@@ -1824,33 +1731,33 @@ async function getAdminProducts(
   try {
     const search = text(
       req.query.search,
-      150
+      150,
     );
 
     const category = text(
       req.query.category,
-      100
+      100,
     );
 
     const active = text(
       req.query.active,
-      20
+      20,
     );
 
     const page = Math.min(
       1000000,
       Math.max(
         1,
-        parseInt(req.query.page, 10) || 1
-      )
+        parseInt(req.query.page, 10) || 1,
+      ),
     );
 
     const limit = Math.min(
       100,
       Math.max(
         1,
-        parseInt(req.query.limit, 10) || 25
-      )
+        parseInt(req.query.limit, 10) || 25,
+      ),
     );
 
     const filter = {};
@@ -1858,7 +1765,7 @@ async function getAdminProducts(
     if (search) {
       const regex = new RegExp(
         escapeRegex(search),
-        "i"
+        "i",
       );
 
       filter.$or = [
@@ -1876,10 +1783,11 @@ async function getAdminProducts(
     }
 
     if (category) {
-      filter.category = new RegExp(
-        `^${escapeRegex(category)}$`,
-        "i"
-      );
+      filter.category =
+        new RegExp(
+          `^${escapeRegex(category)}$`,
+          "i",
+        );
     }
 
     if (
@@ -1887,14 +1795,18 @@ async function getAdminProducts(
         "in-stock",
         "low-stock",
         "out-of-stock",
-      ].includes(req.query.stockStatus)
+      ].includes(
+        req.query.stockStatus,
+      )
     ) {
       filter.stockStatus =
         req.query.stockStatus;
     }
 
     if (
-      ["true", "false"].includes(active)
+      ["true", "false"].includes(
+        active,
+      )
     ) {
       filter.isActive =
         active === "true";
@@ -1903,7 +1815,7 @@ async function getAdminProducts(
     if (req.query.supplier) {
       filter.supplier = reference(
         req.query.supplier,
-        "supplier"
+        "supplier",
       );
     }
 
@@ -1912,7 +1824,7 @@ async function getAdminProducts(
         choice(
           req.query.kitRole,
           KIT_ROLES,
-          "kit category"
+          "kit category",
         );
     }
 
@@ -1922,27 +1834,27 @@ async function getAdminProducts(
     ) {
       filter["kitSettings.eligible"] =
         boolean(
-          req.query.kitEligible
+          req.query.kitEligible,
         );
     }
 
-    const [
-      products,
-      total,
-    ] = await Promise.all([
-      Product.find(filter)
-        .select(ADMIN_FIELDS)
-        .sort({
-          updatedAt: -1,
-          _id: -1,
-        })
-        .skip(
-          (page - 1) * limit
-        )
-        .limit(limit),
+    const [products, total] =
+      await Promise.all([
+        Product.find(filter)
+          .select(ADMIN_FIELDS)
+          .sort({
+            updatedAt: -1,
+            _id: -1,
+          })
+          .skip(
+            (page - 1) * limit,
+          )
+          .limit(limit),
 
-      Product.countDocuments(filter),
-    ]);
+        Product.countDocuments(
+          filter,
+        ),
+      ]);
 
     return res.json({
       success: true,
@@ -1951,67 +1863,69 @@ async function getAdminProducts(
       page,
       pages: Math.max(
         1,
-        Math.ceil(total / limit)
+        Math.ceil(total / limit),
       ),
       limit,
       products: products.map(
         (product) =>
           serializeProduct(
             product,
-            true
-          )
+            true,
+          ),
       ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to load admin products."
+      "Unable to load admin products.",
     );
   }
 }
 
 async function getAdminProductById(
   req,
-  res
+  res,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
   }
 
   try {
-    const product = await findProduct(
-      req.params.id,
-      false,
-      true
-    );
+    const product =
+      await findProduct(
+        req.params.id,
+        false,
+        true,
+      );
 
     if (!product) {
       throw httpError(
         404,
-        "Product not found."
+        "Product not found.",
       );
     }
 
     return res.json({
       success: true,
-      product: serializeProduct(
-        product,
-        true
-      ),
+      product:
+        serializeProduct(
+          product,
+          true,
+        ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to load this product."
+      "Unable to load this product.",
     );
   }
 }
 
 async function createProduct(
   req,
-  res
+  res,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
@@ -2030,30 +1944,32 @@ async function createProduct(
     ) {
       throw httpError(
         400,
-        "Enter a product name."
+        "Enter a product name.",
       );
     }
 
     if (!payload.category) {
       throw httpError(
         400,
-        "Choose a product category."
+        "Choose a product category.",
       );
     }
 
     if (!payload.brand) {
       throw httpError(
         400,
-        "Choose the actual product brand."
+        "Choose the actual product brand.",
       );
     }
 
     if (
-      !Number.isFinite(payload.price)
+      !Number.isFinite(
+        payload.price,
+      )
     ) {
       throw httpError(
         400,
-        "Enter a valid product price."
+        "Enter a valid product price.",
       );
     }
 
@@ -2063,7 +1979,7 @@ async function createProduct(
         colors: [],
         variants: {},
       },
-      payload
+      payload,
     );
 
     const id =
@@ -2077,16 +1993,17 @@ async function createProduct(
         ).slice(0, 150)}-${String(id)}`;
     }
 
-    const product = new Product({
-      ...payload,
-      _id: id,
-      isActive:
-        payload.isActive ?? true,
-    });
+    const product =
+      new Product({
+        ...payload,
+        _id: id,
+        isActive:
+          payload.isActive ?? true,
+      });
 
     await validateSupply(
       product,
-      confirmStock
+      confirmStock,
     );
 
     await product.save();
@@ -2095,39 +2012,41 @@ async function createProduct(
       success: true,
       message:
         "Product and stock saved successfully.",
-      product: serializeProduct(
-        product,
-        true
-      ),
+      product:
+        serializeProduct(
+          product,
+          true,
+        ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to create this product."
+      "Unable to create this product.",
     );
   }
 }
 
 async function updateProduct(
   req,
-  res
+  res,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
   }
 
   try {
-    const product = await findProduct(
-      req.params.id,
-      false,
-      true
-    );
+    const product =
+      await findProduct(
+        req.params.id,
+        false,
+        true,
+      );
 
     if (!product) {
       throw httpError(
         404,
-        "Product not found."
+        "Product not found.",
       );
     }
 
@@ -2143,72 +2062,88 @@ async function updateProduct(
     ) {
       throw httpError(
         400,
-        "No product changes were provided."
+        "No product changes were provided.",
       );
     }
 
     normalizeInventory(
       product,
-      payload
+      payload,
     );
 
     protectSave(product);
 
     applyPatch(
       product,
-      payload
+      payload,
     );
 
-    await validateSupply(
-      product,
-      confirmStock
-    );
+    // Saving only the private product URL does not publish
+    // the product or change inventory or fulfillment.
+    const privateLinkOnly =
+      !confirmStock &&
+      Object.keys(payload).length === 1 &&
+      own(
+        payload,
+        "meeshoProductLink",
+      );
+
+    // All other edits retain supplier and fulfillment checks.
+    if (!privateLinkOnly) {
+      await validateSupply(
+        product,
+        confirmStock,
+      );
+    }
 
     await product.save();
 
     return res.json({
       success: true,
-      message:
-        "Product and stock updated successfully.",
-      product: serializeProduct(
-        product,
-        true
-      ),
+      message: privateLinkOnly
+        ? "Product website link saved."
+        : "Product and stock updated successfully.",
+      product:
+        serializeProduct(
+          product,
+          true,
+        ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to update this product."
+      "Unable to update this product.",
     );
   }
 }
 
 async function updateProductInventory(
   req,
-  res
+  res,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
   }
 
   try {
-    const product = await findProduct(
-      req.params.id,
-      false,
-      true
-    );
+    const product =
+      await findProduct(
+        req.params.id,
+        false,
+        true,
+      );
 
     if (!product) {
       throw httpError(
         404,
-        "Product not found."
+        "Product not found.",
       );
     }
 
     object(
       req.body,
-      "Inventory"
+      "Inventory",
     );
 
     const payload = {};
@@ -2216,19 +2151,29 @@ async function updateProductInventory(
     const confirmStock =
       confirmation(req.body);
 
-    if (own(req.body, "variants")) {
+    if (
+      own(
+        req.body,
+        "variants",
+      )
+    ) {
       payload.variants =
         normalizeVariants(
-          req.body.variants
+          req.body.variants,
         );
     }
 
-    if (own(req.body, "stock")) {
+    if (
+      own(
+        req.body,
+        "stock",
+      )
+    ) {
       payload.stock = number(
         req.body.stock,
         "stock",
         1000000,
-        true
+        true,
       );
     }
 
@@ -2238,26 +2183,26 @@ async function updateProductInventory(
     ) {
       throw httpError(
         400,
-        "Provide stock quantities."
+        "Provide stock quantities.",
       );
     }
 
     normalizeInventory(
       product,
-      payload
+      payload,
     );
 
     protectSave(product);
 
     applyPatch(
       product,
-      payload
+      payload,
     );
 
     if (confirmStock) {
       await validateSupply(
         product,
-        true
+        true,
       );
     }
 
@@ -2267,16 +2212,17 @@ async function updateProductInventory(
       success: true,
       message:
         "Inventory updated successfully.",
-      product: serializeProduct(
-        product,
-        true
-      ),
+      product:
+        serializeProduct(
+          product,
+          true,
+        ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to update inventory."
+      "Unable to update inventory.",
     );
   }
 }
@@ -2284,32 +2230,36 @@ async function updateProductInventory(
 async function setVisibility(
   req,
   res,
-  isActive
+  isActive,
 ) {
   if (!ensureAdmin(req, res)) {
     return;
   }
 
   try {
-    const product = await findProduct(
-      req.params.id,
-      false,
-      true
-    );
+    const product =
+      await findProduct(
+        req.params.id,
+        false,
+        true,
+      );
 
     if (!product) {
       throw httpError(
         404,
-        "Product not found."
+        "Product not found.",
       );
     }
 
     protectSave(product);
 
-    product.isActive = isActive;
+    product.isActive =
+      isActive;
 
     if (isActive) {
-      await validateSupply(product);
+      await validateSupply(
+        product,
+      );
     }
 
     await product.save();
@@ -2319,32 +2269,39 @@ async function setVisibility(
       message: isActive
         ? "Product restored."
         : "Product archived.",
-      product: serializeProduct(
-        product,
-        true
-      ),
+      product:
+        serializeProduct(
+          product,
+          true,
+        ),
     });
   } catch (error) {
     return sendError(
       res,
       error,
-      "Unable to change product visibility."
+      "Unable to change product visibility.",
     );
   }
 }
 
-const deleteProduct = (req, res) =>
+const deleteProduct = (
+  req,
+  res,
+) =>
   setVisibility(
     req,
     res,
-    false
+    false,
   );
 
-const restoreProduct = (req, res) =>
+const restoreProduct = (
+  req,
+  res,
+) =>
   setVisibility(
     req,
     res,
-    true
+    true,
   );
 
 module.exports = {

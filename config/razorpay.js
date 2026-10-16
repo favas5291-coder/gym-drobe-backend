@@ -8,21 +8,22 @@ function configurationError(message) {
   return Object.assign(new Error(message), {
     status: 503,
     code: "RAZORPAY_NOT_CONFIGURED",
+    gymdrobe: true,
   });
 }
 
 function getCredentials() {
   const keyId = String(
-    process.env.RAZORPAY_KEY_ID || ""
+    process.env.RAZORPAY_KEY_ID || "",
   ).trim();
 
   const keySecret = String(
-    process.env.RAZORPAY_KEY_SECRET || ""
+    process.env.RAZORPAY_KEY_SECRET || "",
   ).trim();
 
   if (!keyId || !keySecret) {
     throw configurationError(
-      "Online payment is temporarily unavailable. Please contact support."
+      "Online payment is temporarily unavailable. Please contact support.",
     );
   }
 
@@ -31,68 +32,85 @@ function getCredentials() {
     /^(your_|paste_)/i.test(keySecret)
   ) {
     throw configurationError(
-      "Online payment is temporarily unavailable. Please contact support."
+      "Online payment is temporarily unavailable. Please contact support.",
     );
   }
 
-  return { keyId, keySecret };
+  return {
+    keyId,
+    keySecret,
+  };
 }
 
 function paymentOrderError(error) {
   const providerStatus = Number(
-    error?.statusCode || error?.status || 0
+    error?.statusCode ||
+      error?.status ||
+      0,
   );
 
   const providerCode = error?.error?.code;
 
-  // Log only diagnostic identifiers.
-  // Never log credentials, request bodies or customer details.
-  console.error("Razorpay order creation failed:", {
-    status: providerStatus || "unknown",
-    code:
-      typeof providerCode === "string" &&
-      /^[A-Z0-9_]{1,80}$/.test(providerCode)
-        ? providerCode
-        : "UNKNOWN",
-  });
+  // Log diagnostic identifiers only.
+  // Credentials and customer details are excluded.
+  console.error(
+    "Razorpay order creation failed:",
+    {
+      status: providerStatus || "unknown",
+      code:
+        typeof providerCode === "string" &&
+        /^[A-Z0-9_]{1,80}$/.test(providerCode)
+          ? providerCode
+          : "UNKNOWN",
+    },
+  );
 
-  if (providerStatus === 401 || providerStatus === 403) {
+  if (
+    providerStatus === 401 ||
+    providerStatus === 403
+  ) {
     return Object.assign(
       new Error(
-        "The payment service could not authenticate. Please contact support."
+        "The payment service could not authenticate. Please contact support.",
       ),
       {
         status: 503,
         code: "RAZORPAY_AUTH_FAILED",
-      }
+        gymdrobe: true,
+      },
     );
   }
 
   if (providerStatus === 400) {
     return Object.assign(
       new Error(
-        "The payment service rejected this order. Please contact support."
+        "The payment service rejected this order. Please contact support.",
       ),
       {
         status: 502,
         code: "RAZORPAY_ORDER_REJECTED",
-      }
+        gymdrobe: true,
+      },
     );
   }
 
   return Object.assign(
     new Error(
-      "The payment service is temporarily unavailable. Please try again later."
+      "The payment service is temporarily unavailable. Please try again later.",
     ),
     {
       status: 503,
       code: "RAZORPAY_SERVICE_UNAVAILABLE",
-    }
+      gymdrobe: true,
+    },
   );
 }
 
 function getRazorpayClient() {
-  const { keyId, keySecret } = getCredentials();
+  const {
+    keyId,
+    keySecret,
+  } = getCredentials();
 
   if (
     client &&
@@ -108,9 +126,13 @@ function getRazorpayClient() {
   });
 
   const createOrder =
-    nextClient.orders.create.bind(nextClient.orders);
+    nextClient.orders.create.bind(
+      nextClient.orders,
+    );
 
-  nextClient.orders.create = async function (options) {
+  nextClient.orders.create = async function (
+    options,
+  ) {
     try {
       return await createOrder(options);
     } catch (error) {
