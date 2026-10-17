@@ -7,6 +7,11 @@ const {
 } = require("../utils/meeshoUrl");
 
 const mongoose = require("mongoose");
+
+const {
+  normalizeProductVideo,
+} = require("../utils/productVideo");
+
 const crypto = require("node:crypto");
 
 const forbiddenKeys = new Set([
@@ -75,17 +80,23 @@ function optionalDays() {
     default: null,
     min: 0,
     max: 365,
+
     validate: {
       validator: (value) =>
         value == null ||
         Number.isSafeInteger(value),
+
       message:
         "Days must be a whole number from 0 to 365.",
     },
   };
 }
 
-function validateRange(document, minimum, maximum) {
+function validateRange(
+  document,
+  minimum,
+  maximum
+) {
   const low = document[minimum];
   const high = document[maximum];
 
@@ -112,7 +123,10 @@ function stockRows(product) {
   const sizes = product.sizes || [];
   const colors = product.colors || [];
 
-  for (const option of [...sizes, ...colors]) {
+  for (const option of [
+    ...sizes,
+    ...colors,
+  ]) {
     if (
       !validKey(option) ||
       option === "default"
@@ -295,7 +309,11 @@ function stockRows(product) {
   };
 }
 
-function variantSku(productCode, color, size) {
+function variantSku(
+  productCode,
+  color,
+  size
+) {
   const label = [color, size]
     .filter(Boolean)
     .join("-")
@@ -308,14 +326,16 @@ function variantSku(productCode, color, size) {
 
   const signature = crypto
     .createHash("sha256")
-    .update(
-      JSON.stringify([color, size])
-    )
+    .update(JSON.stringify([color, size]))
     .digest("hex")
     .slice(0, 16)
     .toUpperCase();
 
-  return `${productCode}-${label || "OPTION"}-${signature}`;
+  return (
+    `${productCode}-` +
+    `${label || "OPTION"}-` +
+    signature
+  );
 }
 
 const reviewSchema = new mongoose.Schema(
@@ -326,12 +346,14 @@ const reviewSchema = new mongoose.Schema(
       trim: true,
       maxlength: 100,
     },
+
     rating: {
       type: Number,
       required: true,
       min: 1,
       max: 5,
     },
+
     comment: {
       type: String,
       default: "",
@@ -350,12 +372,14 @@ const deliverySchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
     estimatedDays: {
       type: String,
       default: null,
       trim: true,
       maxlength: 100,
     },
+
     freeDeliveryAbove: {
       type: Number,
       default: 500,
@@ -389,29 +413,37 @@ const fulfillmentSchema =
     {
       stockSource: {
         type: String,
+
         enum: [
           "unconfirmed",
           "gymdrobe",
           "supplier",
         ],
+
         default: "unconfirmed",
       },
+
       dispatchBy: {
         type: String,
+
         enum: [
           "unconfirmed",
           "gymdrobe",
           "supplier",
           "fulfillment-partner",
         ],
+
         default: "unconfirmed",
       },
+
       preparationDaysMin: optionalDays(),
       preparationDaysMax: optionalDays(),
+
       canSendToPackingLocation: {
         type: Boolean,
         default: false,
       },
+
       supplierStockConfirmedAt: {
         type: Date,
         default: null,
@@ -440,10 +472,12 @@ const kitSettingsSchema =
         type: Boolean,
         default: false,
       },
+
       roles: {
         type: [
           {
             type: String,
+
             enum: [
               "clothing",
               "footwear",
@@ -455,6 +489,7 @@ const kitSettingsSchema =
             ],
           },
         ],
+
         default: [],
       },
     },
@@ -490,6 +525,7 @@ const optionLabelsSchema =
       // Reuse existing size/colour inventory axes and SKUs.
       size: {
         type: String,
+
         enum: [
           "Size",
           "Pack size",
@@ -498,10 +534,13 @@ const optionLabelsSchema =
           "Length",
           "Option",
         ],
+
         default: "Size",
       },
+
       color: {
         type: String,
+
         enum: [
           "Colour",
           "Flavour",
@@ -509,6 +548,7 @@ const optionLabelsSchema =
           "Material",
           "Option",
         ],
+
         default: "Colour",
       },
     },
@@ -524,10 +564,12 @@ const variantSkuSchema =
         type: String,
         default: "",
       },
+
       size: {
         type: String,
         default: "",
       },
+
       sku: {
         type: String,
         required: true,
@@ -546,6 +588,7 @@ const productSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+
     productCode: {
       type: String,
       trim: true,
@@ -553,6 +596,7 @@ const productSchema = new mongoose.Schema(
       maxlength: 100,
       immutable: true,
     },
+
     slug: {
       type: String,
       required: true,
@@ -561,6 +605,7 @@ const productSchema = new mongoose.Schema(
       lowercase: true,
       maxlength: 180,
     },
+
     name: {
       type: String,
       required: true,
@@ -568,6 +613,7 @@ const productSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 200,
     },
+
     category: {
       type: String,
       required: true,
@@ -575,12 +621,14 @@ const productSchema = new mongoose.Schema(
       maxlength: 100,
       index: true,
     },
+
     subcategory: {
       type: String,
       default: "",
       trim: true,
       maxlength: 100,
     },
+
     brand: {
       type: String,
       default: "",
@@ -596,14 +644,19 @@ const productSchema = new mongoose.Schema(
       select: false,
       index: true,
     },
+
+    // Keep the legacy field name for existing records.
+    // This supports generic brand/supplier product links.
     meeshoProductLink: {
       type: String,
       default: "",
       select: false,
       maxlength: 2000,
+
       set: normalizeMeeshoLink,
+
       validate: {
-        validator: (value) => {
+        validator(value) {
           try {
             normalizeMeeshoLink(value);
             return true;
@@ -611,16 +664,19 @@ const productSchema = new mongoose.Schema(
             return false;
           }
         },
+
         message:
-          "Enter a safe HTTPS Meesho product link.",
+          "Enter a safe HTTPS product website link.",
       },
     },
+
     purchaseCost: {
       type: Number,
       default: null,
       min: 0,
       max: 100000000,
       select: false,
+
       validate: {
         validator: (value) =>
           value == null ||
@@ -628,13 +684,15 @@ const productSchema = new mongoose.Schema(
             Number.isFinite(value) &&
             Math.abs(
               value * 100 -
-                Math.round(value * 100)
+              Math.round(value * 100)
             ) < 0.00001
           ),
+
         message:
           "Purchase cost must be a valid INR amount with at most two decimal places.",
       },
     },
+
     fulfillment: {
       type: fulfillmentSchema,
       default: () => ({}),
@@ -654,48 +712,57 @@ const productSchema = new mongoose.Schema(
       trim: true,
       maxlength: 50,
     },
+
     price: {
       type: Number,
       required: true,
       min: 0,
       max: 100000000,
     },
+
     discount: {
       type: Number,
       default: 0,
       min: 0,
       max: 100,
     },
+
     rating: {
       type: Number,
       default: 0,
       min: 0,
       max: 5,
     },
+
     reviewCount: {
       type: Number,
       default: 0,
       min: 0,
     },
+
     reviews: {
       type: [reviewSchema],
       default: [],
     },
+
     badge: {
       type: String,
       default: "",
       trim: true,
       maxlength: 80,
     },
+
     tags: {
       type: [String],
       default: [],
     },
+
     isFeatured: {
       type: Boolean,
       default: false,
       index: true,
     },
+
     isBestSeller: {
       type: Boolean,
       default: false,
@@ -715,24 +782,29 @@ const productSchema = new mongoose.Schema(
       trim: true,
       maxlength: 500,
     },
+
     highlights: {
       type: [String],
       default: [],
     },
+
     specifications: {
       type: mongoose.Schema.Types.Mixed,
       default: () => ({}),
     },
+
     careInstructions: {
       type: [String],
       default: [],
     },
+
     whatsIncluded: {
       type: String,
       default: "",
       trim: true,
       maxlength: 1000,
     },
+
     description: {
       type: String,
       default: "",
@@ -744,56 +816,91 @@ const productSchema = new mongoose.Schema(
       type: optionLabelsSchema,
       default: () => ({}),
     },
+
     sizes: {
       type: [String],
       default: [],
     },
+
     colors: {
       type: [String],
       default: [],
     },
+
     variants: {
       type: mongoose.Schema.Types.Mixed,
       default: () => ({}),
     },
+
     variantSkus: {
       type: [variantSkuSchema],
       default: [],
     },
+
     stock: {
       type: Number,
       default: 0,
       min: 0,
       max: 1000000,
+
       validate: {
         validator: Number.isSafeInteger,
+
         message:
           "Stock must be a whole number from 0 to 1,000,000.",
       },
+
       index: true,
     },
+
     stockStatus: {
       type: String,
+
       enum: [
         "in-stock",
         "low-stock",
         "out-of-stock",
       ],
+
       default: "out-of-stock",
       index: true,
     },
+
     image: {
       type: String,
       default: "",
       trim: true,
       maxlength: 2000,
     },
+
     images: {
       type: [String],
       default: [],
     },
 
-    // One gallery per colour, shared across all sizes.
+    videoUrl: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 2000,
+
+      validate: {
+        validator(value) {
+          try {
+            return (
+              normalizeProductVideo(value) ===
+              value
+            );
+          } catch {
+            return false;
+          }
+        },
+
+        message:
+          "Use a public HTTPS .mp4, .webm or YouTube product video link.",
+      },
+    },
+
     colorImages: {
       type: [
         new mongoose.Schema(
@@ -804,6 +911,7 @@ const productSchema = new mongoose.Schema(
               trim: true,
               maxlength: 80,
             },
+
             images: {
               type: [String],
               default: [],
@@ -814,6 +922,7 @@ const productSchema = new mongoose.Schema(
           }
         ),
       ],
+
       default: [],
     },
 
@@ -828,15 +937,19 @@ const productSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000,
     },
+
     returnsEligible: {
       type: String,
+
       enum: [
         "yes",
         "no",
         "unconfirmed",
       ],
+
       default: "unconfirmed",
     },
+
     returnConditions: {
       type: String,
       default: "",
@@ -850,8 +963,10 @@ const productSchema = new mongoose.Schema(
       default: 7,
       min: 1,
       max: 7,
+
       validate: {
         validator: Number.isSafeInteger,
+
         message:
           "The current return window must be a whole number from 1 to 7 days.",
       },
@@ -866,6 +981,7 @@ const productSchema = new mongoose.Schema(
       uppercase: true,
       maxlength: 100,
     },
+
     isActive: {
       type: Boolean,
       default: true,
@@ -882,10 +998,15 @@ productSchema.pre(
   "validate",
   function () {
     this.name = clean(this.name);
-    this.slug = clean(this.slug).toLowerCase();
+
+    this.slug = clean(
+      this.slug
+    ).toLowerCase();
+
     this.category = clean(this.category);
     this.subcategory = clean(this.subcategory);
     this.brand = clean(this.brand);
+
     this.gender = clean(
       this.gender || "Unisex"
     );
@@ -928,16 +1049,18 @@ productSchema.pre(
       this.sku || this.productCode
     ).toUpperCase();
 
-    for (
-      const [field, maximum, length] of [
-        ["tags", 50, 100],
-        ["highlights", 30, 500],
-        ["careInstructions", 30, 500],
-        ["sizes", 50, 50],
-        ["colors", 50, 80],
-        ["images", 20, 2000],
-      ]
-    ) {
+    for (const [
+      field,
+      maximum,
+      length,
+    ] of [
+      ["tags", 50, 100],
+      ["highlights", 30, 500],
+      ["careInstructions", 30, 500],
+      ["sizes", 50, 50],
+      ["colors", 50, 80],
+      ["images", 20, 2000],
+    ]) {
       const values = cleanArray(
         this[field],
         maximum,
@@ -961,14 +1084,24 @@ productSchema.pre(
     }
 
     try {
-      this.colorImages =
-        normalizeColorImages(
-          this.colorImages,
-          this.colors || []
-        );
+      this.colorImages = normalizeColorImages(
+        this.colorImages,
+        this.colors || []
+      );
     } catch (error) {
       this.invalidate(
         "colorImages",
+        error.message
+      );
+    }
+
+    try {
+      this.videoUrl = normalizeProductVideo(
+        this.videoUrl
+      );
+    } catch (error) {
+      this.invalidate(
+        "videoUrl",
         error.message
       );
     }
@@ -1043,6 +1176,7 @@ productSchema.pre(
               row.color || "",
               row.size || "",
             ]),
+
             row.sku,
           ]
         )
@@ -1051,6 +1185,7 @@ productSchema.pre(
       const next = rows.map((row) => ({
         color: row.color,
         size: row.size,
+
         sku:
           previous.get(
             JSON.stringify([
@@ -1115,8 +1250,7 @@ productSchema.pre(
         review.rating <= 5
     );
 
-    this.reviewCount =
-      validReviews.length;
+    this.reviewCount = validReviews.length;
 
     this.rating = validReviews.length
       ? Math.round(
@@ -1136,7 +1270,10 @@ productSchema.pre(
   }
 );
 
-function transformProduct(document, result) {
+function transformProduct(
+  document,
+  result
+) {
   result.isNew = Boolean(
     result.isNewArrival
   );
@@ -1172,6 +1309,7 @@ productSchema.index(
   },
   {
     unique: true,
+
     partialFilterExpression: {
       productCode: {
         $type: "string",
@@ -1186,6 +1324,7 @@ productSchema.index(
   },
   {
     unique: true,
+
     partialFilterExpression: {
       "variantSkus.sku": {
         $type: "string",
@@ -1215,4 +1354,7 @@ productSchema.index({
 
 module.exports =
   mongoose.models.Product ||
-  mongoose.model("Product", productSchema);
+  mongoose.model(
+    "Product",
+    productSchema
+  );

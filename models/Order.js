@@ -4,6 +4,10 @@ const {
 
 const mongoose = require("mongoose");
 
+const {
+  normalizeCourierUrl,
+} = require("../utils/trackingUpdates");
+
 const PurchasedShippingSchema = require("./PurchasedShippingSchema");
 
 const {
@@ -924,6 +928,46 @@ const orderSchema = new mongoose.Schema(
     },
 
     tracking: {
+      packedAt: date(),
+
+      courierUrl: {
+        type: String,
+        default: "",
+        maxlength: 2000,
+
+        validate: {
+          validator(value) {
+            try {
+              return normalizeCourierUrl(value) === value;
+            } catch {
+              return false;
+            }
+          },
+
+          message: "Use a valid HTTPS courier tracking link.",
+        },
+      },
+
+      exception: {
+        type: {
+          type: String,
+          enum: [
+            "none",
+            "delayed",
+            "delivery-attempt-failed",
+          ],
+          default: "none",
+        },
+
+        message: {
+          type: String,
+          default: "",
+          maxlength: 500,
+        },
+
+        updatedAt: date(),
+      },
+
       carrier: {
         type: String,
         default: null,

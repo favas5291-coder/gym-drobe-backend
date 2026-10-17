@@ -4,6 +4,11 @@ const {
   validatePurchasedShipping,
 } = require("./purchasedShipping");
 
+const {
+  parseTrackingExtras,
+  applyTrackingExtras,
+} = require("./trackingUpdates");
+
 const PARCEL_STAGES = [
   "collecting",
   "packed",
@@ -19,30 +24,41 @@ const PROCUREMENT_STAGES = [
   "received",
 ];
 
-const bad = (
+function bad(
   message,
   code = "KIT_FULFILLMENT_INVALID",
   status = 409,
-) =>
-  Object.assign(new Error(message), {
+) {
+  return Object.assign(new Error(message), {
     status,
     code,
     gymdrobe: true,
   });
+}
 
-const whole = (value, min = 0) =>
-  Number.isSafeInteger(value) && value >= min;
+function whole(value, min = 0) {
+  return (
+    Number.isSafeInteger(value) &&
+    value >= min
+  );
+}
 
 function amount(value) {
-  const result = Math.round(Number(value) * 100);
+  const result = Math.round(
+    Number(value) * 100,
+  );
 
   if (
-    !["number", "string"].includes(typeof value) ||
+    !["number", "string"].includes(
+      typeof value,
+    ) ||
     !String(value).trim() ||
     !Number.isFinite(Number(value)) ||
     Number(value) < 0 ||
     !whole(result) ||
-    Math.abs(Number(value) * 100 - result) > 0.000001
+    Math.abs(
+      Number(value) * 100 - result,
+    ) > 0.000001
   ) {
     throw bad(
       "The payment ledger needs reconciliation.",
@@ -77,21 +93,26 @@ function text(
 function date(value) {
   return (
     value &&
-    Number.isFinite(new Date(value).getTime()) &&
+    Number.isFinite(
+      new Date(value).getTime(),
+    ) &&
     new Date(value).getTime() <= Date.now()
   );
 }
 
-const clone = (value) =>
-  JSON.parse(JSON.stringify(value));
+function clone(value) {
+  return JSON.parse(
+    JSON.stringify(value),
+  );
+}
 
 function collectedKitCodPaise(order) {
   const values =
     order.fulfillmentProgress?.parcels || [];
 
   if (
-    !values.every(
-      (row) => whole(row.codCollectedPaise),
+    !values.every((row) =>
+      whole(row.codCollectedPaise),
     )
   ) {
     throw bad(
@@ -100,7 +121,8 @@ function collectedKitCodPaise(order) {
   }
 
   const total = values.reduce(
-    (sum, row) => sum + row.codCollectedPaise,
+    (sum, row) =>
+      sum + row.codCollectedPaise,
     0,
   );
 
@@ -145,23 +167,35 @@ function initializeKitFulfillment(
       }),
     ),
 
-    parcels: order.shippingSnapshot.shipments.map(
-      (parcel) => ({
-        key: parcel.key,
-        status: "collecting",
-        carrier: parcel.carrier,
-        trackingNumber: "",
-        estimatedDelivery: null,
-        packedAt: null,
-        shippedAt: null,
-        deliveredAt: null,
-        codCollectedPaise: 0,
-        codCollectedAt: null,
-        collectionReference: "",
-        updatedAt: null,
-        updatedBy: null,
-      }),
-    ),
+    parcels:
+      order.shippingSnapshot.shipments.map(
+        (parcel) => ({
+          key: parcel.key,
+          status: "collecting",
+          carrier: parcel.carrier,
+          trackingNumber: "",
+          courierUrl: "",
+
+          exception: {
+            type: "none",
+            message: "",
+            updatedAt: null,
+          },
+
+          outForDeliveryAt: null,
+          estimatedDelivery: null,
+          packedAt: null,
+          shippedAt: null,
+          deliveredAt: null,
+
+          codCollectedPaise: 0,
+          codCollectedAt: null,
+          collectionReference: "",
+
+          updatedAt: null,
+          updatedBy: null,
+        }),
+      ),
   };
 }
 
@@ -186,7 +220,9 @@ function progressStage(
   if (
     parcels.every(
       (row) =>
-        PARCEL_STAGES.indexOf(row.status) >= 3,
+        PARCEL_STAGES.indexOf(
+          row.status,
+        ) >= 3,
     )
   ) {
     return "out-for-delivery";
@@ -195,7 +231,9 @@ function progressStage(
   if (
     parcels.some(
       (row) =>
-        PARCEL_STAGES.indexOf(row.status) >= 2,
+        PARCEL_STAGES.indexOf(
+          row.status,
+        ) >= 2,
     )
   ) {
     return "shipped";
@@ -204,7 +242,9 @@ function progressStage(
   if (
     parcels.every(
       (row) =>
-        PARCEL_STAGES.indexOf(row.status) >= 1,
+        PARCEL_STAGES.indexOf(
+          row.status,
+        ) >= 1,
     )
   ) {
     return "packing";
@@ -216,10 +256,13 @@ function progressStage(
 function reservedUnits(order, progress) {
   const totals = new Map();
 
-  const packedParcels = progress.parcels.filter(
-    (row) =>
-      PARCEL_STAGES.indexOf(row.status) >= 1,
-  );
+  const packedParcels =
+    progress.parcels.filter(
+      (row) =>
+        PARCEL_STAGES.indexOf(
+          row.status,
+        ) >= 1,
+    );
 
   for (const parcel of packedParcels) {
     const snapshot =
@@ -227,12 +270,16 @@ function reservedUnits(order, progress) {
         (row) => row.key === parcel.key,
       );
 
-    for (const content of snapshot.contents) {
+    for (
+      const content of snapshot.contents
+    ) {
       totals.set(
         content.itemIndex,
-
-        (totals.get(content.itemIndex) || 0) +
-          content.quantity,
+        (
+          totals.get(
+            content.itemIndex,
+          ) || 0
+        ) + content.quantity,
       );
     }
   }
@@ -241,7 +288,8 @@ function reservedUnits(order, progress) {
 }
 
 function validateKitProgress(order) {
-  const progress = order.fulfillmentProgress;
+  const progress =
+    order.fulfillmentProgress;
 
   if (!progress) {
     return;
@@ -251,7 +299,9 @@ function validateKitProgress(order) {
     !order.kitSnapshots?.length ||
     !order.shippingSnapshot ||
     !whole(progress.revision) ||
-    !Array.isArray(progress.components) ||
+    !Array.isArray(
+      progress.components,
+    ) ||
     !Array.isArray(progress.parcels) ||
     progress.components.length !==
       order.items.length ||
@@ -268,15 +318,23 @@ function validateKitProgress(order) {
   const componentIndexes = new Set();
   const parcelKeys = new Set();
 
-  for (const component of progress.components) {
-    const item = order.items[component.itemIndex];
+  for (
+    const component of progress.components
+  ) {
+    const item =
+      order.items[component.itemIndex];
 
     if (
       !whole(component.itemIndex) ||
       !item ||
-      componentIndexes.has(component.itemIndex) ||
-      !whole(component.receivedQuantity) ||
-      component.receivedQuantity > item.quantity ||
+      componentIndexes.has(
+        component.itemIndex,
+      ) ||
+      !whole(
+        component.receivedQuantity,
+      ) ||
+      component.receivedQuantity >
+        item.quantity ||
       !PROCUREMENT_STAGES.includes(
         component.procurementStatus,
       )
@@ -286,22 +344,26 @@ function validateKitProgress(order) {
       );
     }
 
-    componentIndexes.add(component.itemIndex);
+    componentIndexes.add(
+      component.itemIndex,
+    );
 
     const expected =
-      component.receivedQuantity === item.quantity
+      component.receivedQuantity ===
+      item.quantity
         ? "received"
         : component.receivedQuantity > 0
           ? "partially-received"
           : null;
 
-    if (
-      expected
-        ? component.procurementStatus !== expected
-        : !["awaiting", "ordered"].includes(
-            component.procurementStatus,
-          )
-    ) {
+    const statusDoesNotMatch = expected
+      ? component.procurementStatus !==
+        expected
+      : !["awaiting", "ordered"].includes(
+          component.procurementStatus,
+        );
+
+    if (statusDoesNotMatch) {
       throw bad(
         "Component receipt quantities and procurement statuses do not agree.",
       );
@@ -312,21 +374,26 @@ function validateKitProgress(order) {
     order.shippingSnapshot.paymentMethod ===
     "cod-partial";
 
-  for (const parcel of progress.parcels) {
+  for (
+    const parcel of progress.parcels
+  ) {
     const snapshot =
       order.shippingSnapshot.shipments.find(
         (row) => row.key === parcel.key,
       );
 
-    const stage = PARCEL_STAGES.indexOf(
-      parcel.status,
-    );
+    const stage =
+      PARCEL_STAGES.indexOf(
+        parcel.status,
+      );
 
     if (
       !snapshot ||
       parcelKeys.has(parcel.key) ||
       stage < 0 ||
-      !whole(parcel.codCollectedPaise) ||
+      !whole(
+        parcel.codCollectedPaise,
+      ) ||
       parcel.codCollectedPaise >
         snapshot.amountDuePaise ||
       (
@@ -342,7 +409,10 @@ function validateKitProgress(order) {
 
     parcelKeys.add(parcel.key);
 
-    if (stage >= 1 && !date(parcel.packedAt)) {
+    if (
+      stage >= 1 &&
+      !date(parcel.packedAt)
+    ) {
       throw bad(
         "Confirm the parcel was checked and packed before dispatch.",
       );
@@ -352,8 +422,12 @@ function validateKitProgress(order) {
       stage >= 2 &&
       (
         !date(parcel.shippedAt) ||
-        !String(parcel.carrier || "").trim() ||
-        !String(parcel.trackingNumber || "").trim()
+        !String(
+          parcel.carrier || "",
+        ).trim() ||
+        !String(
+          parcel.trackingNumber || "",
+        ).trim()
       )
     ) {
       throw bad(
@@ -391,13 +465,20 @@ function validateKitProgress(order) {
     }
   }
 
-  const held = reservedUnits(order, progress);
+  const held = reservedUnits(
+    order,
+    progress,
+  );
 
   if (
     progress.components.some(
       (row) =>
         row.receivedQuantity <
-        (held.get(row.itemIndex) || 0),
+        (
+          held.get(
+            row.itemIndex,
+          ) || 0
+        ),
     )
   ) {
     throw bad(
@@ -405,7 +486,8 @@ function validateKitProgress(order) {
     );
   }
 
-  const collected = collectedKitCodPaise(order);
+  const collected =
+    collectedKitCodPaise(order);
 
   if (order.status !== "cancelled") {
     const expectedGross =
@@ -422,11 +504,14 @@ function validateKitProgress(order) {
 
     if (
       gross !== expectedGross ||
-      amount(order.payment.amountPaid) +
-        refunded !==
-        gross ||
-      amount(order.payment.amountDue) !==
-        order.shippingSnapshot.totalPaise - gross
+      amount(
+        order.payment.amountPaid,
+      ) + refunded !== gross ||
+      amount(
+        order.payment.amountDue,
+      ) !==
+        order.shippingSnapshot.totalPaise -
+          gross
     ) {
       throw bad(
         "Parcel collections, money received and the remaining balance do not reconcile.",
@@ -455,7 +540,8 @@ function readyOrder(order) {
       "out-for-delivery",
       "delivered",
     ].includes(order.status) ||
-    order.metadata?.inventoryReserved !== true ||
+    order.metadata?.inventoryReserved !==
+      true ||
     !order.payment?.verifiedAt ||
     !(
       order.payment.razorpayPaymentId ||
@@ -471,20 +557,26 @@ function readyOrder(order) {
     );
   }
 
+  const refundAllowsUpdates = [
+    "not-requested",
+    "not-applicable",
+    "rejected",
+    undefined,
+    null,
+  ].includes(order.refund?.status);
+
+  const returnAllowsUpdates = [
+    "not-requested",
+    "rejected",
+    undefined,
+    null,
+  ].includes(
+    order.returnRequest?.status,
+  );
+
   if (
-    ![
-      "not-requested",
-      "not-applicable",
-      "rejected",
-      undefined,
-      null,
-    ].includes(order.refund?.status) ||
-    ![
-      "not-requested",
-      "rejected",
-      undefined,
-      null,
-    ].includes(order.returnRequest?.status)
+    !refundAllowsUpdates ||
+    !returnAllowsUpdates
   ) {
     throw bad(
       "Manage the active return or refund before changing kit fulfillment.",
@@ -493,15 +585,19 @@ function readyOrder(order) {
 }
 
 // Prepare one atomic change.
-// This function does not mutate its input, collect money,
-// contact suppliers or deduct product inventory.
+//
+// This function does not mutate its input,
+// collect money, contact suppliers or deduct
+// product inventory.
 function applyKitFulfillmentAction(
   order,
   input,
   adminId,
   now = new Date(),
 ) {
-  if (typeof order?.toObject === "function") {
+  if (
+    typeof order?.toObject === "function"
+  ) {
     order = order.toObject({
       transform: false,
     });
@@ -514,7 +610,9 @@ function applyKitFulfillmentAction(
     typeof input !== "object" ||
     Array.isArray(input) ||
     !whole(input.revision) ||
-    !/^[a-f0-9]{24}$/i.test(String(adminId))
+    !/^[a-f0-9]{24}$/i.test(
+      String(adminId),
+    )
   ) {
     throw bad(
       "Include the current fulfillment revision and an authenticated admin.",
@@ -548,6 +646,9 @@ function applyKitFulfillmentAction(
       "trackingNumber",
       "estimatedDelivery",
       "packingChecked",
+      "courierUrl",
+      "trackingNotice",
+      "trackingMessage",
     ],
 
     cod: [
@@ -563,7 +664,9 @@ function applyKitFulfillmentAction(
     !allowed[input.action] ||
     Object.keys(input).some(
       (key) =>
-        !allowed[input.action].includes(key),
+        !allowed[input.action].includes(
+          key,
+        ),
     )
   ) {
     throw bad(
@@ -573,9 +676,12 @@ function applyKitFulfillmentAction(
     );
   }
 
+  const currentRevision =
+    order.fulfillmentProgress?.revision ??
+    0;
+
   if (
-    input.revision !==
-    (order.fulfillmentProgress?.revision ?? 0)
+    input.revision !== currentRevision
   ) {
     throw bad(
       "This kit changed. Reload before saving again.",
@@ -606,28 +712,44 @@ function applyKitFulfillmentAction(
     validateKitProgress(order);
   }
 
-  const progress = order.fulfillmentProgress
-    ? clone(order.fulfillmentProgress)
-    : initializeKitFulfillment(order, now);
+  const progress =
+    order.fulfillmentProgress
+      ? clone(
+          order.fulfillmentProgress,
+        )
+      : initializeKitFulfillment(
+          order,
+          now,
+        );
 
-  const payment = clone(order.payment);
-  const delivery = clone(order.delivery || {});
+  const payment = clone(
+    order.payment,
+  );
+
+  const delivery = clone(
+    order.delivery || {},
+  );
 
   let description =
     "Kit fulfillment initialized. Collecting components.";
 
   if (input.action === "component") {
-    const row = progress.components.find(
-      (row) => row.itemIndex === input.itemIndex,
-    );
+    const row =
+      progress.components.find(
+        (component) =>
+          component.itemIndex ===
+          input.itemIndex,
+      );
 
-    const item = order.items[input.itemIndex];
+    const item =
+      order.items[input.itemIndex];
 
     if (
       !row ||
       !item ||
       !whole(input.receivedQuantity) ||
-      input.receivedQuantity > item.quantity
+      input.receivedQuantity >
+        item.quantity
     ) {
       throw bad(
         "Enter a received quantity within the purchased quantity.",
@@ -636,10 +758,12 @@ function applyKitFulfillmentAction(
       );
     }
 
-    row.receivedQuantity = input.receivedQuantity;
+    row.receivedQuantity =
+      input.receivedQuantity;
 
     row.procurementStatus =
-      row.receivedQuantity === item.quantity
+      row.receivedQuantity ===
+      item.quantity
         ? "received"
         : row.receivedQuantity
           ? "partially-received"
@@ -658,7 +782,8 @@ function applyKitFulfillmentAction(
     }
 
     row.supplierReference = text(
-      input.supplierReference ?? row.supplierReference,
+      input.supplierReference ??
+        row.supplierReference,
       "supplier purchase reference",
       200,
     );
@@ -673,18 +798,25 @@ function applyKitFulfillmentAction(
     row.updatedAt = now;
 
     description =
-      `Component ${Number(input.itemIndex) + 1}: ` +
-      `${row.receivedQuantity} of ${item.quantity} units received.`;
+      `Component ${
+        Number(input.itemIndex) + 1
+      }: ${row.receivedQuantity} of ${
+        item.quantity
+      } units received.`;
   } else if (
-    ["parcel", "cod"].includes(input.action)
+    ["parcel", "cod"].includes(
+      input.action,
+    )
   ) {
     const row = progress.parcels.find(
-      (row) => row.key === input.key,
+      (parcel) =>
+        parcel.key === input.key,
     );
 
     const snapshot =
       order.shippingSnapshot.shipments.find(
-        (row) => row.key === input.key,
+        (parcel) =>
+          parcel.key === input.key,
       );
 
     if (!row || !snapshot) {
@@ -696,13 +828,18 @@ function applyKitFulfillmentAction(
     }
 
     if (input.action === "parcel") {
-      const before = PARCEL_STAGES.indexOf(
-        row.status,
-      );
+      const extras =
+        parseTrackingExtras(input);
 
-      const after = PARCEL_STAGES.indexOf(
-        input.status,
-      );
+      const before =
+        PARCEL_STAGES.indexOf(
+          row.status,
+        );
+
+      const after =
+        PARCEL_STAGES.indexOf(
+          input.status,
+        );
 
       if (
         after < before ||
@@ -714,8 +851,13 @@ function applyKitFulfillmentAction(
         );
       }
 
-      if (after === 1 && before === 0) {
-        if (input.packingChecked !== true) {
+      if (
+        after === 1 &&
+        before === 0
+      ) {
+        if (
+          input.packingChecked !== true
+        ) {
           throw bad(
             "Confirm the parcel contents and packaging were checked.",
           );
@@ -724,7 +866,9 @@ function applyKitFulfillmentAction(
         row.packedAt = now;
       }
 
-      if (input.carrier !== undefined) {
+      if (
+        input.carrier !== undefined
+      ) {
         row.carrier = text(
           input.carrier,
           "courier name",
@@ -733,7 +877,10 @@ function applyKitFulfillmentAction(
         );
       }
 
-      if (input.trackingNumber !== undefined) {
+      if (
+        input.trackingNumber !==
+        undefined
+      ) {
         row.trackingNumber = text(
           input.trackingNumber,
           "tracking number",
@@ -742,18 +889,28 @@ function applyKitFulfillmentAction(
         );
       }
 
-      if (input.estimatedDelivery !== undefined) {
-        const value = input.estimatedDelivery;
+      if (
+        input.estimatedDelivery !==
+        undefined
+      ) {
+        const value =
+          input.estimatedDelivery;
 
         if (
           value !== "" &&
           (
             typeof value !== "string" ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
-            !Number.isFinite(
-              Date.parse(`${value}T00:00:00Z`),
+            !/^\d{4}-\d{2}-\d{2}$/.test(
+              value,
             ) ||
-            new Date(`${value}T00:00:00Z`)
+            !Number.isFinite(
+              Date.parse(
+                `${value}T00:00:00Z`,
+              ),
+            ) ||
+            new Date(
+              `${value}T00:00:00Z`,
+            )
               .toISOString()
               .slice(0, 10) !== value
           )
@@ -766,33 +923,68 @@ function applyKitFulfillmentAction(
         }
 
         row.estimatedDelivery = value
-          ? new Date(`${value}T00:00:00Z`)
+          ? new Date(
+              `${value}T00:00:00Z`,
+            )
           : null;
       }
 
       row.status = input.status;
 
-      if (after >= 2 && !row.shippedAt) {
+      if (
+        after === 3 &&
+        before === 2
+      ) {
+        row.outForDeliveryAt = now;
+      }
+
+      applyTrackingExtras(
+        row,
+        extras,
+        now,
+      );
+
+      if (
+        after >= 2 &&
+        !row.shippedAt
+      ) {
         row.shippedAt = now;
       }
 
-      if (after === 4 && !row.deliveredAt) {
+      if (
+        after === 4 &&
+        !row.deliveredAt
+      ) {
         row.deliveredAt = now;
       }
 
       description =
-        `${snapshot.label}: ` +
-        `${row.status.replaceAll("-", " ")}.`;
+        after === before
+          ? `${snapshot.label}: ${
+              extras.exception?.type &&
+              extras.exception.type !==
+                "none"
+                ? extras.exception.message
+                : "tracking information updated."
+            }`
+          : `${snapshot.label}: ${
+              row.status.replaceAll(
+                "-",
+                " ",
+              )
+            }.`;
     } else {
       if (
-        order.shippingSnapshot.paymentMethod !==
+        order.shippingSnapshot
+          .paymentMethod !==
           "cod-partial" ||
         snapshot.amountDuePaise <= 0 ||
         ![
           "out-for-delivery",
           "delivered",
         ].includes(row.status) ||
-        input.collectionConfirmed !== true ||
+        input.collectionConfirmed !==
+          true ||
         row.codCollectedPaise > 0
       ) {
         throw bad(
@@ -814,21 +1006,27 @@ function applyKitFulfillmentAction(
       row.codCollectedAt = now;
 
       const gross =
-        order.shippingSnapshot.payNowPaise +
+        order.shippingSnapshot
+          .payNowPaise +
         progress.parcels.reduce(
           (sum, parcel) =>
-            sum + parcel.codCollectedPaise,
+            sum +
+            parcel.codCollectedPaise,
           0,
         );
 
-      payment.grossCollected = gross / 100;
+      payment.grossCollected =
+        gross / 100;
+
       payment.refundedAmount = 0;
-      payment.amountPaid = gross / 100;
+
+      payment.amountPaid =
+        gross / 100;
 
       payment.amountDue =
         (
-          order.shippingSnapshot.totalPaise -
-          gross
+          order.shippingSnapshot
+            .totalPaise - gross
         ) / 100;
 
       payment.amountsReconciled = true;
@@ -843,15 +1041,22 @@ function applyKitFulfillmentAction(
           ? "collected"
           : "pending";
 
-      if (payment.amountDue === 0) {
-        payment.balanceCollectedAt = now;
+      if (
+        payment.amountDue === 0
+      ) {
+        payment.balanceCollectedAt =
+          now;
+
         payment.paidAt = now;
       }
 
       description =
-        `${snapshot.label}: COD balance of ₹` +
-        `${(row.codCollectedPaise / 100).toFixed(2)} ` +
-        "recorded as collected.";
+        `${snapshot.label}: COD balance of ₹${
+          (
+            row.codCollectedPaise /
+            100
+          ).toFixed(2)
+        } recorded as collected.`;
     }
 
     row.updatedBy = String(adminId);
@@ -862,7 +1067,10 @@ function applyKitFulfillmentAction(
   progress.updatedBy = String(adminId);
   progress.updatedAt = now;
 
-  const stage = progressStage(order, progress);
+  const stage = progressStage(
+    order,
+    progress,
+  );
 
   const status =
     stage === "delivered"
@@ -871,8 +1079,10 @@ function applyKitFulfillmentAction(
         ? "out-for-delivery"
         : stage === "shipped"
           ? "shipped"
-          : input.action === "initialize" &&
-              order.status === "confirmed"
+          : input.action ===
+                "initialize" &&
+              order.status ===
+                "confirmed"
             ? "confirmed"
             : "processing";
 
@@ -889,7 +1099,8 @@ function applyKitFulfillmentAction(
     ...order,
     items: order.items,
     kitSnapshots: order.kitSnapshots,
-    shippingSnapshot: order.shippingSnapshot,
+    shippingSnapshot:
+      order.shippingSnapshot,
     fulfillmentProgress: progress,
     payment,
     delivery,

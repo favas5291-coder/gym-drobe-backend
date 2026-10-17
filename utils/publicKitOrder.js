@@ -7,8 +7,12 @@ const {
 const pick = (value, keys) =>
   Object.fromEntries(
     keys
-      .filter((key) => value?.[key] !== undefined)
-      .map((key) => [key, value[key]]),
+      .filter(
+        (key) => value?.[key] !== undefined,
+      )
+      .map(
+        (key) => [key, value[key]],
+      ),
   );
 
 const allocationFields = [
@@ -22,7 +26,10 @@ const allocationFields = [
 ];
 
 const range = (value) =>
-  pick(value, ["minimum", "maximum"]);
+  pick(value, [
+    "minimum",
+    "maximum",
+  ]);
 
 function publicKitItemFields(item) {
   return {
@@ -51,33 +58,37 @@ function publicKitOrderFields(order) {
   const result = {};
 
   if (order.kitSnapshots?.length) {
-    result.kitSnapshots = order.kitSnapshots.map((kit) => {
-      const row = pick(kit, [
-        "groupId",
-        "templateVersion",
-        "kitCode",
-        "name",
-        "level",
-        "audience",
-        "explanation",
-        "supplementNote",
-        "fulfillmentMode",
-        "customerNote",
-        "subtotalPaise",
-        "kitDiscountPaise",
-        "couponDiscountPaise",
-        "linePaidPaise",
-      ]);
+    result.kitSnapshots =
+      order.kitSnapshots.map((kit) => {
+        const row = pick(kit, [
+          "groupId",
+          "templateVersion",
+          "kitCode",
+          "name",
+          "level",
+          "audience",
+          "explanation",
+          "supplementNote",
+          "fulfillmentMode",
+          "customerNote",
+          "subtotalPaise",
+          "kitDiscountPaise",
+          "couponDiscountPaise",
+          "linePaidPaise",
+        ]);
 
-      if (kit.template) {
-        row.template = String(kit.template);
-      }
+        if (kit.template) {
+          row.template = String(
+            kit.template,
+          );
+        }
 
-      return row;
-    });
+        return row;
+      });
   }
 
-  const snapshot = order.shippingSnapshot;
+  const snapshot =
+    order.shippingSnapshot;
 
   if (snapshot) {
     result.shippingSnapshot = {
@@ -95,7 +106,9 @@ function publicKitOrderFields(order) {
         "amountDuePaise",
       ]),
 
-      shipments: (snapshot.shipments || []).map((parcel) => ({
+      shipments: (
+        snapshot.shipments || []
+      ).map((parcel) => ({
         ...pick(parcel, [
           "key",
           "groupId",
@@ -107,7 +120,9 @@ function publicKitOrderFields(order) {
           "amountDuePaise",
         ]),
 
-        contents: (parcel.contents || []).map((row) =>
+        contents: (
+          parcel.contents || []
+        ).map((row) =>
           pick(row, [
             "itemIndex",
             "productId",
@@ -118,9 +133,17 @@ function publicKitOrderFields(order) {
           ]),
         ),
 
-        preparationDays: range(parcel.preparationDays),
-        transitDays: range(parcel.transitDays),
-        estimatedDays: range(parcel.estimatedDays),
+        preparationDays: range(
+          parcel.preparationDays,
+        ),
+
+        transitDays: range(
+          parcel.transitDays,
+        ),
+
+        estimatedDays: range(
+          parcel.estimatedDays,
+        ),
       })),
     };
   }
@@ -133,8 +156,11 @@ function publicKitOrderFields(order) {
   return result;
 }
 
-function publicKitFulfillmentFields(order) {
-  const progress = order.fulfillmentProgress;
+function publicKitFulfillmentFields(
+  order,
+) {
+  const progress =
+    order.fulfillmentProgress;
 
   if (!progress) {
     return null;
@@ -149,32 +175,55 @@ function publicKitFulfillmentFields(order) {
         ? "cancelled"
         : progressStage(order),
 
-    components: (progress.components || []).map((row) =>
+    components: (
+      progress.components || []
+    ).map((row) =>
       pick(row, [
         "itemIndex",
         "receivedQuantity",
       ]),
     ),
 
-    parcels: (progress.parcels || []).map((row) =>
-      pick(row, [
+    parcels: (
+      progress.parcels || []
+    ).map((row) => ({
+      ...pick(row, [
         "key",
         "status",
         "carrier",
         "trackingNumber",
+        "courierUrl",
         "estimatedDelivery",
         "packedAt",
         "shippedAt",
+        "outForDeliveryAt",
         "deliveredAt",
         "codCollectedPaise",
         "codCollectedAt",
+        "updatedAt",
       ]),
-    ),
+
+      ...(row.exception
+        ? {
+            exception: pick(
+              row.exception,
+              [
+                "type",
+                "message",
+                "updatedAt",
+              ],
+            ),
+          }
+        : {}),
+    })),
   };
 }
 
-function adminKitFulfillmentFields(order) {
-  const progress = order.fulfillmentProgress;
+function adminKitFulfillmentFields(
+  order,
+) {
+  const progress =
+    order.fulfillmentProgress;
 
   if (!progress) {
     return null;
@@ -186,7 +235,9 @@ function adminKitFulfillmentFields(order) {
       "updatedAt",
     ]),
 
-    components: (progress.components || []).map((row) =>
+    components: (
+      progress.components || []
+    ).map((row) =>
       pick(row, [
         "itemIndex",
         "receivedQuantity",
@@ -197,22 +248,39 @@ function adminKitFulfillmentFields(order) {
       ]),
     ),
 
-    parcels: (progress.parcels || []).map((row) =>
-      pick(row, [
+    parcels: (
+      progress.parcels || []
+    ).map((row) => ({
+      ...pick(row, [
         "key",
         "status",
         "carrier",
         "trackingNumber",
+        "courierUrl",
         "estimatedDelivery",
         "packedAt",
         "shippedAt",
+        "outForDeliveryAt",
         "deliveredAt",
         "codCollectedPaise",
         "codCollectedAt",
         "collectionReference",
         "updatedAt",
       ]),
-    ),
+
+      ...(row.exception
+        ? {
+            exception: pick(
+              row.exception,
+              [
+                "type",
+                "message",
+                "updatedAt",
+              ],
+            ),
+          }
+        : {}),
+    })),
   };
 }
 
