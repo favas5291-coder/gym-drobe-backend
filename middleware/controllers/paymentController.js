@@ -14,64 +14,64 @@ function errorResponse(res, status, code, message) {
   });
 }
 
-function includesKit(body) {
+function containsPurchasedKitData(body) {
   if (!body || typeof body !== "object") {
     return false;
   }
 
-  const named = ["kits", "kitGroups", "kitSnapshots"].some(
-    (key) => Object.prototype.hasOwnProperty.call(body, key),
+  const named = [
+    "kits",
+    "kitGroups",
+    "kitSnapshots",
+  ].some(
+    (key) =>
+      Object.prototype.hasOwnProperty.call(
+        body,
+        key,
+      ),
   );
 
-  return (
-    named ||
-    (
-      Array.isArray(body.items) &&
-      body.items.some(
-        (row) =>
-          row &&
-          ["kitGroup", "kit"].some(
-            (key) =>
-              Object.prototype.hasOwnProperty.call(row, key),
-          ),
-      )
-    )
-  );
+  const purchasedItems =
+    Array.isArray(body.items) &&
+    body.items.some(
+      (row) =>
+        row &&
+        Object.prototype.hasOwnProperty.call(
+          row,
+          "kit",
+        ),
+    );
+
+  return named || purchasedItems;
 }
 
-// Ordinary product payments use the existing payment flow.
-// Kit payments stay blocked until checkout integration is complete.
+// Payment routes authenticate an account or a private guest session.
+// Kit selections use item.kitGroup; purchased snapshots are server-owned.
+// Razorpay controller reloads prices, stock and shipping before purchase.
 function createRazorpayOrder(req, res) {
   res.set("Cache-Control", "no-store");
 
-  if (includesKit(req.body)) {
+  if (containsPurchasedKitData(req.body)) {
     return errorResponse(
       res,
-      409,
-      "KIT_CHECKOUT_NOT_READY",
-      "Kit payment is not enabled yet. You can save and edit kits in your bag. Check My orders before retrying any previous payment.",
+      400,
+      "INVALID_CHECKOUT",
+      "Send kit selections from your bag. Purchased kit snapshots cannot be submitted to checkout.",
     );
   }
 
   return razorpay.createRazorpayOrder(req, res);
 }
 
-// Authenticated, read-only checkout preview.
+// Public, rate-limited, read-only preview configured in paymentRoutes.
 // Prices and fulfillment details come from server-loaded records.
 async function getCheckoutQuote(req, res) {
   res.set("Cache-Control", "no-store");
 
-  if (!req.user?._id) {
-    return errorResponse(
-      res,
-      401,
-      "AUTHENTICATION_REQUIRED",
-      "Please sign in to review checkout.",
-    );
-  }
-
   try {
-    const { quote } = await loadCheckoutReview(req.body);
+    const { quote } = await loadCheckoutReview(
+      req.body,
+    );
 
     return res.json({
       success: true,
@@ -89,7 +89,7 @@ async function getCheckoutQuote(req, res) {
 
     console.error(
       "Checkout preview failed:",
-      error.name || "Error",
+      error?.name || "Error",
     );
 
     return errorResponse(
@@ -104,6 +104,10 @@ async function getCheckoutQuote(req, res) {
 module.exports = {
   getCheckoutQuote,
   createRazorpayOrder,
-  verifyRazorpayPayment: razorpay.verifyRazorpayPayment,
-  finalizeCapturedPayment: razorpay.finalizeCapturedPayment,
+
+  verifyRazorpayPayment:
+    razorpay.verifyRazorpayPayment,
+
+  finalizeCapturedPayment:
+    razorpay.finalizeCapturedPayment,
 };

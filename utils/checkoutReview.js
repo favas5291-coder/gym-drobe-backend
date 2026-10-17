@@ -12,13 +12,9 @@ const PackingLocation = require("../models/PackingLocation");
 const PackagePlan = require("../models/PackagePlan");
 const ShippingProfile = require("../models/ShippingProfile");
 
-const {
-  kitReviewKey,
-} = require("./kitReviewKey");
-
-const {
-  buildKitShippingQuote,
-} = require("./kitShipping");
+const { checkoutDelivery } = require("./checkoutDelivery");
+const { kitReviewKey } = require("./kitReviewKey");
+const { buildKitShippingQuote } = require("./kitShipping");
 
 const {
   inspectCheckoutFulfillment,
@@ -29,14 +25,11 @@ const {
 } = require("./kitCheckoutPricing");
 
 function invalid(message) {
-  throw Object.assign(
-    new Error(message),
-    {
-      status: 400,
-      code: "INVALID_CHECKOUT",
-      gymdrobe: true,
-    },
-  );
+  throw Object.assign(new Error(message), {
+    status: 400,
+    code: "INVALID_CHECKOUT",
+    gymdrobe: true,
+  });
 }
 
 async function loadCheckoutReview(body) {
@@ -45,9 +38,7 @@ async function loadCheckoutReview(body) {
     typeof body !== "object" ||
     Array.isArray(body)
   ) {
-    invalid(
-      "Checkout information is missing.",
-    );
+    invalid("Checkout information is missing.");
   }
 
   if (
@@ -55,37 +46,18 @@ async function loadCheckoutReview(body) {
     !body.items.length ||
     body.items.length > 50
   ) {
-    invalid(
-      "Choose between 1 and 50 order components.",
-    );
+    invalid("Choose between 1 and 50 order components.");
   }
 
-  const method =
-    body.paymentMethod ?? "razorpay";
+  const method = body.paymentMethod ?? "razorpay";
+  const deliveryMethod = body.deliveryMethod ?? "standard";
 
-  const deliveryMethod =
-    body.deliveryMethod ?? "standard";
-
-  if (
-    ![
-      "razorpay",
-      "cod-partial",
-    ].includes(method)
-  ) {
-    invalid(
-      "Choose online payment or COD with a 10% advance.",
-    );
+  if (!["razorpay", "cod-partial"].includes(method)) {
+    invalid("Choose online payment or COD with a 10% advance.");
   }
 
-  if (
-    ![
-      "standard",
-      "express",
-    ].includes(deliveryMethod)
-  ) {
-    invalid(
-      "Choose standard or express delivery.",
-    );
+  if (!["standard", "express"].includes(deliveryMethod)) {
+    invalid("Choose standard or express delivery.");
   }
 
   const coupon =
@@ -100,9 +72,7 @@ async function loadCheckoutReview(body) {
     coupon.length > 50 ||
     /[\u0000-\u001f\u007f]/.test(coupon)
   ) {
-    invalid(
-      "Enter a valid coupon code.",
-    );
+    invalid("Enter a valid coupon code.");
   }
 
   const ids = new Set();
@@ -117,24 +87,13 @@ async function loadCheckoutReview(body) {
       typeof row !== "object" ||
       Array.isArray(row)
     ) {
-      invalid(
-        "Check the selected products.",
-      );
+      invalid("Check the selected products.");
     }
 
-    const raw =
-      row.id ??
-      row.productId ??
-      row.product;
+    const raw = row.id ?? row.productId ?? row.product;
 
-    if (
-      !["string", "number"].includes(
-        typeof raw,
-      )
-    ) {
-      invalid(
-        "Choose an existing product ID.",
-      );
+    if (!["string", "number"].includes(typeof raw)) {
+      invalid("Choose an existing product ID.");
     }
 
     const id = String(raw).trim();
@@ -144,13 +103,10 @@ async function loadCheckoutReview(body) {
       id.length > 100 ||
       /[\u0000-\u001f\u007f]/.test(id)
     ) {
-      invalid(
-        "Check the product IDs.",
-      );
+      invalid("Check the product IDs.");
     }
 
-    const objectId =
-      mongoose.isObjectIdOrHexString(id);
+    const objectId = mongoose.isObjectIdOrHexString(id);
 
     const legacyId =
       /^\d+$/.test(id) &&
@@ -178,10 +134,7 @@ async function loadCheckoutReview(body) {
     });
 
     if (
-      Object.prototype.hasOwnProperty.call(
-        row,
-        "kitGroup",
-      )
+      Object.prototype.hasOwnProperty.call(row, "kitGroup")
     ) {
       const group = row.kitGroup;
 
@@ -190,18 +143,12 @@ async function loadCheckoutReview(body) {
         typeof group !== "object" ||
         Array.isArray(group) ||
         typeof group.kitId !== "string" ||
-        !/^[a-f0-9]{24}$/i.test(
-          group.kitId,
-        )
+        !/^[a-f0-9]{24}$/i.test(group.kitId)
       ) {
-        invalid(
-          "Check the kit template IDs.",
-        );
+        invalid("Check the kit template IDs.");
       }
 
-      kitIds.add(
-        group.kitId.toLowerCase(),
-      );
+      kitIds.add(group.kitId.toLowerCase());
     }
   }
 
@@ -209,46 +156,33 @@ async function loadCheckoutReview(body) {
 
   if (ids.size) {
     clauses.push({
-      _id: {
-        $in: [...ids],
-      },
+      _id: { $in: [...ids] },
     });
   }
 
   if (legacyIds.size) {
     clauses.push({
-      legacyId: {
-        $in: [...legacyIds],
-      },
+      legacyId: { $in: [...legacyIds] },
     });
   }
 
   if (slugs.size) {
     clauses.push({
-      slug: {
-        $in: [...slugs],
-      },
+      slug: { $in: [...slugs] },
     });
   }
 
-  const [
-    products,
-    kits,
-  ] = await Promise.all([
-    Product.find({
-      $or: clauses,
-    })
+  const [products, kits] = await Promise.all([
+    Product.find({ $or: clauses })
       .select(
         "+kitSettings +supplier " +
-        "+fulfillment +meeshoProductLink",
+          "+fulfillment +meeshoProductLink",
       )
       .lean(),
 
     kitIds.size
       ? KitTemplate.find({
-          _id: {
-            $in: [...kitIds],
-          },
+          _id: { $in: [...kitIds] },
           status: "published",
         })
           .select("+fulfillment")
@@ -269,13 +203,9 @@ async function loadCheckoutReview(body) {
     ...new Set(
       products
         .map((product) =>
-          product.supplier
-            ? String(product.supplier)
-            : "",
+          product.supplier ? String(product.supplier) : "",
         )
-        .filter((id) =>
-          /^[a-f0-9]{24}$/i.test(id),
-        ),
+        .filter((id) => /^[a-f0-9]{24}$/i.test(id)),
     ),
   ];
 
@@ -284,62 +214,48 @@ async function loadCheckoutReview(body) {
       kits
         .map((kit) =>
           kit.fulfillment?.packingLocation
-            ? String(
-                kit.fulfillment.packingLocation,
-              )
+            ? String(kit.fulfillment.packingLocation)
             : "",
         )
-        .filter((id) =>
-          /^[a-f0-9]{24}$/i.test(id),
-        ),
+        .filter((id) => /^[a-f0-9]{24}$/i.test(id)),
     ),
   ];
 
-  const [
-    suppliers,
-    locations,
-  ] = await Promise.all([
+  const [suppliers, locations] = await Promise.all([
     supplierIds.length
       ? Supplier.find({
-          _id: {
-            $in: supplierIds,
-          },
+          _id: { $in: supplierIds },
         })
-          .select(
-            "+contact +verification +fulfillment",
-          )
+          .select("+contact +verification +fulfillment")
           .lean()
       : Promise.resolve([]),
 
     locationIds.length
       ? PackingLocation.find({
-          _id: {
-            $in: locationIds,
-          },
+          _id: { $in: locationIds },
         })
           .select(
             "+address +contact +verification " +
-            "+packing +delivery " +
-            "+acceptsGymDrobeStock " +
-            "+supplierArrangements " +
-            "+gymdrobeStockTransfer",
+              "+packing +delivery " +
+              "+acceptsGymDrobeStock " +
+              "+supplierArrangements " +
+              "+gymdrobeStockTransfer",
           )
           .lean()
       : Promise.resolve([]),
   ]);
 
-  quote.fulfillment =
-    inspectCheckoutFulfillment({
-      items: quote.items,
-      kitSnapshots: quote.kitSnapshots,
-      products,
-      kits,
-      suppliers,
-      locations,
-    });
+  quote.fulfillment = inspectCheckoutFulfillment({
+    items: quote.items,
+    kitSnapshots: quote.kitSnapshots,
+    products,
+    kits,
+    suppliers,
+    locations,
+  });
 
-  // Confirm kit shipping using measured packages,
-  // verified origins and destination coverage.
+  // Kit shipping uses measured packages, verified origins,
+  // destination coverage and configured courier charges.
   if (quote.kitSnapshots.length) {
     const productIds = quote.items.map(
       (item) => item.product,
@@ -350,47 +266,38 @@ async function loadCheckoutReview(body) {
         ? body.pincode.trim()
         : "";
 
-    const [
-      plans,
-      profiles,
-    ] = (
+    const [plans, profiles] =
       /^[1-9]\d{5}$/.test(pincode) &&
       quote.fulfillment.configurationReady
-    )
-      ? await Promise.all([
-          PackagePlan.find({
-            status: "active",
+        ? await Promise.all([
+            PackagePlan.find({
+              status: "active",
 
-            "components.product": {
-              $in: productIds,
-            },
-          })
-            .select(
-              PackagePlan.adminFields,
-            )
-            .limit(201)
-            .lean()
-            .maxTimeMS(10000),
+              "components.product": {
+                $in: productIds,
+              },
+            })
+              .select(PackagePlan.adminFields)
+              .limit(201)
+              .lean()
+              .maxTimeMS(10000),
 
-          ShippingProfile.find({
-            status: "active",
-            destinationPincodes: pincode,
+            ShippingProfile.find({
+              status: "active",
+              destinationPincodes: pincode,
 
-            "service.deliveryMethod":
-              deliveryMethod,
-          })
-            .select(
-              ShippingProfile.adminFields,
-            )
-            .limit(201)
-            .lean()
-            .maxTimeMS(10000),
-        ])
-      : [[], []];
+              "service.deliveryMethod":
+                deliveryMethod,
+            })
+              .select(ShippingProfile.adminFields)
+              .limit(201)
+              .lean()
+              .maxTimeMS(10000),
+          ])
+        : [[], []];
 
     quote.shippingReview =
-      plans.length > 200 ||
-      profiles.length > 200
+      plans.length > 200 || profiles.length > 200
         ? {
             ready: false,
 
@@ -420,36 +327,31 @@ async function loadCheckoutReview(body) {
         quote.pricing.totalAfterCoupon * 100,
       );
 
-      const total =
-        merchandise + shipping;
+      const total = merchandise + shipping;
 
       const now =
         method === "cod-partial"
           ? Math.round(merchandise / 10)
           : total;
 
-      quote.pricing.shipping =
-        shipping / 100;
+      quote.pricing.shipping = shipping / 100;
+      quote.pricing.finalTotal = total / 100;
 
-      quote.pricing.finalTotal =
-        total / 100;
-
-      quote.payment.amountToPayNow =
-        now / 100;
+      quote.payment.amountToPayNow = now / 100;
 
       quote.payment.amountDue =
         (total - now) / 100;
 
       quote.shippingIsEstimate = false;
 
-      quote.fulfillment
-        .deliveryCoverageConfirmed = true;
+      quote.fulfillment.deliveryCoverageConfirmed =
+        true;
 
-      quote.fulfillment
-        .finalShippingConfirmed = true;
+      quote.fulfillment.finalShippingConfirmed =
+        true;
 
-      quote.fulfillment
-        .packageCountConfirmed = true;
+      quote.fulfillment.packageCountConfirmed =
+        true;
 
       quote.fulfillment.packageCount =
         quote.shippingReview.packageCount;
@@ -468,6 +370,29 @@ async function loadCheckoutReview(body) {
     }
   }
 
+  // Ordinary products use their recorded delivery settings.
+  // This does not claim live courier pincode coverage.
+  if (!quote.kitSnapshots.length) {
+    quote.deliveryReview = checkoutDelivery(
+      products,
+      quote.items,
+      body.pincode,
+    );
+
+    if (!quote.deliveryReview.available) {
+      throw Object.assign(
+        new Error(quote.deliveryReview.notice),
+        {
+          status: 409,
+          code: "DELIVERY_UNAVAILABLE",
+          gymdrobe: true,
+        },
+      );
+    }
+  }
+
+  // Internal result: API controllers must return only the
+  // customer-safe quote, never these raw product records.
   return {
     quote,
     products,

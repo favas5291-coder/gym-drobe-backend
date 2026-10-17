@@ -1,7 +1,8 @@
 const mongoose = require("mongoose");
 
 // One provider-order creation attempt per GymDrobe order.
-// Keep uncertain attempts so retries can recover the existing provider order.
+// Keep uncertain attempts so retries can recover
+// the existing provider order.
 const paymentAttemptSchema = new mongoose.Schema(
   {
     _id: {
@@ -13,7 +14,21 @@ const paymentAttemptSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
+
+      required: function () {
+        return !this.guestSession;
+      },
+    },
+
+    guestSession: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GuestCheckoutSession",
+      default: null,
+
+      required: function () {
+        return !this.user;
+      },
     },
 
     receipt: {
@@ -28,10 +43,12 @@ const paymentAttemptSchema = new mongoose.Schema(
       maxlength: 100,
     },
 
+    // Razorpay amounts are stored in paise.
     amount: {
       type: Number,
       required: true,
       min: 100,
+
       validate: {
         validator: Number.isSafeInteger,
         message: "Invalid payment amount.",
@@ -46,7 +63,13 @@ const paymentAttemptSchema = new mongoose.Schema(
 
     state: {
       type: String,
-      enum: ["creating", "ready", "uncertain"],
+
+      enum: [
+        "creating",
+        "ready",
+        "uncertain",
+      ],
+
       default: "creating",
     },
 
@@ -63,4 +86,7 @@ const paymentAttemptSchema = new mongoose.Schema(
 
 module.exports =
   mongoose.models.PaymentAttempt ||
-  mongoose.model("PaymentAttempt", paymentAttemptSchema);
+  mongoose.model(
+    "PaymentAttempt",
+    paymentAttemptSchema,
+  );

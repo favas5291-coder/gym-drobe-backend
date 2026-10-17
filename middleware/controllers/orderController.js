@@ -1,4 +1,8 @@
 const {
+  customerFilter,
+} = require("../../utils/customerAccess");
+
+const {
   collectedKitCodPaise,
   applyKitFulfillmentAction,
 } = require("../../utils/kitFulfillmentProgress");
@@ -148,7 +152,10 @@ function handler(action, admin = false) {
   return async (req, res) => {
     res.set("Cache-Control", "no-store");
 
-    if (!req.user?._id) {
+    if (
+      !req.user?._id &&
+      !req.guestSession?._id
+    ) {
       return res.status(401).json({
         success: false,
         code: "AUTHENTICATION_REQUIRED",
@@ -156,10 +163,11 @@ function handler(action, admin = false) {
       });
     }
 
-    if (req.user.isActive === false) {
+    if (req.user?.isActive === false) {
       return res.status(403).json({
         success: false,
         code: "ACCOUNT_DISABLED",
+
         message:
           "This account is disabled. Contact support.",
       });
@@ -167,11 +175,12 @@ function handler(action, admin = false) {
 
     if (
       admin &&
-      req.user.role !== "admin"
+      req.user?.role !== "admin"
     ) {
       return res.status(403).json({
         success: false,
         code: "ADMIN_REQUIRED",
+
         message:
           "Administrator access is required.",
       });
@@ -229,17 +238,14 @@ function handler(action, admin = false) {
 }
 
 async function transaction(action) {
-  const session =
-    await mongoose.startSession();
+  const session = await mongoose.startSession();
 
   try {
     let result;
 
-    await session.withTransaction(
-      async () => {
-        result = await action(session);
-      },
-    );
+    await session.withTransaction(async () => {
+      result = await action(session);
+    });
 
     return result;
   } finally {
@@ -252,12 +258,21 @@ async function loadOrder(
   session,
   userId,
 ) {
+  // Keep order lookup and ownership in separate $and clauses.
+  // Both filters can contain their own $or safely.
   const query = {
-    ...lookup(id),
+    $and: [
+      lookup(id),
 
-    ...(userId
-      ? { user: userId }
-      : {}),
+      ...(userId
+        ? [
+            typeof userId === "object" &&
+            !userId._bsontype
+              ? userId
+              : { user: userId },
+          ]
+        : []),
+    ],
   };
 
   let request = Order.findOne(query);
@@ -290,9 +305,7 @@ function event(
   }
 
   if (
-    !Array.isArray(
-      order.tracking.events,
-    )
+    !Array.isArray(order.tracking.events)
   ) {
     order.tracking.events = [];
   }
@@ -349,48 +362,34 @@ function safeOrder(order) {
     status: value.status,
     source: value.source,
 
-    giftMessage:
-      value.giftMessage || "",
+    giftMessage: value.giftMessage || "",
+    orderNote: value.orderNote || "",
 
-    orderNote:
-      value.orderNote || "",
+    user: value.user ? user : null,
+    isGuestOrder: Boolean(order.guestSession),
 
-    user,
     customer: value.customer,
-    shippingAddress:
-      value.shippingAddress,
+    shippingAddress: value.shippingAddress,
 
-    items: (
-      value.items || []
-    ).map((item) => ({
+    items: (value.items || []).map((item) => ({
       id: String(item.product),
       productId: String(item.product),
-
       legacyId: item.legacyId,
       slug: item.slug,
       sku: item.sku,
-
       name: item.name,
       brand: item.brand,
       image: item.image,
-
       originalPrice: item.originalPrice,
       price: item.price,
       discount: item.discount,
       quantity: item.quantity,
-
       selectedSize: item.selectedSize,
       selectedColor: item.selectedColor,
-
       returnPolicy: item.returnPolicy,
-      returnsEligible:
-        item.returnsEligible,
-
-      returnConditions:
-        item.returnConditions,
-
-      returnWindowDays:
-        item.returnWindowDays,
+      returnsEligible: item.returnsEligible,
+      returnConditions: item.returnConditions,
+      returnWindowDays: item.returnWindowDays,
 
       ...publicKitItemFields(item),
     })),
@@ -399,15 +398,10 @@ function safeOrder(order) {
 
     pricing: value.pricing,
     coupon: value.coupon,
-
     payment: value.payment,
-    paymentMethod:
-      value.paymentMethod,
-
+    paymentMethod: value.paymentMethod,
     delivery: value.delivery,
-    deliveryMethod:
-      value.deliveryMethod,
-
+    deliveryMethod: value.deliveryMethod,
     tracking: value.tracking,
     cancellation: value.cancellation,
     returnRequest: value.returnRequest,
@@ -420,17 +414,14 @@ function safeOrder(order) {
       inventoryReserved:
         value.metadata?.inventoryReserved,
 
-      checkoutToken:
-        value.checkoutToken,
+      checkoutToken: value.checkoutToken,
     },
   };
 }
 
 function cents(value, name) {
   if (
-    !["number", "string"].includes(
-      typeof value,
-    ) ||
+    !["number", "string"].includes(typeof value) ||
     !String(value).trim()
   ) {
     throw problem(
@@ -441,17 +432,13 @@ function cents(value, name) {
   }
 
   const amount = Number(value);
-  const parsed = Math.round(
-    amount * 100,
-  );
+  const parsed = Math.round(amount * 100);
 
   if (
     !Number.isFinite(amount) ||
     amount < 0 ||
     !Number.isSafeInteger(parsed) ||
-    Math.abs(
-      amount * 100 - parsed,
-    ) > 0.000001
+    Math.abs(amount * 100 - parsed) > 0.000001
   ) {
     throw problem(
       409,
@@ -471,9 +458,7 @@ function numberOf(
   const number = Number(value);
 
   if (
-    !["number", "string"].includes(
-      typeof value,
-    ) ||
+    !["number", "string"].includes(typeof value) ||
     !String(value).trim() ||
     !Number.isSafeInteger(number) ||
     number < minimum
@@ -515,11 +500,10 @@ function methodOf(order) {
   return method;
 }
 
-// Supports older records whose return refund
-// left amountPaid unchanged.
+// Supports older records whose return refund left
+// amountPaid unchanged.
 function ledger(order) {
-  const payment =
-    order.payment || {};
+  const payment = order.payment || {};
 
   const paid = cents(
     payment.amountPaid,
@@ -534,9 +518,7 @@ function ledger(order) {
         )
       : 0;
 
-  if (
-    payment.amountsReconciled === true
-  ) {
+  if (payment.amountsReconciled === true) {
     const gross = cents(
       payment.grossCollected,
       "Money collected",
@@ -548,9 +530,7 @@ function ledger(order) {
     );
 
     if (
-      !Number.isSafeInteger(
-        paid + refunded,
-      ) ||
+      !Number.isSafeInteger(paid + refunded) ||
       gross !== paid + refunded ||
       completed > refunded
     ) {
@@ -568,9 +548,7 @@ function ledger(order) {
     };
   }
 
-  if (
-    payment.status === "refunded"
-  ) {
+  if (payment.status === "refunded") {
     if (
       paid !== 0 ||
       completed <= 0
@@ -611,8 +589,7 @@ function paymentState(
   const method = methodOf(order);
 
   if (
-    (order.pricing?.currency || "INR") !==
-    "INR"
+    (order.pricing?.currency || "INR") !== "INR"
   ) {
     throw problem(
       409,
@@ -649,9 +626,7 @@ function paymentState(
   );
 
   if (
-    !Number.isSafeInteger(
-      merchandise + shipping,
-    ) ||
+    !Number.isSafeInteger(merchandise + shipping) ||
     merchandise + shipping !== total ||
     total <= 0 ||
     paymentTotal !== total ||
@@ -695,8 +670,9 @@ function paymentState(
       "COD advance",
     );
 
-    const expectedAdvance =
-      Math.round(merchandise / 10);
+    const expectedAdvance = Math.round(
+      merchandise / 10,
+    );
 
     if (
       advance <= 0 ||
@@ -706,23 +682,19 @@ function paymentState(
         due > 0 &&
         amounts.gross !==
           advance +
-          (
-            order.shippingSnapshot
-              ? collectedKitCodPaise(order)
-              : 0
-          )
+            (
+              order.shippingSnapshot
+                ? collectedKitCodPaise(order)
+                : 0
+            )
       ) ||
       !verified ||
-      ![
-        "paid",
-        "partially-paid",
-      ].includes(
+      !["paid", "partially-paid"].includes(
         order.payment.status,
       ) ||
       (
         due > 0 &&
-        order.payment.balanceStatus !==
-          "pending"
+        order.payment.balanceStatus !== "pending"
       ) ||
       (
         due === 0 &&
@@ -793,8 +765,7 @@ function recordRefund(
     );
   }
 
-  const refunded =
-    amounts.refunded + amount;
+  const refunded = amounts.refunded + amount;
 
   order.payment.grossCollected =
     amounts.gross / 100;
@@ -805,9 +776,7 @@ function recordRefund(
   order.payment.amountsReconciled = true;
 
   order.payment.amountPaid =
-    (
-      amounts.gross - refunded
-    ) / 100;
+    (amounts.gross - refunded) / 100;
 
   order.payment.status =
     refunded === amounts.gross
@@ -828,9 +797,8 @@ async function inventoryProduct(
 
   if (!cache.has(key)) {
     const product =
-      await Product.findById(
-        item.product,
-      ).session(session);
+      await Product.findById(item.product)
+        .session(session);
 
     if (!product) {
       throw problem(
@@ -867,20 +835,14 @@ function restorePurchasedStock(
   }
 }
 
-async function saveProducts(
-  cache,
-  session,
-) {
-  for (
-    const product of cache.values()
-  ) {
+async function saveProducts(cache, session) {
+  for (const product of cache.values()) {
     await product.save({ session });
   }
 }
 
 function storedReturnRows(order) {
-  const rows =
-    order.returnRequest?.items;
+  const rows = order.returnRequest?.items;
 
   if (
     !Array.isArray(rows) ||
@@ -908,8 +870,7 @@ function storedReturnRows(order) {
       1,
     );
 
-    const item =
-      order.items?.[index];
+    const item = order.items?.[index];
 
     if (
       !item ||
@@ -934,10 +895,7 @@ function storedReturnRows(order) {
   });
 }
 
-function returnRefundCents(
-  order,
-  rows,
-) {
+function returnRefundCents(order, rows) {
   return calculateItemRefundPaise(
     order,
     rows.map((row) => ({
@@ -973,8 +931,7 @@ function deliveryTime(order) {
     [...events]
       .reverse()
       .find(
-        (row) =>
-          row.status === "delivered",
+        (row) => row.status === "delivered",
       )?.timestamp;
 
   const time = new Date(
@@ -995,19 +952,12 @@ function deliveryTime(order) {
   return time;
 }
 
-function validateEligibility(
-  order,
-  rows,
-) {
-  const delivered =
-    deliveryTime(order);
+function validateEligibility(order, rows) {
+  const delivered = deliveryTime(order);
 
   for (const row of rows) {
-    const item =
-      order.items[row.index];
-
-    const days =
-      item.returnWindowDays ?? 7;
+    const item = order.items[row.index];
+    const days = item.returnWindowDays ?? 7;
 
     if (
       !Number.isInteger(days) ||
@@ -1021,9 +971,7 @@ function validateEligibility(
       );
     }
 
-    if (
-      item.returnsEligible === "no"
-    ) {
+    if (item.returnsEligible === "no") {
       throw problem(
         409,
         `${item.name}: this purchase is not eligible for a standard return or exchange. Contact support for help.`,
@@ -1051,20 +999,17 @@ async function reserveReplacements(
   cache,
 ) {
   for (const row of rows) {
-    const item =
-      order.items[row.index];
+    const item = order.items[row.index];
 
-    const product =
-      await inventoryProduct(
-        item,
-        session,
-        cache,
-      );
+    const product = await inventoryProduct(
+      item,
+      session,
+      cache,
+    );
 
     if (
       product.isActive === false ||
-      product.delivery?.available ===
-        false
+      product.delivery?.available === false
     ) {
       throw problem(
         409,
@@ -1122,7 +1067,7 @@ const createOrder = handler(
 
     const existing =
       await Order.findOne({
-        user: req.user._id,
+        ...customerFilter(req),
         checkoutToken: token,
       });
 
@@ -1145,12 +1090,11 @@ const createOrder = handler(
 
 const getOrders = handler(
   async (req, res) => {
-    const orders =
-      await Order.find({
-        user: req.user._id,
-      }).sort({
-        createdAt: -1,
-      });
+    const orders = await Order.find(
+      customerFilter(req),
+    ).sort({
+      createdAt: -1,
+    });
 
     return res.json({
       success: true,
@@ -1165,7 +1109,7 @@ const getOrderById = handler(
     const order = await loadOrder(
       orderId(req),
       null,
-      req.user._id,
+      customerFilter(req),
     );
 
     return res.json({
@@ -1187,8 +1131,7 @@ async function submitCancellationRefund(id) {
       if (
         !order ||
         order.status !== "cancelled" ||
-        order.refund?.status !==
-          "pending" ||
+        order.refund?.status !== "pending" ||
         order.refund.reference ||
         (
           order.refund.submissionState &&
@@ -1206,13 +1149,11 @@ async function submitCancellationRefund(id) {
         new Date();
 
       order.refund.submissionKey =
-        `GD-CANCEL-${
-          crypto
-            .createHash("sha256")
-            .update(String(id))
-            .digest("hex")
-            .slice(0, 40)
-        }`;
+        `GD-CANCEL-${crypto
+          .createHash("sha256")
+          .update(String(id))
+          .digest("hex")
+          .slice(0, 40)}`;
 
       await order.save({ session });
 
@@ -1252,17 +1193,13 @@ async function submitCancellationRefund(id) {
     ).trim();
 
     const secret = String(
-      process.env.RAZORPAY_KEY_SECRET ||
-        "",
+      process.env.RAZORPAY_KEY_SECRET || "",
     ).trim();
 
     if (
-      !/^rzp_(test|live)_[A-Za-z0-9]+$/.test(
-        keyId,
-      ) ||
+      !/^rzp_(test|live)_[A-Za-z0-9]+$/.test(keyId) ||
       !secret ||
-      typeof claim.metadata?.demo !==
-        "boolean" ||
+      typeof claim.metadata?.demo !== "boolean" ||
       claim.metadata.demo !==
         keyId.startsWith("rzp_test_")
     ) {
@@ -1272,27 +1209,21 @@ async function submitCancellationRefund(id) {
     }
 
     const authorization =
-      `Basic ${
-        Buffer.from(
-          `${keyId}:${secret}`,
-        ).toString("base64")
-      }`;
+      `Basic ${Buffer.from(
+        `${keyId}:${secret}`,
+      ).toString("base64")}`;
 
-    const paymentResponse =
-      await fetch(
-        `https://api.razorpay.com/v1/payments/${
-          encodeURIComponent(paymentId)
-        }`,
-        {
-          headers: {
-            Accept: "application/json",
-            Authorization: authorization,
-          },
-
-          signal:
-            AbortSignal.timeout(25000),
+    const paymentResponse = await fetch(
+      `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: authorization,
         },
-      );
+
+        signal: AbortSignal.timeout(25000),
+      },
+    );
 
     if (!paymentResponse.ok) {
       throw new Error(
@@ -1308,9 +1239,7 @@ async function submitCancellationRefund(id) {
       payment.status !== "captured" ||
       payment.currency !== "INR" ||
       Number(payment.amount) !== amount ||
-      Number(
-        payment.amount_refunded || 0,
-      ) !== 0 ||
+      Number(payment.amount_refunded || 0) !== 0 ||
       (
         claim.payment.razorpayOrderId &&
         payment.order_id !==
@@ -1323,18 +1252,13 @@ async function submitCancellationRefund(id) {
     }
 
     const response = await fetch(
-      `https://api.razorpay.com/v1/payments/${
-        encodeURIComponent(paymentId)
-      }/refund`,
+      `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}/refund`,
       {
         method: "POST",
-
-        signal:
-          AbortSignal.timeout(25000),
+        signal: AbortSignal.timeout(25000),
 
         headers: {
-          "Content-Type":
-            "application/json",
+          "Content-Type": "application/json",
 
           "X-Refund-Idempotency":
             claim.refund.submissionKey,
@@ -1347,11 +1271,8 @@ async function submitCancellationRefund(id) {
           speed: "normal",
 
           notes: {
-            reason:
-              "customer_cancellation",
-
-            gymdrobe_order:
-              claim.orderNumber,
+            reason: "customer_cancellation",
+            gymdrobe_order: claim.orderNumber,
           },
         }),
       },
@@ -1362,118 +1283,106 @@ async function submitCancellationRefund(id) {
     if (
       !response.ok ||
       typeof result.id !== "string" ||
-      !/^rfnd_[A-Za-z0-9]+$/.test(
-        result.id,
-      ) ||
+      !/^rfnd_[A-Za-z0-9]+$/.test(result.id) ||
       result.payment_id !== paymentId ||
       result.currency !== "INR" ||
       Number(result.amount) !== amount ||
-      ![
-        "pending",
-        "processed",
-      ].includes(result.status)
+      !["pending", "processed"].includes(
+        result.status,
+      )
     ) {
       throw new Error(
         "Refund outcome requires review",
       );
     }
   } catch {
-    await transaction(
-      async (session) => {
-        const order =
-          await Order.findById(id)
-            .session(session);
-
-        if (
-          !order ||
-          order.refund.status ===
-            "refunded" ||
-          order.refund.submissionKey !==
-            claim.refund.submissionKey ||
-          order.refund.reference
-        ) {
-          return;
-        }
-
-        order.refund.status =
-          "manual-required";
-
-        order.refund.submissionState =
-          "uncertain";
-
-        event(
-          order,
-          "refund-manual-required",
-          "The automatic refund outcome requires payment-provider review. Do not send another refund without checking it.",
-        );
-
-        await order.save({ session });
-      },
-    );
-
-    return;
-  }
-
-  await transaction(
-    async (session) => {
+    await transaction(async (session) => {
       const order =
         await Order.findById(id)
           .session(session);
 
       if (
         !order ||
-        order.refund.status ===
-          "refunded" ||
+        order.refund.status === "refunded" ||
         order.refund.submissionKey !==
-          claim.refund.submissionKey
+          claim.refund.submissionKey ||
+        order.refund.reference
       ) {
         return;
       }
 
-      if (
-        order.refund.reference &&
-        order.refund.reference !==
-          result.id
-      ) {
-        throw problem(
-          409,
-          "The refund reference changed. Reconcile it with the payment provider.",
-          "REFUND_CHANGED",
-        );
-      }
-
-      order.refund.reference = result.id;
+      order.refund.status =
+        "manual-required";
 
       order.refund.submissionState =
-        "submitted";
-
-      if (
-        result.status === "processed"
-      ) {
-        recordRefund(
-          order,
-          amount,
-          result.id,
-          new Date(),
-        );
-      } else {
-        order.refund.status = "pending";
-      }
+        "uncertain";
 
       event(
         order,
-        result.status === "processed"
-          ? "refund-completed"
-          : "refund-requested",
-
-        result.status === "processed"
-          ? "Cancellation refund completed through Razorpay."
-          : "Cancellation refund submitted to Razorpay; completion is pending.",
+        "refund-manual-required",
+        "The automatic refund outcome requires payment-provider review. Do not send another refund without checking it.",
       );
 
       await order.save({ session });
-    },
-  );
+    });
+
+    return;
+  }
+
+  await transaction(async (session) => {
+    const order =
+      await Order.findById(id)
+        .session(session);
+
+    if (
+      !order ||
+      order.refund.status === "refunded" ||
+      order.refund.submissionKey !==
+        claim.refund.submissionKey
+    ) {
+      return;
+    }
+
+    if (
+      order.refund.reference &&
+      order.refund.reference !== result.id
+    ) {
+      throw problem(
+        409,
+        "The refund reference changed. Reconcile it with the payment provider.",
+        "REFUND_CHANGED",
+      );
+    }
+
+    order.refund.reference = result.id;
+
+    order.refund.submissionState =
+      "submitted";
+
+    if (result.status === "processed") {
+      recordRefund(
+        order,
+        amount,
+        result.id,
+        new Date(),
+      );
+    } else {
+      order.refund.status = "pending";
+    }
+
+    event(
+      order,
+      result.status === "processed"
+        ? "refund-completed"
+        : "refund-requested",
+
+      result.status === "processed"
+        ? "Cancellation refund completed through Razorpay."
+        : "Cancellation refund submitted to Razorpay; completion is pending.",
+    );
+
+    await order.save({ session });
+  });
 }
 
 const cancelOrder = handler(
@@ -1493,7 +1402,7 @@ const cancelOrder = handler(
         const order = await loadOrder(
           id,
           session,
-          req.user._id,
+          customerFilter(req),
         );
 
         if (
@@ -1508,10 +1417,9 @@ const cancelOrder = handler(
         }
 
         if (
-          ![
-            "confirmed",
-            "processing",
-          ].includes(order.status)
+          !["confirmed", "processing"].includes(
+            order.status,
+          )
         ) {
           throw problem(
             409,
@@ -1549,22 +1457,17 @@ const cancelOrder = handler(
         }
 
         if (
-          order.metadata
-            ?.inventoryReserved === true &&
-          !order.cancellation
-            .inventoryRestoredAt
+          order.metadata?.inventoryReserved === true &&
+          !order.cancellation.inventoryRestoredAt
         ) {
           const cache = new Map();
 
-          for (
-            const item of order.items || []
-          ) {
-            const product =
-              await inventoryProduct(
-                item,
-                session,
-                cache,
-              );
+          for (const item of order.items || []) {
+            const product = await inventoryProduct(
+              item,
+              session,
+              cache,
+            );
 
             restorePurchasedStock(
               product,
@@ -1573,10 +1476,7 @@ const cancelOrder = handler(
             );
           }
 
-          await saveProducts(
-            cache,
-            session,
-          );
+          await saveProducts(cache, session);
 
           order.metadata.inventoryReserved =
             false;
@@ -1590,19 +1490,14 @@ const cancelOrder = handler(
         order.cancellation.status =
           "cancelled";
 
-        order.cancellation.reason =
-          reason;
-
-        order.cancellation.cancelledAt =
-          now;
+        order.cancellation.reason = reason;
+        order.cancellation.cancelledAt = now;
 
         if (!order.delivery) {
           order.delivery = {};
         }
 
-        order.delivery.status =
-          "cancelled";
-
+        order.delivery.status = "cancelled";
         order.payment.amountDue = 0;
 
         order.payment.balanceStatus =
@@ -1630,9 +1525,11 @@ const cancelOrder = handler(
         event(
           order,
           "cancelled",
+
           amounts.retained > 0
             ? "Order cancelled. Refund of recorded money paid requested."
             : "Order cancelled by customer.",
+
           now,
         );
 
@@ -1646,8 +1543,7 @@ const cancelOrder = handler(
     );
 
     if (
-      result.order.refund.status ===
-      "pending"
+      result.order.refund.status === "pending"
     ) {
       await submitCancellationRefund(
         result.order._id,
@@ -1657,7 +1553,7 @@ const cancelOrder = handler(
     const latest = await loadOrder(
       id,
       null,
-      req.user._id,
+      customerFilter(req),
     );
 
     const status =
@@ -1680,9 +1576,7 @@ const cancelOrder = handler(
       existing: result.existing,
       message,
       refundStatus: status,
-
-      refundAmount:
-        latest.refund?.amount || 0,
+      refundAmount: latest.refund?.amount || 0,
 
       manualReviewRequired:
         status === "manual-required",
@@ -1705,10 +1599,7 @@ const requestReturn = handler(
     ).toLowerCase();
 
     if (
-      ![
-        "return",
-        "exchange",
-      ].includes(type)
+      !["return", "exchange"].includes(type)
     ) {
       throw problem(
         400,
@@ -1742,12 +1633,10 @@ const requestReturn = handler(
         const order = await loadOrder(
           id,
           session,
-          req.user._id,
+          customerFilter(req),
         );
 
-        if (
-          order.status !== "delivered"
-        ) {
+        if (order.status !== "delivered") {
           throw problem(
             409,
             "Returns and exchanges open after delivery.",
@@ -1804,8 +1693,7 @@ const requestReturn = handler(
             1,
           );
 
-          const item =
-            order.items[index];
+          const item = order.items[index];
 
           if (
             !item ||
@@ -1856,15 +1744,13 @@ const requestReturn = handler(
               );
             }
 
-            size =
-              product.sizes?.length
-                ? size
-                : null;
+            size = product.sizes?.length
+              ? size
+              : null;
 
-            color =
-              product.colors?.length
-                ? color
-                : null;
+            color = product.colors?.length
+              ? color
+              : null;
 
             if (
               getVariantStock(
@@ -1882,15 +1768,9 @@ const requestReturn = handler(
 
             if (
               size ===
-                (
-                  item.selectedSize ??
-                  null
-                ) &&
+                (item.selectedSize ?? null) &&
               color ===
-                (
-                  item.selectedColor ??
-                  null
-                )
+                (item.selectedColor ?? null)
             ) {
               throw problem(
                 400,
@@ -1913,10 +1793,7 @@ const requestReturn = handler(
           seen.add(index);
         }
 
-        validateEligibility(
-          order,
-          rows,
-        );
+        validateEligibility(order, rows);
 
         // Validate combined replacement quantities
         // without saving or reserving stock yet.
@@ -1933,16 +1810,13 @@ const requestReturn = handler(
 
         order.returnRequest = {
           id:
-            `RET-${
-              Date.now()
-                .toString(36)
-                .toUpperCase()
-            }-${
-              crypto
-                .randomBytes(6)
-                .toString("hex")
-                .toUpperCase()
-            }`,
+            `RET-${Date.now()
+              .toString(36)
+              .toUpperCase()}-` +
+            crypto
+              .randomBytes(6)
+              .toString("hex")
+              .toUpperCase(),
 
           type,
           status: "requested",
@@ -1954,10 +1828,8 @@ const requestReturn = handler(
           approvedAt: null,
           rejectedAt: null,
           completedAt: null,
-          originalInventoryRestoredAt:
-            null,
-          exchangeInventoryReservedAt:
-            null,
+          originalInventoryRestoredAt: null,
+          exchangeInventoryReservedAt: null,
         };
 
         order.refund = blankRefund();
@@ -1982,8 +1854,7 @@ const requestReturn = handler(
         "Request submitted successfully for review.",
 
       order: safeOrder(order),
-      returnRequest:
-        order.returnRequest,
+      returnRequest: order.returnRequest,
     });
   },
 );
@@ -2019,9 +1890,7 @@ const getAdminReturnRequests = handler(
         "name email phone role",
       )
       .sort({
-        "returnRequest.requestedAt":
-          -1,
-
+        "returnRequest.requestedAt": -1,
         createdAt: -1,
       });
 
@@ -2084,10 +1953,7 @@ const getAdminOrders = handler(
 
     const query = {};
 
-    if (
-      status &&
-      status !== "all"
-    ) {
+    if (status && status !== "all") {
       query.status = status;
     }
 
@@ -2121,12 +1987,8 @@ const getAdminOrders = handler(
             "user",
             "name email phone role",
           )
-          .sort({
-            createdAt: -1,
-          })
-          .skip(
-            (page - 1) * limit,
-          )
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
           .limit(limit),
 
         Order.countDocuments(query),
@@ -2154,12 +2016,11 @@ async function serializeAdminOrder(
   order,
   user,
 ) {
-  const result =
-    await withAdminSourcing(
-      order,
-      safeOrder(order),
-      user,
-    );
+  const result = await withAdminSourcing(
+    order,
+    safeOrder(order),
+    user,
+  );
 
   if (order.kitSnapshots?.length) {
     result.kitFulfillmentAdmin =
@@ -2169,90 +2030,79 @@ async function serializeAdminOrder(
   return result;
 }
 
-const updateAdminKitFulfillment =
-  handler(
-    async (req, res) => {
-      const id = orderId(req);
-      const body = bodyOf(req);
+const updateAdminKitFulfillment = handler(
+  async (req, res) => {
+    const id = orderId(req);
+    const body = bodyOf(req);
 
-      const updated =
-        await transaction(
-          async (session) => {
-            const order =
-              await loadOrder(
-                id,
-                session,
-              );
-
-            paymentState(order);
-
-            const changed =
-              applyKitFulfillmentAction(
-                order,
-                body,
-                String(req.user._id),
-              );
-
-            order.fulfillmentProgress =
-              changed.progress;
-
-            order.set(
-              "payment",
-              changed.payment,
-            );
-
-            order.set(
-              "delivery",
-              changed.delivery,
-            );
-
-            order.status =
-              changed.status;
-
-            event(
-              order,
-
-              body.action === "cod"
-                ? "cod-parcel-collected"
-                : `kit-${body.action}`,
-
-              changed.description,
-            );
-
-            await order.save({
-              session,
-            });
-
-            return order;
-          },
+    const updated = await transaction(
+      async (session) => {
+        const order = await loadOrder(
+          id,
+          session,
         );
 
-      return res.json({
-        success: true,
-        message:
-          "Kit fulfillment saved.",
+        paymentState(order);
 
-        order:
-          await serializeAdminOrder(
-            updated,
-            req.user,
-          ),
-      });
-    },
-    true,
-  );
+        const changed =
+          applyKitFulfillmentAction(
+            order,
+            body,
+            String(req.user._id),
+          );
+
+        order.fulfillmentProgress =
+          changed.progress;
+
+        order.set(
+          "payment",
+          changed.payment,
+        );
+
+        order.set(
+          "delivery",
+          changed.delivery,
+        );
+
+        order.status = changed.status;
+
+        event(
+          order,
+          body.action === "cod"
+            ? "cod-parcel-collected"
+            : `kit-${body.action}`,
+          changed.description,
+        );
+
+        await order.save({ session });
+
+        return order;
+      },
+    );
+
+    return res.json({
+      success: true,
+      message: "Kit fulfillment saved.",
+
+      order: await serializeAdminOrder(
+        updated,
+        req.user,
+      ),
+    });
+  },
+  true,
+);
 
 const getAdminOrderById = handler(
   async (req, res) => {
-    const order =
-      await Order.findOne(
-        lookup(orderId(req)),
-      )
-        .select("+items.sourcing")
-        .populate(
-          "user",
-          "name email phone role",
-        );
+    const order = await Order.findOne(
+      lookup(orderId(req)),
+    )
+      .select("+items.sourcing")
+      .populate(
+        "user",
+        "name email phone role",
+      );
 
     if (!order) {
       throw problem(
@@ -2265,11 +2115,10 @@ const getAdminOrderById = handler(
     return res.json({
       success: true,
 
-      order:
-        await serializeAdminOrder(
-          order,
-          req.user,
-        ),
+      order: await serializeAdminOrder(
+        order,
+        req.user,
+      ),
     });
   },
   true,
@@ -2279,9 +2128,7 @@ const updateAdminOrderStatus = handler(
   async (req, res) => {
     const id = orderId(req);
     const body = bodyOf(req);
-
-    const extras =
-      parseTrackingExtras(body);
+    const extras = parseTrackingExtras(body);
 
     const status = inputText(
       body.status,
@@ -2327,28 +2174,22 @@ const updateAdminOrderStatus = handler(
     const tracking = {};
 
     if (own(body, "carrier")) {
-      tracking.carrier =
-        inputText(
-          body.carrier ?? "",
-          "Courier name",
-          100,
-        ) || null;
+      tracking.carrier = inputText(
+        body.carrier ?? "",
+        "Courier name",
+        100,
+      ) || null;
     }
 
-    if (
-      own(body, "trackingNumber")
-    ) {
-      tracking.trackingNumber =
-        inputText(
-          body.trackingNumber ?? "",
-          "Tracking number",
-          150,
-        ) || null;
+    if (own(body, "trackingNumber")) {
+      tracking.trackingNumber = inputText(
+        body.trackingNumber ?? "",
+        "Tracking number",
+        150,
+      ) || null;
     }
 
-    if (
-      own(body, "estimatedDelivery")
-    ) {
+    if (own(body, "estimatedDelivery")) {
       const raw = inputText(
         body.estimatedDelivery ?? "",
         "Estimated delivery",
@@ -2362,15 +2203,9 @@ const updateAdminOrderStatus = handler(
       if (
         raw &&
         (
-          !/^\d{4}-\d{2}-\d{2}$/.test(
-            raw,
-          ) ||
-          Number.isNaN(
-            parsed.getTime(),
-          ) ||
-          parsed
-            .toISOString()
-            .slice(0, 10) !== raw
+          !/^\d{4}-\d{2}-\d{2}$/.test(raw) ||
+          Number.isNaN(parsed.getTime()) ||
+          parsed.toISOString().slice(0, 10) !== raw
         )
       ) {
         throw problem(
@@ -2403,9 +2238,7 @@ const updateAdminOrderStatus = handler(
           );
         }
 
-        if (
-          order.kitSnapshots?.length
-        ) {
+        if (order.kitSnapshots?.length) {
           throw problem(
             409,
             "Use the kit parcel controls to record dispatch, delivery and COD collection.",
@@ -2413,11 +2246,11 @@ const updateAdminOrderStatus = handler(
           );
         }
 
-        const current =
-          FLOW.indexOf(order.status);
+        const current = FLOW.indexOf(
+          order.status,
+        );
 
-        const next =
-          FLOW.indexOf(status);
+        const next = FLOW.indexOf(status);
 
         if (current < 0) {
           throw problem(
@@ -2455,8 +2288,7 @@ const updateAdminOrderStatus = handler(
         }
 
         if (
-          order.metadata
-            ?.inventoryReserved !== true
+          order.metadata?.inventoryReserved !== true
         ) {
           throw problem(
             409,
@@ -2465,13 +2297,11 @@ const updateAdminOrderStatus = handler(
           );
         }
 
-        const payment =
-          paymentState(order);
+        const payment = paymentState(order);
 
         if (
           collect &&
-          payment.method !==
-            "cod-partial"
+          payment.method !== "cod-partial"
         ) {
           throw problem(
             409,
@@ -2484,32 +2314,24 @@ const updateAdminOrderStatus = handler(
           status === "delivered" &&
           payment.due > 0 &&
           (
-            payment.method !==
-              "cod-partial" ||
+            payment.method !== "cod-partial" ||
             !collect
           )
         ) {
           throw problem(
             409,
 
-            payment.method ===
-              "cod-partial"
-              ? `Confirm that the remaining ₹${
-                  (
-                    payment.due / 100
-                  ).toFixed(2)
-                } COD balance was collected before confirming delivery.`
+            payment.method === "cod-partial"
+              ? `Confirm that the remaining ₹${(payment.due / 100).toFixed(2)} COD balance was collected before confirming delivery.`
               : "Reconcile the legacy COD balance before confirming delivery.",
 
             "COD_COLLECTION_REQUIRED",
 
             {
               requiresCodBalanceConfirmation:
-                payment.method ===
-                "cod-partial",
+                payment.method === "cod-partial",
 
-              amountDue:
-                payment.due / 100,
+              amountDue: payment.due / 100,
             },
           );
         }
@@ -2524,16 +2346,13 @@ const updateAdminOrderStatus = handler(
         );
 
         if (
-          next >=
-            FLOW.indexOf("shipped") &&
+          next >= FLOW.indexOf("shipped") &&
           (
             !String(
-              order.tracking.carrier ||
-                "",
+              order.tracking.carrier || "",
             ).trim() ||
             !String(
-              order.tracking
-                .trackingNumber || "",
+              order.tracking.trackingNumber || "",
             ).trim()
           )
         ) {
@@ -2547,16 +2366,12 @@ const updateAdminOrderStatus = handler(
         const now = new Date();
 
         const packingNew =
-          extras.packingConfirmed ===
-            true &&
+          extras.packingConfirmed === true &&
           !order.tracking.packedAt;
 
         if (
           packingNew &&
-          ![
-            "processing",
-            "shipped",
-          ].includes(status)
+          !["processing", "shipped"].includes(status)
         ) {
           throw problem(
             409,
@@ -2566,8 +2381,7 @@ const updateAdminOrderStatus = handler(
         }
 
         if (packingNew) {
-          order.tracking.packedAt =
-            now;
+          order.tracking.packedAt = now;
 
           event(
             order,
@@ -2578,8 +2392,7 @@ const updateAdminOrderStatus = handler(
         }
 
         if (
-          order.status ===
-            "processing" &&
+          order.status === "processing" &&
           status === "shipped" &&
           !order.tracking.packedAt
         ) {
@@ -2594,17 +2407,13 @@ const updateAdminOrderStatus = handler(
           extras.exception &&
           (
             (
-              order.tracking
-                .exception?.type ||
+              order.tracking.exception?.type ||
               "none"
-            ) !==
-              extras.exception.type ||
+            ) !== extras.exception.type ||
             (
-              order.tracking
-                .exception?.message ||
+              order.tracking.exception?.message ||
               ""
-            ) !==
-              extras.exception.message
+            ) !== extras.exception.message
           );
 
         const extrasChanged =
@@ -2618,8 +2427,7 @@ const updateAdminOrderStatus = handler(
           event(
             order,
 
-            extras.exception.type ===
-              "none"
+            extras.exception.type === "none"
               ? "delivery-update-resolved"
               : extras.exception.type,
 
@@ -2632,8 +2440,7 @@ const updateAdminOrderStatus = handler(
 
         const collected =
           status === "delivered" &&
-          payment.method ===
-            "cod-partial" &&
+          payment.method === "cod-partial" &&
           payment.due > 0 &&
           collect;
 
@@ -2646,11 +2453,8 @@ const updateAdminOrderStatus = handler(
           order.payment.grossCollected =
             payment.total / 100;
 
-          order.payment.refundedAmount =
-            0;
-
-          order.payment.amountsReconciled =
-            true;
+          order.payment.refundedAmount = 0;
+          order.payment.amountsReconciled = true;
 
           order.payment.balanceStatus =
             "collected";
@@ -2658,21 +2462,13 @@ const updateAdminOrderStatus = handler(
           order.payment.balanceCollectedAt =
             now;
 
-          order.payment.status =
-            "paid";
-
+          order.payment.status = "paid";
           order.payment.paidAt = now;
 
           event(
             order,
             "cod-balance-collected",
-
-            `Remaining COD balance of ₹${
-              (
-                payment.due / 100
-              ).toFixed(2)
-            } recorded as collected.`,
-
+            `Remaining COD balance of ₹${(payment.due / 100).toFixed(2)} recorded as collected.`,
             now,
           );
         }
@@ -2695,8 +2491,7 @@ const updateAdminOrderStatus = handler(
           status === "delivered" &&
           !order.delivery.deliveredAt
         ) {
-          order.delivery.deliveredAt =
-            now;
+          order.delivery.deliveredAt = now;
         }
 
         if (changed) {
@@ -2728,9 +2523,7 @@ const updateAdminOrderStatus = handler(
           extrasChanged ||
           Object.keys(tracking).length
         ) {
-          await order.save({
-            session,
-          });
+          await order.save({ session });
         }
 
         return {
@@ -2742,19 +2535,16 @@ const updateAdminOrderStatus = handler(
 
     return res.json({
       success: true,
-
-      codBalanceCollected:
-        result.collected,
+      codBalanceCollected: result.collected,
 
       message: result.collected
         ? "Order delivered and COD balance recorded as collected."
         : "Order information confirmed.",
 
-      order:
-        await serializeAdminOrder(
-          result.order,
-          req.user,
-        ),
+      order: await serializeAdminOrder(
+        result.order,
+        req.user,
+      ),
     });
   },
   true,
@@ -2781,10 +2571,7 @@ const reviewReturnRequest = handler(
     );
 
     if (
-      ![
-        "approve",
-        "reject",
-      ].includes(decision)
+      !["approve", "reject"].includes(decision)
     ) {
       throw problem(
         400,
@@ -2806,8 +2593,7 @@ const reviewReturnRequest = handler(
             : "rejected";
 
         if (
-          order.returnRequest?.status ===
-          target
+          order.returnRequest?.status === target
         ) {
           return {
             order,
@@ -2831,10 +2617,7 @@ const reviewReturnRequest = handler(
           order.returnRequest.type;
 
         if (
-          ![
-            "return",
-            "exchange",
-          ].includes(type)
+          !["return", "exchange"].includes(type)
         ) {
           throw problem(
             409,
@@ -2851,9 +2634,7 @@ const reviewReturnRequest = handler(
             order.refund?.status ||
               "not-requested",
           ) ||
-          Number(
-            order.refund?.amount || 0,
-          ) > 0 ||
+          Number(order.refund?.amount || 0) > 0 ||
           order.refund?.reference
         ) {
           throw problem(
@@ -2863,27 +2644,20 @@ const reviewReturnRequest = handler(
           );
         }
 
-        const rows =
-          storedReturnRows(order);
-
+        const rows = storedReturnRows(order);
         const now = new Date();
 
-        if (
-          decision === "approve"
-        ) {
-          const paid =
-            paymentState(
-              order,
-              true,
-            );
+        if (decision === "approve") {
+          const paid = paymentState(
+            order,
+            true,
+          );
 
           if (
             rows.some(
               (row) =>
-                order.items[
-                  row.index
-                ].returnsEligible !==
-                "yes",
+                order.items[row.index]
+                  .returnsEligible !== "yes",
             )
           ) {
             throw problem(
@@ -2893,11 +2667,8 @@ const reviewReturnRequest = handler(
             );
           }
 
-          if (
-            type === "exchange"
-          ) {
-            const cache =
-              new Map();
+          if (type === "exchange") {
+            const cache = new Map();
 
             await reserveReplacements(
               order,
@@ -2911,24 +2682,20 @@ const reviewReturnRequest = handler(
               session,
             );
 
-            order.returnRequest.exchangeInventoryReservedAt =
-              now;
+            order.returnRequest
+              .exchangeInventoryReservedAt = now;
 
             order.refund = {
               ...blankRefund(),
-              status:
-                "not-applicable",
+              status: "not-applicable",
             };
           } else {
-            const amount =
-              returnRefundCents(
-                order,
-                rows,
-              );
+            const amount = returnRefundCents(
+              order,
+              rows,
+            );
 
-            if (
-              amount > paid.retained
-            ) {
+            if (amount > paid.retained) {
               throw problem(
                 409,
                 "The calculated refund exceeds recorded money paid. Reconcile the payment first.",
@@ -2947,18 +2714,14 @@ const reviewReturnRequest = handler(
               amount: amount / 100,
 
               requestedAt:
-                amount > 0
-                  ? now
-                  : null,
+                amount > 0 ? now : null,
             };
           }
         } else {
-          order.refund =
-            blankRefund();
+          order.refund = blankRefund();
         }
 
-        order.returnRequest.status =
-          target;
+        order.returnRequest.status = target;
 
         order.returnRequest.response =
           response;
@@ -2979,8 +2742,8 @@ const reviewReturnRequest = handler(
         order.returnRequest.completedAt =
           null;
 
-        order.returnRequest.originalInventoryRestoredAt =
-          null;
+        order.returnRequest
+          .originalInventoryRestoredAt = null;
 
         event(
           order,
@@ -2994,9 +2757,7 @@ const reviewReturnRequest = handler(
           now,
         );
 
-        await order.save({
-          session,
-        });
+        await order.save({ session });
 
         return {
           order,
@@ -3040,7 +2801,7 @@ const completeReturnRequest = handler(
 
         if (
           order.returnRequest?.status ===
-          "completed"
+            "completed"
         ) {
           return {
             order,
@@ -3064,10 +2825,7 @@ const completeReturnRequest = handler(
           order.returnRequest.type;
 
         if (
-          ![
-            "return",
-            "exchange",
-          ].includes(type)
+          !["return", "exchange"].includes(type)
         ) {
           throw problem(
             409,
@@ -3076,18 +2834,18 @@ const completeReturnRequest = handler(
           );
         }
 
-        const rows =
-          storedReturnRows(order);
+        const rows = storedReturnRows(order);
 
-        const paid =
-          paymentState(order, true);
+        const paid = paymentState(
+          order,
+          true,
+        );
 
         const now = new Date();
         const cache = new Map();
 
         if (
-          order.metadata
-            ?.inventoryReserved !== true
+          order.metadata?.inventoryReserved !== true
         ) {
           throw problem(
             409,
@@ -3108,12 +2866,12 @@ const completeReturnRequest = handler(
             cache,
           );
 
-          order.returnRequest.exchangeInventoryReservedAt =
-            now;
+          order.returnRequest
+            .exchangeInventoryReservedAt = now;
         }
 
-        // This completion action means the administrator
-        // received, inspected and accepted the originals
+        // Completion means the administrator received,
+        // inspected and accepted the original products
         // as saleable inventory.
         if (
           !order.returnRequest
@@ -3137,21 +2895,17 @@ const completeReturnRequest = handler(
             );
           }
 
-          order.returnRequest.originalInventoryRestoredAt =
-            now;
+          order.returnRequest
+            .originalInventoryRestoredAt = now;
         }
 
-        await saveProducts(
-          cache,
-          session,
-        );
+        await saveProducts(cache, session);
 
         if (type === "return") {
-          const amount =
-            returnRefundCents(
-              order,
-              rows,
-            );
+          const amount = returnRefundCents(
+            order,
+            rows,
+          );
 
           if (
             amount > paid.retained ||
@@ -3207,9 +2961,7 @@ const completeReturnRequest = handler(
           now,
         );
 
-        await order.save({
-          session,
-        });
+        await order.save({ session });
 
         return {
           order,
@@ -3254,8 +3006,7 @@ const recordReturnRefund = handler(
 
         if (
           order.status !== "delivered" ||
-          order.returnRequest?.type !==
-            "return" ||
+          order.returnRequest?.type !== "return" ||
           order.returnRequest.status !==
             "completed"
         ) {
@@ -3267,12 +3018,10 @@ const recordReturnRefund = handler(
         }
 
         if (
-          order.refund?.status ===
-          "refunded"
+          order.refund?.status === "refunded"
         ) {
           if (
-            order.refund.reference !==
-            reference
+            order.refund.reference !== reference
           ) {
             throw problem(
               409,
@@ -3309,14 +3058,12 @@ const recordReturnRefund = handler(
           );
         }
 
-        const rows =
-          storedReturnRows(order);
+        const rows = storedReturnRows(order);
 
-        const amount =
-          returnRefundCents(
-            order,
-            rows,
-          );
+        const amount = returnRefundCents(
+          order,
+          rows,
+        );
 
         if (
           amount !==
@@ -3351,9 +3098,7 @@ const recordReturnRefund = handler(
           now,
         );
 
-        await order.save({
-          session,
-        });
+        await order.save({ session });
 
         return {
           order,

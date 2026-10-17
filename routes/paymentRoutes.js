@@ -7,8 +7,11 @@ const {
 } = require("../middleware/controllers/paymentController");
 
 const {
-  protect,
-} = require("../middleware/authMiddleware");
+  customerAccess,
+  checkoutRateLimit,
+  createGuestSession,
+  checkGuestSession,
+} = require("../middleware/customerAccess");
 
 const router = express.Router();
 
@@ -18,11 +21,24 @@ router.use((req, res, next) => {
   next();
 });
 
-// All routes require login.
-router.use(protect);
+router.use(checkoutRateLimit);
+
+// POST /api/payments/guest-session
+// Create or reuse a private guest checkout session.
+router.post(
+  "/guest-session",
+  createGuestSession,
+);
+
+// GET /api/payments/guest-session
+// Check a private guest access code.
+router.get(
+  "/guest-session",
+  checkGuestSession,
+);
 
 // POST /api/payments/checkout/quote
-// Calculates a pricing preview.
+// Login is optional; prices come from backend records.
 // Does not create an order, reserve stock or start payment.
 router.post(
   "/checkout/quote",
@@ -30,16 +46,20 @@ router.post(
 );
 
 // POST /api/payments/razorpay/order
-// Existing online payment and COD advance flow.
+// Full online payment or COD with a 10% advance.
+// Requires a verified account or private guest session.
 router.post(
   "/razorpay/order",
+  customerAccess,
   createRazorpayOrder,
 );
 
 // POST /api/payments/razorpay/verify
-// Existing Razorpay payment verification.
+// Verify the signature and actual provider payment details.
+// Requires a verified account or private guest session.
 router.post(
   "/razorpay/verify",
+  customerAccess,
   verifyRazorpayPayment,
 );
 

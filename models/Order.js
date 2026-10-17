@@ -756,7 +756,20 @@ const orderSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+
+      required: function () {
+        return !this.guestSession;
+      },
+
+      default: null,
+      index: true,
+    },
+
+    guestSession: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GuestCheckoutSession",
+      default: null,
+      immutable: true,
       index: true,
     },
 
@@ -951,11 +964,13 @@ const orderSchema = new mongoose.Schema(
       exception: {
         type: {
           type: String,
+
           enum: [
             "none",
             "delayed",
             "delivery-attempt-failed",
           ],
+
           default: "none",
         },
 
@@ -1041,6 +1056,8 @@ const orderSchema = new mongoose.Schema(
 // Even explicitly selected sourcing data stays out of
 // ordinary serialization, customer emails and receipts.
 function hideSourcing(document, result) {
+  delete result.guestSession;
+
   for (const item of result.items || []) {
     delete item.sourcing;
   }
@@ -1059,6 +1076,22 @@ orderSchema.set("toJSON", {
 
 orderSchema.set("toObject", {
   transform: hideSourcing,
+});
+
+orderSchema.pre("validate", function () {
+  if (this.user && this.guestSession) {
+    this.invalidate(
+      "user",
+      "An order must have one owner.",
+    );
+  }
+
+  if (!this.user && !this.guestSession) {
+    this.invalidate(
+      "user",
+      "Order ownership is required.",
+    );
+  }
 });
 
 orderSchema.pre("validate", function () {

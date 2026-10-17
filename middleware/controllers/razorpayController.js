@@ -1,4 +1,13 @@
 const {
+  checkoutDelivery,
+} = require("../../utils/checkoutDelivery");
+
+const {
+  customerOwner,
+  customerFilter,
+} = require("../../utils/customerAccess");
+
+const {
   selectedProductImage,
 } = require("../../utils/productImages");
 
@@ -190,18 +199,6 @@ function bodyOf(req) {
   return req.body;
 }
 
-function userOf(req) {
-  if (!req.user?._id) {
-    throw problem(
-      401,
-      "Please sign in again.",
-      "AUTHENTICATION_REQUIRED",
-    );
-  }
-
-  return req.user._id;
-}
-
 function configuration() {
   const keyId = String(
     getRazorpayKeyId() || "",
@@ -283,9 +280,11 @@ function logFailure(error, stage) {
     reference,
     stage,
     name: safe(error?.name),
+
     code: Number.isSafeInteger(error?.code)
       ? error.code
       : safe(error?.code),
+
     databaseState: mongoose.connection.readyState,
   });
 
@@ -420,9 +419,8 @@ function payable(order) {
   if (
     method === "cod-partial" &&
     (
-      amount !== cents(
-        advance(order.pricing).advanceAmount,
-      ) ||
+      amount !==
+        cents(advance(order.pricing).advanceAmount) ||
       payment.advancePercentage !== 10
     )
   ) {
@@ -460,9 +458,15 @@ function safeOrder(order) {
     giftMessage: value.giftMessage || "",
     orderNote: value.orderNote || "",
 
-    user: {
-      id: String(value.user?._id || value.user),
-    },
+    user: value.user
+      ? {
+          id: String(
+            value.user?._id || value.user,
+          ),
+        }
+      : null,
+
+    isGuestOrder: Boolean(order.guestSession),
 
     customer: value.customer,
     shippingAddress: value.shippingAddress,
@@ -486,6 +490,7 @@ function safeOrder(order) {
       returnsEligible: item.returnsEligible,
       returnConditions: item.returnConditions,
       returnWindowDays: item.returnWindowDays,
+
       ...publicKitItemFields(item),
     })),
 
@@ -503,7 +508,12 @@ function safeOrder(order) {
     refund: value.refund,
 
     metadata: {
-      ...value.metadata,
+      version: value.metadata?.version,
+      demo: value.metadata?.demo,
+
+      inventoryReserved:
+        value.metadata?.inventoryReserved,
+
       checkoutToken: value.checkoutToken,
     },
   };
@@ -556,9 +566,26 @@ function address(value) {
       150,
     ),
 
-    city: text(value.city, "City", 100, 1),
-    state: text(value.state, "State", 100, 1),
-    pincode: text(value.pincode, "Pincode", 6, 6),
+    city: text(
+      value.city,
+      "City",
+      100,
+      1,
+    ),
+
+    state: text(
+      value.state,
+      "State",
+      100,
+      1,
+    ),
+
+    pincode: text(
+      value.pincode,
+      "Pincode",
+      6,
+      6,
+    ),
 
     label: text(
       value.label || "Home",
@@ -633,7 +660,7 @@ async function findProduct(id) {
 }
 
 async function snapshot(body) {
-  const hasKit = (
+  const hasKit =
     Array.isArray(body.items) &&
     body.items.some(
       (item) =>
@@ -642,8 +669,7 @@ async function snapshot(body) {
           item,
           "kitGroup",
         ),
-    )
-  );
+    );
 
   if (hasKit) {
     const destination = address(
@@ -678,9 +704,7 @@ async function snapshot(body) {
 
     if (
       typeof body.expectedReviewKey !== "string" ||
-      !/^[a-f0-9]{64}$/.test(
-        body.expectedReviewKey,
-      ) ||
+      !/^[a-f0-9]{64}$/.test(body.expectedReviewKey) ||
       body.expectedReviewKey !==
         kitReviewKey(
           reviewed,
@@ -704,6 +728,7 @@ async function snapshot(body) {
     return {
       items: reviewed.items.map((item) => ({
         ...item,
+
         sourcing: snapshotProductSourcing(
           sourceProducts.get(
             String(item.product),
@@ -780,11 +805,22 @@ async function snapshot(body) {
     if (!product) {
       product = await findProduct(id);
 
-      if (!product || product.isActive === false) {
+      if (
+        !product ||
+        product.isActive === false
+      ) {
         throw problem(
           409,
           "A product in your bag is no longer available.",
           "PRODUCT_UNAVAILABLE",
+        );
+      }
+
+      if (product.delivery?.available === false) {
+        throw problem(
+          409,
+          `${product.name} is not available for delivery.`,
+          "DELIVERY_UNAVAILABLE",
         );
       }
 
@@ -928,8 +964,8 @@ async function snapshot(body) {
       });
     }
 
-    // Quote-time stock changes stay in memory.
-    // Database inventory changes happen during confirmation.
+    // Check combined stock in memory during quoting.
+    // Inventory is saved only when captured payment is finalized.
     reserveVariantStock(
       product,
       quantity,
@@ -1029,6 +1065,12 @@ async function snapshot(body) {
     coupon,
     pricing,
     method,
+
+    deliveryReview: checkoutDelivery(
+      [...products.values()],
+      items,
+      body.shippingAddress?.pincode,
+    ),
   };
 }
 
@@ -1326,10 +1368,13 @@ function resultResponse(
       totalAmount: order.payment.totalAmount,
       amountPaid: order.payment.amountPaid,
       amountDue: order.payment.amountDue,
+
       advancePercentage:
         order.payment.advancePercentage,
+
       advanceAmount:
         order.payment.advanceAmount,
+
       balanceStatus:
         order.payment.balanceStatus,
     },
@@ -1468,6 +1513,7 @@ async function providerOrder(order, config) {
   const details = {
     _id: order._id,
     user: order.user,
+    guestSession: order.guestSession,
     receipt: order.orderNumber,
     keyId: config.keyId,
     amount: payable(order),
@@ -1503,7 +1549,10 @@ async function providerOrder(order, config) {
     !attempt ||
     attempt.keyId !== config.keyId ||
     attempt.amount !== details.amount ||
-    String(attempt.user) !== String(order.user) ||
+    String(attempt.user || "") !==
+      String(order.user || "") ||
+    String(attempt.guestSession || "") !==
+      String(order.guestSession || "") ||
     attempt.receipt !== details.receipt
   ) {
     throw problem(
@@ -1548,7 +1597,7 @@ async function providerOrder(order, config) {
       );
     }
 
-    // Recover uncertain creation using its exact receipt.
+    // Recover an uncertain creation through its exact receipt.
     const data = await gatewayCall(
       () =>
         config.client.orders.all({
@@ -1600,7 +1649,7 @@ async function providerOrder(order, config) {
           notes: {
             gymdrobeOrder: order.orderNumber,
             paymentMethod: order.payment.method,
-            userId: String(order.user),
+            orderNumber: order.orderNumber,
           },
         }),
     );
@@ -1714,7 +1763,8 @@ async function createRazorpayOrder(req, res) {
   let stage = "checkout-validation";
 
   try {
-    const user = userOf(req);
+    const owner = customerOwner(req);
+    const access = customerFilter(req);
     const body = bodyOf(req);
 
     const checkoutToken = text(
@@ -1740,7 +1790,7 @@ async function createRazorpayOrder(req, res) {
     await Order.init();
 
     let order = await Order.findOne({
-      user,
+      ...access,
       checkoutToken,
     });
 
@@ -1874,7 +1924,8 @@ async function createRazorpayOrder(req, res) {
               .toString("hex")
               .toUpperCase(),
 
-          user,
+          ...owner,
+
           checkoutToken,
 
           source: [
@@ -1897,7 +1948,10 @@ async function createRazorpayOrder(req, res) {
           },
 
           items: current.items,
-          kitSnapshots: current.kitSnapshots || [],
+
+          kitSnapshots:
+            current.kitSnapshots || [],
+
           shippingSnapshot:
             current.shippingSnapshot || null,
 
@@ -1958,7 +2012,11 @@ async function createRazorpayOrder(req, res) {
                 ? "Express delivery"
                 : "Standard delivery",
 
-            estimatedTime: null,
+            estimatedTime:
+              current.deliveryReview?.estimatedDays
+                ? `${current.deliveryReview.estimatedDays.minimum}–${current.deliveryReview.estimatedDays.maximum} days (recorded preparation and transit estimate)`
+                : null,
+
             deliveredAt: null,
           },
 
@@ -1999,7 +2057,7 @@ async function createRazorpayOrder(req, res) {
         }
 
         order = await Order.findOne({
-          user,
+          ...access,
           checkoutToken,
         });
 
@@ -2606,7 +2664,8 @@ async function verifyRazorpayPayment(
   let captured = false;
 
   try {
-    const user = userOf(req);
+    const owner = customerOwner(req);
+    const access = customerFilter(req);
     const body = bodyOf(req);
 
     const checkoutToken = text(
@@ -2649,7 +2708,7 @@ async function verifyRazorpayPayment(
     }
 
     const order = await Order.findOne({
-      user,
+      ...access,
       checkoutToken,
     });
 
@@ -2705,7 +2764,8 @@ async function verifyRazorpayPayment(
             ),
         );
       } catch {
-        // Fetch actual provider state after an uncertain capture.
+        // Fetch the provider's actual state after
+        // an uncertain capture response.
       }
 
       payment = await gatewayCall(
