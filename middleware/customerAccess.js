@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 
 const GuestCheckoutSession = require(
-  "../models/GuestCheckoutSession",
+  "../models/GuestCheckoutSession"
 );
 
 const {
@@ -21,8 +21,6 @@ function digest(token) {
     .digest("hex");
 }
 
-// Limits are stored in this backend process.
-// Multiple instances require a shared rate-limit store.
 function checkoutRateLimit(req, res, next) {
   const now = Date.now();
 
@@ -97,22 +95,14 @@ async function readGuest(req) {
   });
 }
 
-async function attachCustomer(
-  req,
-  res,
-  next,
-) {
+async function attachCustomer(req, res, next) {
   try {
     req.guestSession = await readGuest(req);
 
-    if (
-      !req.user?._id &&
-      !req.guestSession
-    ) {
+    if (!req.user?._id && !req.guestSession) {
       return res.status(401).json({
         success: false,
         code: "ORDER_ACCESS_REQUIRED",
-
         message:
           "Sign in or restore your private guest access code to view this order.",
       });
@@ -122,7 +112,6 @@ async function attachCustomer(
   } catch {
     return res.status(503).json({
       success: false,
-
       message:
         "Order access could not be checked. Please retry.",
     });
@@ -130,13 +119,11 @@ async function attachCustomer(
 }
 
 function customerAccess(req, res, next) {
-  // Invalid or blocked account sessions must not
-  // silently fall back to guest access.
+  // Account credentials must pass authentication.
+  // Invalid or blocked accounts cannot fall back to guest access.
   if (req.headers.authorization) {
-    return protect(
-      req,
-      res,
-      () => attachCustomer(req, res, next),
+    return protect(req, res, () =>
+      attachCustomer(req, res, next)
     );
   }
 
@@ -160,7 +147,7 @@ async function createGuestSession(req, res) {
       `gco_${crypto.randomBytes(32).toString("hex")}`;
 
     const expiresAt = new Date(
-      Date.now() + 90 * 86400000,
+      Date.now() + 90 * 86400000
     );
 
     await GuestCheckoutSession.create({
@@ -176,7 +163,6 @@ async function createGuestSession(req, res) {
   } catch {
     return res.status(503).json({
       success: false,
-
       message:
         "Guest checkout could not be prepared. Please retry.",
     });
@@ -192,7 +178,6 @@ async function checkGuestSession(req, res) {
     if (!session) {
       return res.status(401).json({
         success: false,
-
         message:
           "This guest access code is invalid or expired.",
       });
@@ -205,7 +190,6 @@ async function checkGuestSession(req, res) {
   } catch {
     return res.status(503).json({
       success: false,
-
       message:
         "Guest access could not be checked. Please retry.",
     });
