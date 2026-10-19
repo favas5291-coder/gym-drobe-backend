@@ -1,4 +1,9 @@
 const {
+  returnPolicyIssue,
+  requestTypes,
+} = require("../../utils/returnPolicy");
+
+const {
   customerFilter,
 } = require("../../utils/customerAccess");
 
@@ -390,6 +395,7 @@ function safeOrder(order) {
       returnsEligible: item.returnsEligible,
       returnConditions: item.returnConditions,
       returnWindowDays: item.returnWindowDays,
+      returnRequestTypes: item.returnRequestTypes,
 
       ...publicKitItemFields(item),
     })),
@@ -952,41 +958,23 @@ function deliveryTime(order) {
   return time;
 }
 
-function validateEligibility(order, rows) {
+function validateEligibility(order, rows, type) {
   const delivered = deliveryTime(order);
 
   for (const row of rows) {
     const item = order.items[row.index];
-    const days = item.returnWindowDays ?? 7;
 
-    if (
-      !Number.isInteger(days) ||
-      days < 1 ||
-      days > 7
-    ) {
+    const issue = returnPolicyIssue(
+      item,
+      type,
+      delivered,
+    );
+
+    if (issue) {
       throw problem(
         409,
-        `${item.name}: the return window needs review.`,
-        "RETURN_POLICY_UNCONFIRMED",
-      );
-    }
-
-    if (item.returnsEligible === "no") {
-      throw problem(
-        409,
-        `${item.name}: this purchase is not eligible for a standard return or exchange. Contact support for help.`,
-        "ITEM_NOT_RETURNABLE",
-      );
-    }
-
-    if (
-      Date.now() >
-      delivered + days * 86400000
-    ) {
-      throw problem(
-        409,
-        `${item.name}: the ${days}-day request window has ended. Contact support for help.`,
-        "RETURN_WINDOW_ENDED",
+        `${item.name}: ${issue.message}`,
+        issue.code,
       );
     }
   }
@@ -1793,7 +1781,7 @@ const requestReturn = handler(
           seen.add(index);
         }
 
-        validateEligibility(order, rows);
+        validateEligibility(order, rows, type);
 
         // Validate combined replacement quantities
         // without saving or reserving stock yet.
@@ -2664,6 +2652,21 @@ const reviewReturnRequest = handler(
               409,
               "A purchased item has an unconfirmed or ineligible return policy. Resolve it with support before approval.",
               "RETURN_POLICY_UNCONFIRMED",
+            );
+          }
+
+          if (
+            rows.some(
+              (row) =>
+                !requestTypes(
+                  order.items[row.index],
+                ).includes(type),
+            )
+          ) {
+            throw problem(
+              409,
+              "The purchased policy does not support this request type. Contact support.",
+              "RETURN_TYPE_NOT_ALLOWED",
             );
           }
 

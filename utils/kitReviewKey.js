@@ -43,6 +43,7 @@ function kitReviewKey(quote, pincode) {
 
         item.returnConditions || "",
         item.returnWindowDays,
+        item.returnRequestTypes,
       ],
     ),
 

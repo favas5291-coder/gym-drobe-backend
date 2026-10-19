@@ -15,6 +15,15 @@ const {
 } = require("../../utils/productVideo");
 
 const Product = require("../../models/Product");
+
+const {
+  validRequestTypes,
+} = require("../../utils/returnPolicy");
+
+const {
+  FREE_SHIPPING_LIMIT,
+} = require("../../utils/orderPricing");
+
 const Supplier = require("../../models/Supplier");
 
 const {
@@ -81,6 +90,7 @@ const DISPATCH_METHODS = [
 
 function httpError(status, message, code) {
   const error = new Error(message);
+
   error.status = status;
 
   if (code) {
@@ -223,6 +233,7 @@ function array(
       }
 
       seen.add(key);
+
       return true;
     });
 }
@@ -475,11 +486,21 @@ function normalizeDelivery(value) {
   }
 
   if (own(value, "freeDeliveryAbove")) {
-    result.freeDeliveryAbove = number(
+    const threshold = number(
       value.freeDeliveryAbove,
       "free delivery threshold",
       100000000
     );
+
+    if (threshold !== FREE_SHIPPING_LIMIT) {
+      throw httpError(
+        400,
+        `Free standard shipping starts at ₹${FREE_SHIPPING_LIMIT} after coupons. This is a store-wide checkout rule.`
+      );
+    }
+
+    result.freeDeliveryAbove =
+      FREE_SHIPPING_LIMIT;
   }
 
   for (const key of [
@@ -815,6 +836,25 @@ function normalizePayload(body) {
     );
   }
 
+  if (own(body, "returnRequestTypes")) {
+    const types = body.returnRequestTypes;
+
+    if (
+      !Array.isArray(types) ||
+      (
+        types.length !== 0 &&
+        !validRequestTypes(types)
+      )
+    ) {
+      throw httpError(
+        400,
+        "Choose supported return or exchange actions without duplicates."
+      );
+    }
+
+    result.returnRequestTypes = [...types];
+  }
+
   if (own(body, "returnWindowDays")) {
     result.returnWindowDays = number(
       body.returnWindowDays,
@@ -870,8 +910,10 @@ function normalizePayload(body) {
 
   const normalizers = {
     variants: normalizeVariants,
+
     specifications:
       normalizeSpecifications,
+
     delivery: normalizeDelivery,
     fulfillment: normalizeFulfillment,
     kitSettings: normalizeKitSettings,
@@ -935,6 +977,7 @@ function ensureAdmin(req, res) {
   if (!req.user) {
     res.status(401).json({
       success: false,
+
       message:
         "Please sign in with an admin account.",
     });
@@ -948,6 +991,7 @@ function ensureAdmin(req, res) {
   ) {
     res.status(403).json({
       success: false,
+
       message:
         "Admin access is required.",
     });
@@ -1011,6 +1055,7 @@ function sendError(
   if (error.name === "CastError") {
     return res.status(400).json({
       success: false,
+
       message:
         "A product value is invalid.",
     });
@@ -1065,6 +1110,11 @@ function serializeProduct(
       data.productCode ||
       `GD-${String(data._id).toUpperCase()}`;
   }
+
+  data.delivery = {
+    ...(data.delivery || {}),
+    freeDeliveryAbove: FREE_SHIPPING_LIMIT,
+  };
 
   data.videoUrl =
     productVideo(data.videoUrl)?.url ||
@@ -1830,6 +1880,7 @@ async function getAdminProductOptions(
           $group: {
             _id: {
               category: "$category",
+
               subcategory:
                 "$subcategory",
             },

@@ -41,7 +41,10 @@ const mongoose = require("mongoose");
 
 const Order = require("../../models/Order");
 const Product = require("../../models/Product");
-const PaymentAttempt = require("../../models/PaymentAttempt");
+
+const PaymentAttempt = require(
+  "../../models/PaymentAttempt"
+);
 
 const {
   getRazorpayClient,
@@ -490,6 +493,7 @@ function safeOrder(order) {
       returnsEligible: item.returnsEligible,
       returnConditions: item.returnConditions,
       returnWindowDays: item.returnWindowDays,
+      returnRequestTypes: item.returnRequestTypes,
 
       ...publicKitItemFields(item),
     })),
@@ -943,6 +947,11 @@ async function snapshot(body) {
         selectedSize: size,
         selectedColor: color,
         returnPolicy: product.returnPolicy || "",
+
+        returnRequestTypes:
+          Array.isArray(product.returnRequestTypes)
+            ? [...product.returnRequestTypes]
+            : undefined,
 
         returnsEligible: ["yes", "no"].includes(
           product.returnsEligible,

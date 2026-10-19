@@ -9,6 +9,10 @@ const {
 const mongoose = require("mongoose");
 
 const {
+  validRequestTypes,
+} = require("../utils/returnPolicy");
+
+const {
   normalizeProductVideo,
 } = require("../utils/productVideo");
 
@@ -950,6 +954,27 @@ const productSchema = new mongoose.Schema(
       default: "unconfirmed",
     },
 
+    returnRequestTypes: {
+      type: [
+        {
+          type: String,
+          enum: ["return", "exchange"],
+        },
+      ],
+
+      default: undefined,
+
+      validate: {
+        validator: (value) =>
+          value == null ||
+          value.length === 0 ||
+          validRequestTypes(value),
+
+        message:
+          "Choose each supported return or exchange action once.",
+      },
+    },
+
     returnConditions: {
       type: String,
       default: "",
@@ -1017,7 +1042,9 @@ productSchema.pre(
         this.isNew ||
         this.isModified("returnsEligible") ||
         this.isModified("returnPolicy") ||
-        this.isModified("returnConditions")
+        this.isModified("returnConditions") ||
+        this.isModified("returnWindowDays") ||
+        this.isModified("returnRequestTypes")
       ) &&
       !clean(this.returnPolicy) &&
       !clean(this.returnConditions)
@@ -1025,6 +1052,26 @@ productSchema.pre(
       this.invalidate(
         "returnConditions",
         "Record the actual return conditions before marking this product returnable."
+      );
+    }
+
+    if (
+      this.returnsEligible === "yes" &&
+      (
+        this.isNew ||
+        [
+          "returnsEligible",
+          "returnPolicy",
+          "returnConditions",
+          "returnWindowDays",
+          "returnRequestTypes",
+        ].some((key) => this.isModified(key))
+      ) &&
+      !validRequestTypes(this.returnRequestTypes)
+    ) {
+      this.invalidate(
+        "returnRequestTypes",
+        "Confirm whether this product supports returns, exchanges, or both."
       );
     }
 

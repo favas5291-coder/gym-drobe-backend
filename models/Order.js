@@ -366,6 +366,12 @@ const orderItemSchema = new mongoose.Schema(
       default: "unconfirmed",
     },
 
+    returnRequestTypes: {
+      type: [{ type: String, enum: ["return", "exchange"] }],
+      default: undefined,
+      immutable: true,
+    },
+
     returnConditions: {
       type: String,
       default: "",

@@ -196,6 +196,11 @@ function snapshotItem(
 
     returnPolicy: product.returnPolicy || "",
 
+    returnRequestTypes:
+      Array.isArray(product.returnRequestTypes)
+        ? [...product.returnRequestTypes]
+        : undefined,
+
     returnsEligible: ["yes", "no"].includes(
       product.returnsEligible,
     )
@@ -473,6 +478,7 @@ function buildKitCheckoutPricing({
 
   const rows = [];
   const kitSnapshots = [];
+
   let couponBlocked = false;
 
   for (const entry of order) {
