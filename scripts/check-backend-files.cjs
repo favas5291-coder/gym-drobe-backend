@@ -1,6 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const {
+  spawnSync,
+} = require("node:child_process");
+
 const root = process.cwd();
 const files = [];
 const missing = [];
@@ -67,6 +71,37 @@ for (const filename of files) {
     "utf8",
   );
 
+  const relative = path.relative(
+    root,
+    filename,
+  );
+
+  if (!source.trim()) {
+    missing.push(
+      `${relative} -> file is empty`,
+    );
+
+    continue;
+  }
+
+  const syntax = spawnSync(
+    process.execPath,
+    ["--check", filename],
+    {
+      encoding: "utf8",
+      timeout: 10000,
+    },
+  );
+
+  if (
+    syntax.error ||
+    syntax.status !== 0
+  ) {
+    missing.push(
+      `${relative} -> JavaScript syntax is invalid; run node --check on this file`,
+    );
+  }
+
   const imports = source.matchAll(
     /\brequire\s*\(\s*["'](\.[^"']+)["']\s*\)/g,
   );
@@ -81,7 +116,7 @@ for (const filename of files) {
       );
     } catch {
       missing.push(
-        `${path.relative(root, filename)} -> ${match[1]}`,
+        `${relative} -> ${match[1]}`,
       );
     }
   }
@@ -89,7 +124,7 @@ for (const filename of files) {
 
 if (missing.length) {
   console.error(
-    "Missing local imports:",
+    "Backend file checks failed:",
   );
 
   for (
@@ -102,7 +137,7 @@ if (missing.length) {
   process.exitCode = 1;
 } else {
   console.log(
-    `Checked ${files.length} backend files. No missing local imports found.`,
+    `Checked ${files.length} backend files. No empty files, syntax errors or missing local imports found.`,
   );
 
   console.log(
