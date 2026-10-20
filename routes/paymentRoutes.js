@@ -1,10 +1,21 @@
 const express = require("express");
 
 const {
+  protect,
+  adminOnly,
+} = require("../middleware/authMiddleware");
+
+const {
   getCheckoutQuote,
   createRazorpayOrder,
   verifyRazorpayPayment,
 } = require("../middleware/controllers/paymentController");
+
+const {
+  checkCustomerPayment,
+  checkAdminPayment,
+  paymentRecoveryRateLimit,
+} = require("../middleware/controllers/paymentRecoveryController");
 
 const {
   customerAccess,
@@ -21,6 +32,28 @@ router.use((req, res, next) => {
   next();
 });
 
+// Recover an existing customer's payment.
+// Authentication and ownership checks are required.
+// This does not create another payment.
+router.post(
+  "/razorpay/check",
+  customerAccess,
+  paymentRecoveryRateLimit,
+  checkCustomerPayment,
+);
+
+// Allow authenticated admins to check an existing order.
+// Accepts its GymDrobe order number or MongoDB ID.
+router.post(
+  "/admin/orders/:id/check",
+  protect,
+  adminOnly,
+  paymentRecoveryRateLimit,
+  checkAdminPayment,
+);
+
+// Keep payment-status polling separate from the
+// checkout and payment-creation quota.
 router.use(checkoutRateLimit);
 
 // POST /api/payments/guest-session
