@@ -1,6 +1,7 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const mongoose = require("mongoose");
 
 dotenv.config();
 
@@ -29,19 +30,43 @@ const shippingProfileRoutes = require(
   "./routes/shippingProfileRoutes",
 );
 
+const packagePlanRoutes = require(
+  "./routes/packagePlanRoutes",
+);
+
+const marketingRoutes = require(
+  "./routes/marketingRoutes",
+);
+
 const SupportTicket = require("./models/SupportTicket");
 const Supplier = require("./models/Supplier");
 const KitTemplate = require("./models/KitTemplate");
 const PackingLocation = require("./models/PackingLocation");
 const ShippingProfile = require("./models/ShippingProfile");
 const PackagePlan = require("./models/PackagePlan");
-const packagePlanRoutes = require("./routes/packagePlanRoutes");
+
+const {
+  Config: MarketingConfig,
+  Consent: MarketingConsent,
+  Event: MarketingEvent,
+  Checkpoint: MarketingCheckpoint,
+  FeedChunk: MarketingFeedChunk,
+} = require("./models/MarketingStore");
+
+const {
+  DEFAULTS: MARKETING_DEFAULTS,
+} = require("./utils/marketing/config");
+
+const {
+  startMarketingWorker,
+  stopMarketingWorker,
+} = require("./utils/marketing/worker");
 
 const app = express();
 
 app.use(cors());
 
-// Razorpay signature verification requires the raw body.
+// Razorpay signature verification requires the exact raw body.
 // Keep this before express.json().
 app.use(
   "/api/payment-webhooks",
@@ -86,6 +111,8 @@ app.use(
   shippingProfileRoutes,
 );
 
+app.use("/api/marketing", marketingRoutes);
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -118,30 +145,228 @@ app.use((error, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-async function startServer() {
+let server = null;
+let startup = null;
+let stopping = null;
+let shuttingDown = false;
+let marketingRetry = null;
+
+async function initializeMarketing(attempt = 1) {
+  if (shuttingDown) return;
+
   try {
-    await connectDB();
-
-    await SupportTicket.createIndexes();
-    await Supplier.createIndexes();
-    await KitTemplate.createIndexes();
-    await PackingLocation.createIndexes();
-    await ShippingProfile.createIndexes();
-    await PackagePlan.createIndexes();
-
-    app.listen(PORT, () => {
-      console.log(
-        `GymDrobe server running on http://localhost:${PORT}`,
-      );
-    });
-  } catch (error) {
-    console.error(
-      "Server startup failed:",
-      error.message,
+    await Promise.all(
+      [
+        MarketingConfig,
+        MarketingConsent,
+        MarketingEvent,
+        MarketingCheckpoint,
+        MarketingFeedChunk,
+      ].map((model) =>
+        model.createIndexes({ maxTimeMS: 10000 }),
+      ),
     );
 
-    process.exit(1);
+    if (shuttingDown) return;
+
+    // Insert disabled defaults only when no configuration exists.
+    // Preserve settings previously saved by an admin.
+    try {
+      await MarketingConfig.updateOne(
+        { _id: "meta" },
+        {
+          $setOnInsert: {
+            ...MARKETING_DEFAULTS,
+            allowedEvents: [],
+          },
+          $set: {
+            lastWorkerError: "",
+          },
+        },
+        {
+          upsert: true,
+          runValidators: true,
+          maxTimeMS: 2000,
+        },
+      );
+    } catch (error) {
+      // Another instance may have inserted the configuration.
+      if (error.code !== 11000) throw error;
+    }
+
+    if (!shuttingDown && server?.listening) {
+      startMarketingWorker();
+    }
+  } catch {
+    // Optional marketing setup must not stop shopping.
+    // Do not log credentials, event payloads or database messages.
+    console.error(
+      "Marketing setup paused. Shopping remains available.",
+    );
+
+    if (
+      !shuttingDown &&
+      MarketingConfig.db.readyState === 1
+    ) {
+      await MarketingConfig.updateOne(
+        { _id: "meta" },
+        {
+          $set: {
+            lastWorkerError:
+              "MARKETING_WORKER_UNAVAILABLE",
+          },
+        },
+        {
+          maxTimeMS: 2000,
+        },
+      ).catch(() => {});
+    }
+
+    // Retry temporary setup failures at most twice.
+    if (!shuttingDown && attempt < 3) {
+      marketingRetry = setTimeout(() => {
+        marketingRetry = null;
+        void initializeMarketing(attempt + 1);
+      }, 60000);
+
+      marketingRetry.unref?.();
+    }
   }
 }
 
-startServer();
+async function boot() {
+  await connectDB();
+
+  if (shuttingDown) {
+    throw new Error("SERVER_STOPPING");
+  }
+
+  await SupportTicket.createIndexes();
+  await Supplier.createIndexes();
+  await KitTemplate.createIndexes();
+  await PackingLocation.createIndexes();
+  await ShippingProfile.createIndexes();
+  await PackagePlan.createIndexes();
+
+  if (shuttingDown) {
+    throw new Error("SERVER_STOPPING");
+  }
+
+  await new Promise((resolve, reject) => {
+    server = app.listen(PORT);
+
+    const onError = (error) => {
+      server.off("listening", onReady);
+      reject(error);
+    };
+
+    const onReady = () => {
+      server.off("error", onError);
+      resolve();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onReady);
+  });
+
+  console.log(
+    `GymDrobe server running on http://localhost:${PORT}`,
+  );
+
+  // Serve shopping first. Start marketing after its indexes are ready.
+  void initializeMarketing();
+
+  return server;
+}
+
+function startServer() {
+  if (shuttingDown) {
+    return Promise.reject(
+      new Error("SERVER_STOPPING"),
+    );
+  }
+
+  if (!startup) {
+    startup = boot();
+  }
+
+  return startup;
+}
+
+function shutdown() {
+  if (stopping) return stopping;
+
+  shuttingDown = true;
+
+  if (marketingRetry) {
+    clearTimeout(marketingRetry);
+    marketingRetry = null;
+  }
+
+  stopMarketingWorker();
+
+  stopping = (async () => {
+    const deadline = setTimeout(() => {
+      server?.closeAllConnections?.();
+    }, 25000);
+
+    deadline.unref?.();
+
+    try {
+      // Finish pending startup before disconnecting MongoDB.
+      // boot() checks shuttingDown before opening the listener.
+      await startup?.catch(() => {});
+
+      if (server?.listening) {
+        await new Promise((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+    } finally {
+      try {
+        await mongoose.disconnect();
+      } finally {
+        clearTimeout(deadline);
+      }
+    }
+  })();
+
+  return stopping;
+}
+
+if (require.main === module) {
+  const stop = () => {
+    void shutdown().catch(() => {
+      console.error(
+        "Server shutdown could not finish cleanly.",
+      );
+
+      process.exitCode = 1;
+    });
+  };
+
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+
+  startServer().catch(async () => {
+    console.error(
+      "Server startup failed. Check database connectivity, required indexes and the configured port.",
+    );
+
+    process.exitCode = 1;
+
+    await shutdown().catch(() => {});
+  });
+}
+
+module.exports = {
+  app,
+  startServer,
+  shutdown,
+};
