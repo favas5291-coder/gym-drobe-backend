@@ -28,29 +28,40 @@ const COUPONS = Object.freeze({
 // Convert a value into a finite number.
 function number(value, fallback = 0) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : fallback;
 }
 
 // Round monetary amounts to two decimal places.
 function roundMoney(value) {
   return (
-    Math.round((number(value) + Number.EPSILON) * 100) / 100
+    Math.round(
+      (number(value) + Number.EPSILON) * 100,
+    ) / 100
   );
 }
 
 // Product prices use whole rupees, matching the frontend.
 function getOriginalPrice(product = {}) {
-  return Math.max(0, Math.round(number(product?.price)));
+  return Math.max(
+    0,
+    Math.round(number(product?.price)),
+  );
 }
 
 function getDiscountPercentage(product = {}) {
   return Math.min(
     100,
-    Math.max(0, number(product?.discount))
+    Math.max(
+      0,
+      number(product?.discount),
+    ),
   );
 }
 
-// Keep this export for existing backend imports.
+// Preserve compatibility with existing backend imports.
 function getDiscountPercent(product = {}) {
   return getDiscountPercentage(product);
 }
@@ -58,31 +69,41 @@ function getDiscountPercent(product = {}) {
 function getDiscountedPrice(product = {}) {
   return Math.round(
     getOriginalPrice(product) *
-      (1 - getDiscountPercentage(product) / 100)
+      (
+        1 -
+        getDiscountPercentage(product) / 100
+      ),
   );
 }
 
-// Only accept coupon codes defined by the server.
+// Accept only coupon codes defined by the server.
 function resolveCoupon(coupon) {
   const code = String(
     typeof coupon === "string"
       ? coupon
-      : coupon?.code || ""
+      : coupon?.code || "",
   )
     .trim()
     .toUpperCase();
 
-  return Object.prototype.hasOwnProperty.call(COUPONS, code)
+  return Object.prototype.hasOwnProperty.call(
+    COUPONS,
+    code,
+  )
     ? COUPONS[code]
     : null;
 }
 
 function calculateSubtotal(cart = []) {
-  const items = Array.isArray(cart) ? cart : [];
+  const items = Array.isArray(cart)
+    ? cart
+    : [];
 
   return roundMoney(
     items.reduce((sum, item) => {
-      const quantity = number(item?.quantity);
+      const quantity = number(
+        item?.quantity,
+      );
 
       if (
         !Number.isSafeInteger(quantity) ||
@@ -93,17 +114,31 @@ function calculateSubtotal(cart = []) {
 
       return (
         sum +
-        Math.max(0, number(item?.price)) * quantity
+        Math.max(
+          0,
+          number(item?.price),
+        ) *
+          quantity
       );
-    }, 0)
+    }, 0),
   );
 }
 
-function calculateCouponDiscount(subtotal, coupon) {
+function calculateCouponDiscount(
+  subtotal,
+  coupon,
+) {
   const valid = resolveCoupon(coupon);
-  const amount = Math.max(0, number(subtotal));
 
-  if (!valid || amount < valid.minimum) {
+  const amount = Math.max(
+    0,
+    number(subtotal),
+  );
+
+  if (
+    !valid ||
+    amount < valid.minimum
+  ) {
     return 0;
   }
 
@@ -112,18 +147,26 @@ function calculateCouponDiscount(subtotal, coupon) {
       ? valid.value
       : (amount * valid.value) / 100;
 
-  return roundMoney(Math.min(amount, discount));
+  return roundMoney(
+    Math.min(
+      amount,
+      discount,
+    ),
+  );
 }
 
 function calculateShipping(
   amountAfterCoupon,
-  deliveryMethod = "standard"
+  deliveryMethod = "standard",
 ) {
   if (deliveryMethod === "express") {
     return EXPRESS_SHIPPING;
   }
 
-  return number(amountAfterCoupon) >= FREE_SHIPPING_LIMIT
+  return (
+    number(amountAfterCoupon) >=
+    FREE_SHIPPING_LIMIT
+  )
     ? 0
     : STANDARD_SHIPPING;
 }
@@ -133,20 +176,30 @@ function calculateOrderPricing({
   coupon = null,
   deliveryMethod = "standard",
 } = {}) {
-  const subtotal = calculateSubtotal(cart);
+  const subtotal =
+    calculateSubtotal(cart);
 
-  const couponDiscount = calculateCouponDiscount(
-    subtotal,
-    coupon
-  );
+  const couponDiscount =
+    calculateCouponDiscount(
+      subtotal,
+      coupon,
+    );
 
-  const totalAfterCoupon = roundMoney(
-    Math.max(0, subtotal - couponDiscount)
-  );
+  const totalAfterCoupon =
+    roundMoney(
+      Math.max(
+        0,
+        subtotal - couponDiscount,
+      ),
+    );
 
   const shipping =
-    Array.isArray(cart) && cart.length > 0
-      ? calculateShipping(totalAfterCoupon, deliveryMethod)
+    Array.isArray(cart) &&
+    cart.length > 0
+      ? calculateShipping(
+          totalAfterCoupon,
+          deliveryMethod,
+        )
       : 0;
 
   return {
@@ -154,7 +207,10 @@ function calculateOrderPricing({
     couponDiscount,
     totalAfterCoupon,
     shipping,
-    finalTotal: roundMoney(totalAfterCoupon + shipping),
+
+    finalTotal: roundMoney(
+      totalAfterCoupon + shipping,
+    ),
   };
 }
 

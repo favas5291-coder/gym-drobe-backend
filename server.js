@@ -30,6 +30,10 @@ const shippingProfileRoutes = require(
   "./routes/shippingProfileRoutes",
 );
 
+const shippingSettingsRoutes = require(
+  "./routes/shippingSettingsRoutes",
+);
+
 const packagePlanRoutes = require(
   "./routes/packagePlanRoutes",
 );
@@ -43,6 +47,7 @@ const Supplier = require("./models/Supplier");
 const KitTemplate = require("./models/KitTemplate");
 const PackingLocation = require("./models/PackingLocation");
 const ShippingProfile = require("./models/ShippingProfile");
+const ShippingSettings = require("./models/ShippingSettings");
 const PackagePlan = require("./models/PackagePlan");
 
 const {
@@ -111,6 +116,11 @@ app.use(
   shippingProfileRoutes,
 );
 
+app.use(
+  "/api/shipping-settings",
+  shippingSettingsRoutes,
+);
+
 app.use("/api/marketing", marketingRoutes);
 
 app.use((req, res) => {
@@ -163,7 +173,9 @@ async function initializeMarketing(attempt = 1) {
         MarketingCheckpoint,
         MarketingFeedChunk,
       ].map((model) =>
-        model.createIndexes({ maxTimeMS: 10000 }),
+        model.createIndexes({
+          maxTimeMS: 10000,
+        }),
       ),
     );
 
@@ -173,12 +185,15 @@ async function initializeMarketing(attempt = 1) {
     // Preserve settings previously saved by an admin.
     try {
       await MarketingConfig.updateOne(
-        { _id: "meta" },
+        {
+          _id: "meta",
+        },
         {
           $setOnInsert: {
             ...MARKETING_DEFAULTS,
             allowedEvents: [],
           },
+
           $set: {
             lastWorkerError: "",
           },
@@ -191,10 +206,15 @@ async function initializeMarketing(attempt = 1) {
       );
     } catch (error) {
       // Another instance may have inserted the configuration.
-      if (error.code !== 11000) throw error;
+      if (error.code !== 11000) {
+        throw error;
+      }
     }
 
-    if (!shuttingDown && server?.listening) {
+    if (
+      !shuttingDown &&
+      server?.listening
+    ) {
       startMarketingWorker();
     }
   } catch {
@@ -209,7 +229,9 @@ async function initializeMarketing(attempt = 1) {
       MarketingConfig.db.readyState === 1
     ) {
       await MarketingConfig.updateOne(
-        { _id: "meta" },
+        {
+          _id: "meta",
+        },
         {
           $set: {
             lastWorkerError:
@@ -223,11 +245,20 @@ async function initializeMarketing(attempt = 1) {
     }
 
     // Retry temporary setup failures at most twice.
-    if (!shuttingDown && attempt < 3) {
-      marketingRetry = setTimeout(() => {
-        marketingRetry = null;
-        void initializeMarketing(attempt + 1);
-      }, 60000);
+    if (
+      !shuttingDown &&
+      attempt < 3
+    ) {
+      marketingRetry = setTimeout(
+        () => {
+          marketingRetry = null;
+
+          void initializeMarketing(
+            attempt + 1,
+          );
+        },
+        60000,
+      );
 
       marketingRetry.unref?.();
     }
@@ -238,7 +269,9 @@ async function boot() {
   await connectDB();
 
   if (shuttingDown) {
-    throw new Error("SERVER_STOPPING");
+    throw new Error(
+      "SERVER_STOPPING",
+    );
   }
 
   await SupportTicket.createIndexes();
@@ -246,28 +279,48 @@ async function boot() {
   await KitTemplate.createIndexes();
   await PackingLocation.createIndexes();
   await ShippingProfile.createIndexes();
+  await ShippingSettings.createIndexes();
   await PackagePlan.createIndexes();
 
   if (shuttingDown) {
-    throw new Error("SERVER_STOPPING");
+    throw new Error(
+      "SERVER_STOPPING",
+    );
   }
 
-  await new Promise((resolve, reject) => {
-    server = app.listen(PORT);
+  await new Promise(
+    (resolve, reject) => {
+      server = app.listen(PORT);
 
-    const onError = (error) => {
-      server.off("listening", onReady);
-      reject(error);
-    };
+      const onError = (error) => {
+        server.off(
+          "listening",
+          onReady,
+        );
 
-    const onReady = () => {
-      server.off("error", onError);
-      resolve();
-    };
+        reject(error);
+      };
 
-    server.once("error", onError);
-    server.once("listening", onReady);
-  });
+      const onReady = () => {
+        server.off(
+          "error",
+          onError,
+        );
+
+        resolve();
+      };
+
+      server.once(
+        "error",
+        onError,
+      );
+
+      server.once(
+        "listening",
+        onReady,
+      );
+    },
+  );
 
   console.log(
     `GymDrobe server running on http://localhost:${PORT}`,
@@ -282,7 +335,9 @@ async function boot() {
 function startServer() {
   if (shuttingDown) {
     return Promise.reject(
-      new Error("SERVER_STOPPING"),
+      new Error(
+        "SERVER_STOPPING",
+      ),
     );
   }
 
@@ -294,45 +349,61 @@ function startServer() {
 }
 
 function shutdown() {
-  if (stopping) return stopping;
+  if (stopping) {
+    return stopping;
+  }
 
   shuttingDown = true;
 
   if (marketingRetry) {
-    clearTimeout(marketingRetry);
+    clearTimeout(
+      marketingRetry,
+    );
+
     marketingRetry = null;
   }
 
   stopMarketingWorker();
 
   stopping = (async () => {
-    const deadline = setTimeout(() => {
-      server?.closeAllConnections?.();
-    }, 25000);
+    const deadline = setTimeout(
+      () => {
+        server?.closeAllConnections?.();
+      },
+      25000,
+    );
 
     deadline.unref?.();
 
     try {
       // Finish pending startup before disconnecting MongoDB.
       // boot() checks shuttingDown before opening the listener.
-      await startup?.catch(() => {});
+      await startup?.catch(
+        () => {},
+      );
 
       if (server?.listening) {
-        await new Promise((resolve, reject) => {
-          server.close((error) => {
-            if (error) {
-              reject(error);
-            } else {
-              resolve();
-            }
-          });
-        });
+        await new Promise(
+          (resolve, reject) => {
+            server.close(
+              (error) => {
+                if (error) {
+                  reject(error);
+                } else {
+                  resolve();
+                }
+              },
+            );
+          },
+        );
       }
     } finally {
       try {
         await mongoose.disconnect();
       } finally {
-        clearTimeout(deadline);
+        clearTimeout(
+          deadline,
+        );
       }
     }
   })();
@@ -340,29 +411,44 @@ function shutdown() {
   return stopping;
 }
 
-if (require.main === module) {
+if (
+  require.main === module
+) {
   const stop = () => {
-    void shutdown().catch(() => {
+    void shutdown().catch(
+      () => {
+        console.error(
+          "Server shutdown could not finish cleanly.",
+        );
+
+        process.exitCode = 1;
+      },
+    );
+  };
+
+  process.once(
+    "SIGTERM",
+    stop,
+  );
+
+  process.once(
+    "SIGINT",
+    stop,
+  );
+
+  startServer().catch(
+    async () => {
       console.error(
-        "Server shutdown could not finish cleanly.",
+        "Server startup failed. Check database connectivity, required indexes and the configured port.",
       );
 
       process.exitCode = 1;
-    });
-  };
 
-  process.once("SIGTERM", stop);
-  process.once("SIGINT", stop);
-
-  startServer().catch(async () => {
-    console.error(
-      "Server startup failed. Check database connectivity, required indexes and the configured port.",
-    );
-
-    process.exitCode = 1;
-
-    await shutdown().catch(() => {});
-  });
+      await shutdown().catch(
+        () => {},
+      );
+    },
+  );
 }
 
 module.exports = {

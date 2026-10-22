@@ -1,55 +1,23 @@
-const {
-  checkoutDelivery,
-} = require("../../utils/checkoutDelivery");
-
-const {
-  customerOwner,
-  customerFilter,
-} = require("../../utils/customerAccess");
-
-const {
-  selectedProductImage,
-} = require("../../utils/productImages");
-
-const {
-  kitReviewKey,
-} = require("../../utils/kitReviewKey");
-
-const {
-  loadCheckoutReview,
-} = require("../../utils/checkoutReview");
-
-const {
-  snapshotPurchasedShipping,
-} = require("../../utils/purchasedShipping");
-
-const {
-  initializeKitFulfillment,
-} = require("../../utils/kitFulfillmentProgress");
-
-const {
-  publicKitItemFields,
-  publicKitOrderFields,
-} = require("../../utils/publicKitOrder");
-
-const {
-  snapshotProductSourcing,
-} = require("../../utils/orderSourcing");
+const { checkoutDelivery } = require("../../utils/checkoutDelivery");
+const { customerOwner, customerFilter } = require("../../utils/customerAccess");
+const { selectedProductImage } = require("../../utils/productImages");
+const { kitReviewKey } = require("../../utils/kitReviewKey");
+const { loadCheckoutReview } = require("../../utils/checkoutReview");
+const { loadShippingSettings, priceCheckoutShipping } = require("../../utils/checkoutShipping");
+const { snapshotPurchasedShipping } = require("../../utils/purchasedShipping");
+const { initializeKitFulfillment } = require("../../utils/kitFulfillmentProgress");
+const { publicKitItemFields, publicKitOrderFields } = require("../../utils/publicKitOrder");
+const { snapshotProductSourcing } = require("../../utils/orderSourcing");
 
 const crypto = require("node:crypto");
+const { performance } = require("node:perf_hooks");
 const mongoose = require("mongoose");
 
 const Order = require("../../models/Order");
 const Product = require("../../models/Product");
+const PaymentAttempt = require("../../models/PaymentAttempt");
 
-const PaymentAttempt = require(
-  "../../models/PaymentAttempt"
-);
-
-const {
-  getRazorpayClient,
-  getRazorpayKeyId,
-} = require("../../config/razorpay");
+const { getRazorpayClient, getRazorpayKeyId } = require("../../config/razorpay");
 
 const {
   getDiscountedPrice,
@@ -78,12 +46,7 @@ const REFUNDS = [
   "refunded",
 ];
 
-function problem(
-  status,
-  message,
-  code = "PAYMENT_ERROR",
-  extras = {},
-) {
+function problem(status, message, code = "PAYMENT_ERROR", extras = {}) {
   return Object.assign(new Error(message), {
     status,
     code,
@@ -92,13 +55,7 @@ function problem(
   });
 }
 
-function text(
-  value,
-  name,
-  maximum,
-  minimum = 0,
-  multiline = false,
-) {
+function text(value, name, maximum, minimum = 0, multiline = false) {
   if (value == null && minimum === 0) {
     return "";
   }
@@ -203,13 +160,13 @@ function bodyOf(req) {
 }
 
 function configuration() {
-  const keyId = String(
-    getRazorpayKeyId() || "",
-  ).trim();
+  const keyId =
+    String(getRazorpayKeyId() || "").trim();
 
-  const secret = String(
-    process.env.RAZORPAY_KEY_SECRET || "",
-  ).trim();
+  const secret =
+    String(
+      process.env.RAZORPAY_KEY_SECRET || "",
+    ).trim();
 
   if (
     !/^rzp_(test|live)_[A-Za-z0-9]+$/.test(keyId) ||
@@ -229,7 +186,52 @@ function configuration() {
   };
 }
 
-async function gatewayCall(call) {
+function paymentTiming(res) {
+  const durations = new Map();
+
+  return async function measure(name, work) {
+    const started = performance.now();
+
+    try {
+      return await work();
+    } finally {
+      const elapsed = Math.max(
+        0,
+        performance.now() - started,
+      );
+
+      durations.set(
+        name,
+        (durations.get(name) || 0) + elapsed,
+      );
+
+      if (!res.headersSent) {
+        res.set(
+          "Server-Timing",
+          [...durations]
+            .map(
+              ([key, value]) =>
+                `${key};dur=${value.toFixed(2)}`,
+            )
+            .join(", "),
+        );
+      }
+    }
+  };
+}
+
+async function gatewayCall(
+  call,
+  measure,
+  name = "razorpay",
+) {
+  if (measure) {
+    return measure(
+      name,
+      () => gatewayCall(call),
+    );
+  }
+
   let timer;
 
   try {
@@ -244,7 +246,9 @@ async function gatewayCall(call) {
                 503,
                 "Payment confirmation timed out. Check My orders before trying another payment.",
                 "GATEWAY_TIMEOUT",
-                { verificationUncertain: true },
+                {
+                  verificationUncertain: true,
+                },
               ),
             ),
           20000,
@@ -257,7 +261,8 @@ async function gatewayCall(call) {
 }
 
 async function transaction(work) {
-  const session = await mongoose.startSession();
+  const session =
+    await mongoose.startSession();
 
   try {
     return await session.withTransaction(
@@ -269,9 +274,8 @@ async function transaction(work) {
 }
 
 function logFailure(error, stage) {
-  const reference = crypto
-    .randomBytes(8)
-    .toString("hex");
+  const reference =
+    crypto.randomBytes(8).toString("hex");
 
   const safe = (value) =>
     typeof value === "string" &&
@@ -279,17 +283,22 @@ function logFailure(error, stage) {
       ? value
       : "unknown";
 
-  console.error("GymDrobe payment error", {
-    reference,
-    stage,
-    name: safe(error?.name),
+  console.error(
+    "GymDrobe payment error",
+    {
+      reference,
+      stage,
+      name: safe(error?.name),
 
-    code: Number.isSafeInteger(error?.code)
-      ? error.code
-      : safe(error?.code),
+      code:
+        Number.isSafeInteger(error?.code)
+          ? error.code
+          : safe(error?.code),
 
-    databaseState: mongoose.connection.readyState,
-  });
+      databaseState:
+        mongoose.connection.readyState,
+    },
+  );
 
   return reference;
 }
@@ -301,14 +310,19 @@ function fail(
   stage = "payment-confirmation",
   captured = false,
 ) {
-  const reference = logFailure(error, stage);
-  const known = error?.gymdrobe === true;
+  const reference =
+    logFailure(error, stage);
 
-  let status = known ? error.status : 503;
+  const known =
+    error?.gymdrobe === true;
 
-  let code = known
-    ? error.code
-    : "PAYMENT_UNAVAILABLE";
+  let status =
+    known ? error.status : 503;
+
+  let code =
+    known
+      ? error.code
+      : "PAYMENT_UNAVAILABLE";
 
   let message = known
     ? error.message
@@ -316,14 +330,20 @@ function fail(
       ? "Payment confirmation was interrupted. Do not pay again; check My orders or contact support."
       : "Payment could not be started. Contact support with the error reference.";
 
-  if (!known && error?.name === "ValidationError") {
+  if (
+    !known &&
+    error?.name === "ValidationError"
+  ) {
     code = "ORDER_VALIDATION_FAILED";
 
     message =
       "Your order could not be saved. Contact support with the error reference.";
   }
 
-  if (!known && error?.code === 11000) {
+  if (
+    !known &&
+    error?.code === 11000
+  ) {
     status = 409;
     code = "ORDER_CONFLICT";
 
@@ -357,24 +377,29 @@ function fail(
     ...(
       (verification && !known) ||
       error?.verificationUncertain
-        ? { verificationUncertain: true }
+        ? {
+            verificationUncertain: true,
+          }
         : {}
     ),
   });
 }
 
 function advance(pricing) {
-  const total = cents(
-    pricing.finalTotal,
-    "Order total",
-  );
+  const total =
+    cents(
+      pricing.finalTotal,
+      "Order total",
+    );
 
-  const merchandise = cents(
-    pricing.totalAfterCoupon,
-    "Product total",
-  );
+  const merchandise =
+    cents(
+      pricing.totalAfterCoupon,
+      "Product total",
+    );
 
-  const amount = Math.round(merchandise / 10);
+  const amount =
+    Math.round(merchandise / 10);
 
   if (merchandise > total) {
     throw problem(
@@ -395,10 +420,11 @@ function payable(order) {
   const payment = order.payment;
   const method = payment?.method;
 
-  const total = cents(
-    order.pricing?.finalTotal,
-    "Order total",
-  );
+  const total =
+    cents(
+      order.pricing?.finalTotal,
+      "Order total",
+    );
 
   if (
     !payment ||
@@ -423,7 +449,9 @@ function payable(order) {
     method === "cod-partial" &&
     (
       amount !==
-        cents(advance(order.pricing).advanceAmount) ||
+        cents(
+          advance(order.pricing).advanceAmount,
+        ) ||
       payment.advancePercentage !== 10
     )
   ) {
@@ -434,7 +462,10 @@ function payable(order) {
     );
   }
 
-  if (amount < 100 || amount > total) {
+  if (
+    amount < 100 ||
+    amount > total
+  ) {
     throw problem(
       400,
       "The online amount must be at least ₹1.",
@@ -469,34 +500,38 @@ function safeOrder(order) {
         }
       : null,
 
-    isGuestOrder: Boolean(order.guestSession),
+    isGuestOrder:
+      Boolean(order.guestSession),
 
     customer: value.customer,
     shippingAddress: value.shippingAddress,
 
-    items: (value.items || []).map((item) => ({
-      id: String(item.product),
-      productId: String(item.product),
-      legacyId: item.legacyId,
-      slug: item.slug,
-      sku: item.sku,
-      name: item.name,
-      brand: item.brand,
-      image: item.image,
-      originalPrice: item.originalPrice,
-      price: item.price,
-      discount: item.discount,
-      quantity: item.quantity,
-      selectedSize: item.selectedSize,
-      selectedColor: item.selectedColor,
-      returnPolicy: item.returnPolicy,
-      returnsEligible: item.returnsEligible,
-      returnConditions: item.returnConditions,
-      returnWindowDays: item.returnWindowDays,
-      returnRequestTypes: item.returnRequestTypes,
+    items: (value.items || []).map(
+      (item) => ({
+        id: String(item.product),
+        productId: String(item.product),
+        legacyId: item.legacyId,
+        slug: item.slug,
+        sku: item.sku,
+        name: item.name,
+        brand: item.brand,
+        image: item.image,
+        originalPrice: item.originalPrice,
+        price: item.price,
+        discount: item.discount,
+        quantity: item.quantity,
+        selectedSize: item.selectedSize,
+        selectedColor: item.selectedColor,
+        returnPolicy: item.returnPolicy,
+        returnsEligible: item.returnsEligible,
+        returnConditions: item.returnConditions,
+        returnWindowDays: item.returnWindowDays,
+        returnRequestTypes:
+          item.returnRequestTypes,
 
-      ...publicKitItemFields(item),
-    })),
+        ...publicKitItemFields(item),
+      }),
+    ),
 
     ...publicKitOrderFields(value),
 
@@ -518,7 +553,8 @@ function safeOrder(order) {
       inventoryReserved:
         value.metadata?.inventoryReserved,
 
-      checkoutToken: value.checkoutToken,
+      checkoutToken:
+        value.checkoutToken,
     },
   };
 }
@@ -603,11 +639,14 @@ function address(value) {
     result.phone.startsWith("91") &&
     result.phone.length === 12
   ) {
-    result.phone = result.phone.slice(2);
+    result.phone =
+      result.phone.slice(2);
   }
 
   if (
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      result.email,
+    )
   ) {
     throw problem(
       400,
@@ -615,14 +654,18 @@ function address(value) {
     );
   }
 
-  if (!/^[6-9]\d{9}$/.test(result.phone)) {
+  if (
+    !/^[6-9]\d{9}$/.test(result.phone)
+  ) {
     throw problem(
       400,
       "Enter a valid 10-digit Indian mobile number.",
     );
   }
 
-  if (!/^[1-9]\d{5}$/.test(result.pincode)) {
+  if (
+    !/^[1-9]\d{5}$/.test(result.pincode)
+  ) {
     throw problem(
       400,
       "Enter a valid 6-digit pincode.",
@@ -636,9 +679,12 @@ function address(value) {
 }
 
 async function findProduct(id) {
-  if (mongoose.isObjectIdOrHexString(id)) {
-    const product = await Product.findById(id)
-      .select("+meeshoProductLink");
+  if (
+    mongoose.isObjectIdOrHexString(id)
+  ) {
+    const product =
+      await Product.findById(id)
+        .select("+meeshoProductLink");
 
     if (product) {
       return product;
@@ -649,9 +695,10 @@ async function findProduct(id) {
     /^\d+$/.test(id) &&
     Number.isSafeInteger(Number(id))
   ) {
-    const product = await Product.findOne({
-      legacyId: Number(id),
-    }).select("+meeshoProductLink");
+    const product =
+      await Product.findOne({
+        legacyId: Number(id),
+      }).select("+meeshoProductLink");
 
     if (product) {
       return product;
@@ -676,9 +723,10 @@ async function snapshot(body) {
     );
 
   if (hasKit) {
-    const destination = address(
-      body.shippingAddress,
-    );
+    const destination =
+      address(
+        body.shippingAddress,
+      );
 
     const {
       quote: reviewed,
@@ -697,7 +745,9 @@ async function snapshot(body) {
     if (
       body.expectedTotal != null &&
       cents(body.expectedTotal) !==
-        cents(reviewed.pricing.finalTotal)
+        cents(
+          reviewed.pricing.finalTotal,
+        )
     ) {
       throw problem(
         409,
@@ -723,24 +773,33 @@ async function snapshot(body) {
     }
 
     const sourceProducts = new Map(
-      products.map((product) => [
-        String(product._id || product.id),
-        product,
-      ]),
+      products.map(
+        (product) => [
+          String(
+            product._id || product.id,
+          ),
+          product,
+        ],
+      ),
     );
 
     return {
-      items: reviewed.items.map((item) => ({
-        ...item,
+      items: reviewed.items.map(
+        (item) => ({
+          ...item,
 
-        sourcing: snapshotProductSourcing(
-          sourceProducts.get(
-            String(item.product),
-          ),
-        ),
-      })),
+          sourcing:
+            snapshotProductSourcing(
+              sourceProducts.get(
+                String(item.product),
+              ),
+            ),
+        }),
+      ),
 
-      kitSnapshots: reviewed.kitSnapshots,
+      kitSnapshots:
+        reviewed.kitSnapshots,
+
       shippingSnapshot,
       coupon: reviewed.coupon,
       pricing: reviewed.pricing,
@@ -776,7 +835,9 @@ async function snapshot(body) {
     }
 
     const suppliedId =
-      raw.id ?? raw.productId ?? raw.product;
+      raw.id ??
+      raw.productId ??
+      raw.product;
 
     const id = text(
       typeof suppliedId === "number"
@@ -787,7 +848,8 @@ async function snapshot(body) {
       1,
     );
 
-    const quantity = Number(raw.quantity);
+    const quantity =
+      Number(raw.quantity);
 
     if (
       !["number", "string"].includes(
@@ -804,10 +866,12 @@ async function snapshot(body) {
       );
     }
 
-    let product = aliases.get(id);
+    let product =
+      aliases.get(id);
 
     if (!product) {
-      product = await findProduct(id);
+      product =
+        await findProduct(id);
 
       if (
         !product ||
@@ -820,7 +884,9 @@ async function snapshot(body) {
         );
       }
 
-      if (product.delivery?.available === false) {
+      if (
+        product.delivery?.available === false
+      ) {
         throw problem(
           409,
           `${product.name} is not available for delivery.`,
@@ -828,40 +894,55 @@ async function snapshot(body) {
         );
       }
 
-      const key = String(product._id);
+      const key =
+        String(product._id);
 
-      product = products.get(key) || product;
+      product =
+        products.get(key) || product;
 
-      products.set(key, product);
-      aliases.set(id, product);
+      products.set(
+        key,
+        product,
+      );
+
+      aliases.set(
+        id,
+        product,
+      );
     }
 
-    const size = product.sizes?.length
-      ? text(
-          raw.selectedSize,
-          "Product size",
-          50,
-          1,
-        )
-      : null;
+    const size =
+      product.sizes?.length
+        ? text(
+            raw.selectedSize,
+            "Product size",
+            50,
+            1,
+          )
+        : null;
 
-    const color = product.colors?.length
-      ? text(
-          raw.selectedColor,
-          "Product colour",
-          50,
-          1,
-        )
-      : null;
+    const color =
+      product.colors?.length
+        ? text(
+            raw.selectedColor,
+            "Product colour",
+            50,
+            1,
+          )
+        : null;
 
     if (
       (
         size &&
-        !product.sizes.map(String).includes(size)
+        !product.sizes
+          .map(String)
+          .includes(size)
       ) ||
       (
         color &&
-        !product.colors.map(String).includes(color)
+        !product.colors
+          .map(String)
+          .includes(color)
       )
     ) {
       throw problem(
@@ -872,8 +953,11 @@ async function snapshot(body) {
     }
 
     if (
-      getVariantStock(product, size, color) <
-      quantity
+      getVariantStock(
+        product,
+        size,
+        color,
+      ) < quantity
     ) {
       throw problem(
         409,
@@ -884,13 +968,21 @@ async function snapshot(body) {
 
     if (
       product.price == null ||
-      !Number.isFinite(Number(product.price)) ||
+      !Number.isFinite(
+        Number(product.price),
+      ) ||
       Number(product.price) < 0 ||
       !Number.isFinite(
-        Number(product.discount ?? 0),
+        Number(
+          product.discount ?? 0,
+        ),
       ) ||
-      Number(product.discount ?? 0) < 0 ||
-      Number(product.discount ?? 0) > 100
+      Number(
+        product.discount ?? 0,
+      ) < 0 ||
+      Number(
+        product.discount ?? 0,
+      ) > 100
     ) {
       throw problem(
         409,
@@ -899,13 +991,15 @@ async function snapshot(body) {
       );
     }
 
-    const key = JSON.stringify([
-      String(product._id),
-      size,
-      color,
-    ]);
+    const key =
+      JSON.stringify([
+        String(product._id),
+        size,
+        color,
+      ]);
 
-    const existing = rows.get(key);
+    const existing =
+      rows.get(key);
 
     if (
       existing &&
@@ -918,13 +1012,21 @@ async function snapshot(body) {
     }
 
     if (existing) {
-      existing.quantity += quantity;
+      existing.quantity +=
+        quantity;
     } else {
       rows.set(key, {
-        sourcing: snapshotProductSourcing(product),
+        sourcing:
+          snapshotProductSourcing(
+            product,
+          ),
+
         product: product._id,
-        legacyId: product.legacyId ?? null,
-        slug: product.slug || "",
+        legacyId:
+          product.legacyId ?? null,
+
+        slug:
+          product.slug || "",
 
         sku: getVariantSku(
           product,
@@ -933,31 +1035,51 @@ async function snapshot(body) {
         ),
 
         name: product.name,
-        brand: product.brand || "",
+        brand:
+          product.brand || "",
 
-        image: selectedProductImage(
-          product,
-          color,
+        image:
+          selectedProductImage(
+            product,
+            color,
+          ),
+
+        originalPrice:
+          getOriginalPrice(
+            product,
+          ),
+
+        price:
+          getDiscountedPrice(
+            product,
+          ),
+
+        discount: Number(
+          product.discount || 0,
         ),
 
-        originalPrice: getOriginalPrice(product),
-        price: getDiscountedPrice(product),
-        discount: Number(product.discount || 0),
         quantity,
         selectedSize: size,
         selectedColor: color,
-        returnPolicy: product.returnPolicy || "",
+
+        returnPolicy:
+          product.returnPolicy || "",
 
         returnRequestTypes:
-          Array.isArray(product.returnRequestTypes)
-            ? [...product.returnRequestTypes]
+          Array.isArray(
+            product.returnRequestTypes,
+          )
+            ? [
+                ...product.returnRequestTypes,
+              ]
             : undefined,
 
-        returnsEligible: ["yes", "no"].includes(
-          product.returnsEligible,
-        )
-          ? product.returnsEligible
-          : "unconfirmed",
+        returnsEligible:
+          ["yes", "no"].includes(
+            product.returnsEligible,
+          )
+            ? product.returnsEligible
+            : "unconfirmed",
 
         returnConditions:
           product.returnConditions || "",
@@ -984,7 +1106,8 @@ async function snapshot(body) {
   }
 
   const method =
-    body.deliveryMethod ?? "standard";
+    body.deliveryMethod ??
+    "standard";
 
   if (
     !["standard", "express"].includes(method)
@@ -1002,15 +1125,22 @@ async function snapshot(body) {
         ? body.coupon
         : body.coupon.code;
 
-  const couponCode = text(
-    code,
-    "Coupon code",
-    100,
-  );
+  const couponCode =
+    text(
+      code,
+      "Coupon code",
+      100,
+    );
 
-  let coupon = resolveCoupon(couponCode);
+  let coupon =
+    resolveCoupon(
+      couponCode,
+    );
 
-  if (couponCode && !coupon) {
+  if (
+    couponCode &&
+    !coupon
+  ) {
     throw problem(
       400,
       "This coupon is unavailable. Remove it or choose another code.",
@@ -1018,22 +1148,48 @@ async function snapshot(body) {
     );
   }
 
-  const items = [...rows.values()];
+  const items =
+    [...rows.values()];
 
-  const pricing = calculateOrderPricing({
-    cart: items,
-    coupon,
-    deliveryMethod: method,
-  });
+  const basePricing =
+    calculateOrderPricing({
+      cart: items,
+      coupon,
+      deliveryMethod: method,
+    });
 
-  for (const key of [
-    "subtotal",
-    "couponDiscount",
-    "totalAfterCoupon",
-    "shipping",
-    "finalTotal",
-  ]) {
-    cents(pricing[key]);
+  const { pricing } =
+    priceCheckoutShipping({
+      settings:
+        await loadShippingSettings(),
+
+      pricing: basePricing,
+      items,
+      products:
+        [...products.values()],
+
+      deliveryMethod: method,
+
+      paymentMethod:
+        body.paymentMethod ??
+        "razorpay",
+
+      pincode:
+        body.shippingAddress?.pincode,
+    });
+
+  for (
+    const key of [
+      "subtotal",
+      "couponDiscount",
+      "totalAfterCoupon",
+      "shipping",
+      "finalTotal",
+    ]
+  ) {
+    cents(
+      pricing[key],
+    );
   }
 
   if (
@@ -1056,7 +1212,8 @@ async function snapshot(body) {
     cents(
       body.expectedTotal,
       "Displayed total",
-    ) !== cents(pricing.finalTotal)
+    ) !==
+      cents(pricing.finalTotal)
   ) {
     throw problem(
       409,
@@ -1065,7 +1222,9 @@ async function snapshot(body) {
     );
   }
 
-  if (pricing.couponDiscount === 0) {
+  if (
+    pricing.couponDiscount === 0
+  ) {
     coupon = null;
   }
 
@@ -1075,28 +1234,32 @@ async function snapshot(body) {
     pricing,
     method,
 
-    deliveryReview: checkoutDelivery(
-      [...products.values()],
-      items,
-      body.shippingAddress?.pincode,
-    ),
+    deliveryReview:
+      checkoutDelivery(
+        [...products.values()],
+        items,
+        body.shippingAddress?.pincode,
+      ),
   };
 }
 
 function quote(order) {
   return JSON.stringify({
     items: (order.items || [])
-      .map((item) => [
-        String(item.product),
-        item.selectedSize ?? null,
-        item.selectedColor ?? null,
-        item.quantity,
-        cents(item.price),
-      ])
-      .sort((a, b) =>
-        JSON.stringify(a).localeCompare(
-          JSON.stringify(b),
-        ),
+      .map(
+        (item) => [
+          String(item.product),
+          item.selectedSize ?? null,
+          item.selectedColor ?? null,
+          item.quantity,
+          cents(item.price),
+        ],
+      )
+      .sort(
+        (a, b) =>
+          JSON.stringify(a).localeCompare(
+            JSON.stringify(b),
+          ),
       ),
 
     pricing: [
@@ -1105,97 +1268,116 @@ function quote(order) {
       "totalAfterCoupon",
       "shipping",
       "finalTotal",
-    ].map((key) =>
-      cents(order.pricing[key]),
+    ].map(
+      (key) =>
+        cents(
+          order.pricing[key],
+        ),
     ),
 
-    ...(order.kitSnapshots?.length
-      ? {
-          kitPurchase: {
-            items: (order.items || []).map(
-              (item) => [
-                String(item.product),
-                item.kit?.groupId || null,
-                item.kit?.slotKey || null,
-                item.kit?.role || null,
+    ...(
+      order.kitSnapshots?.length
+        ? {
+            kitPurchase: {
+              items:
+                (order.items || []).map(
+                  (item) => [
+                    String(item.product),
+                    item.kit?.groupId || null,
+                    item.kit?.slotKey || null,
+                    item.kit?.role || null,
 
-                item.priceAllocation
-                  ? [
-                      item.priceAllocation.quantity,
-                      item.priceAllocation.lineSubtotalPaise,
-                      item.priceAllocation.kitDiscountPaise,
-                      item.priceAllocation.couponDiscountPaise,
-                      item.priceAllocation.linePaidPaise,
-                      item.priceAllocation.unitBasePaise,
-                      item.priceAllocation.extraPaiseUnits,
-                    ]
-                  : null,
-              ],
-            ),
+                    item.priceAllocation
+                      ? [
+                          item.priceAllocation.quantity,
+                          item.priceAllocation.lineSubtotalPaise,
+                          item.priceAllocation.kitDiscountPaise,
+                          item.priceAllocation.couponDiscountPaise,
+                          item.priceAllocation.linePaidPaise,
+                          item.priceAllocation.unitBasePaise,
+                          item.priceAllocation.extraPaiseUnits,
+                        ]
+                      : null,
+                  ],
+                ),
 
-            templates: order.kitSnapshots.map(
-              (kit) => [
-                kit.groupId,
-                String(kit.template),
-                kit.templateVersion,
-                kit.name,
-                kit.fulfillmentMode,
-                kit.linePaidPaise,
-              ],
-            ),
+              templates:
+                order.kitSnapshots.map(
+                  (kit) => [
+                    kit.groupId,
+                    String(kit.template),
+                    kit.templateVersion,
+                    kit.name,
+                    kit.fulfillmentMode,
+                    kit.linePaidPaise,
+                  ],
+                ),
 
-            shipping: order.shippingSnapshot
-              ? {
-                  destinationPincode:
-                    order.shippingSnapshot.destinationPincode,
+              shipping:
+                order.shippingSnapshot
+                  ? {
+                      destinationPincode:
+                        order.shippingSnapshot.destinationPincode,
 
-                  paymentMethod:
-                    order.shippingSnapshot.paymentMethod,
+                      paymentMethod:
+                        order.shippingSnapshot.paymentMethod,
 
-                  shipments:
-                    order.shippingSnapshot.shipments.map(
-                      (parcel) => [
-                        parcel.key,
-                        parcel.groupId || null,
-                        parcel.label,
-                        parcel.carrier,
-                        parcel.service,
-                        parcel.merchandisePaise,
-                        parcel.shippingPaise,
-                        parcel.amountDuePaise,
+                      shipments:
+                        order.shippingSnapshot.shipments.map(
+                          (parcel) => [
+                            parcel.key,
+                            parcel.groupId || null,
+                            parcel.label,
+                            parcel.carrier,
+                            parcel.service,
+                            parcel.merchandisePaise,
+                            parcel.shippingPaise,
+                            parcel.amountDuePaise,
 
-                        [
-                          parcel.preparationDays.minimum,
-                          parcel.preparationDays.maximum,
-                        ],
+                            [
+                              parcel.preparationDays.minimum,
+                              parcel.preparationDays.maximum,
+                            ],
 
-                        [
-                          parcel.transitDays.minimum,
-                          parcel.transitDays.maximum,
-                        ],
+                            [
+                              parcel.transitDays.minimum,
+                              parcel.transitDays.maximum,
+                            ],
 
-                        parcel.contents.map(
-                          (row) => [
-                            row.itemIndex,
-                            row.productId,
-                            row.quantity,
-                            row.selectedSize || null,
-                            row.selectedColor || null,
+                            parcel.contents.map(
+                              (row) => [
+                                row.itemIndex,
+                                row.productId,
+                                row.quantity,
+                                row.selectedSize || null,
+                                row.selectedColor || null,
+                              ],
+                            ),
                           ],
                         ),
-                      ],
-                    ),
-                }
-              : null,
-          },
-        }
-      : {}),
+                    }
+                  : null,
+            },
+          }
+        : {}
+    ),
 
-    coupon: order.coupon?.code || null,
-    deliveryMethod: order.deliveryMethod,
-    address: address(order.shippingAddress),
-    giftMessage: order.giftMessage || "",
-    orderNote: order.orderNote || "",
+    coupon:
+      order.coupon?.code || null,
+
+    deliveryMethod:
+      order.deliveryMethod,
+
+    address:
+      address(
+        order.shippingAddress,
+      ),
+
+    giftMessage:
+      order.giftMessage || "",
+
+    orderNote:
+      order.orderNote || "",
   });
 }
 
@@ -1208,10 +1390,14 @@ function checkPayment(order, payment) {
     );
   }
 
-  const expected = payable(order);
+  const expected =
+    payable(order);
 
   if (
-    !providerId(payment?.id, "pay") ||
+    !providerId(
+      payment?.id,
+      "pay",
+    ) ||
     payment.order_id !==
       order.payment.razorpayOrderId ||
     payment.currency !== "INR" ||
@@ -1244,63 +1430,92 @@ function checkPayment(order, payment) {
 }
 
 function recordPayment(order, payment) {
-  if (order.payment.verifiedAt) {
+  if (
+    order.payment.verifiedAt
+  ) {
     return;
   }
 
-  const now = new Date();
+  const now =
+    new Date();
 
   const cod =
-    order.payment.method === "cod-partial";
+    order.payment.method ===
+    "cod-partial";
 
-  const total = cents(
-    order.pricing.finalTotal,
+  const total =
+    cents(
+      order.pricing.finalTotal,
+    );
+
+  const paid =
+    gatewayAmount(
+      payment.amount,
+    );
+
+  Object.assign(
+    order.payment,
+    {
+      gateway: "razorpay",
+      transactionId: payment.id,
+      razorpayPaymentId: payment.id,
+      verifiedAt: now,
+      failedAt: null,
+      totalAmount: total / 100,
+
+      status:
+        cod && paid < total
+          ? "partially-paid"
+          : "paid",
+
+      amountPaid: paid / 100,
+      amountDue:
+        (total - paid) / 100,
+
+      grossCollected: paid / 100,
+      refundedAmount: 0,
+      amountsReconciled: true,
+
+      advancePercentage:
+        cod ? 10 : 0,
+
+      advanceAmount:
+        cod ? paid / 100 : 0,
+
+      advancePaidAt:
+        cod ? now : null,
+
+      balanceStatus:
+        cod && paid < total
+          ? "pending"
+          : "not-applicable",
+
+      paidAt:
+        paid === total
+          ? now
+          : null,
+    },
   );
-
-  const paid = gatewayAmount(payment.amount);
-
-  Object.assign(order.payment, {
-    gateway: "razorpay",
-    transactionId: payment.id,
-    razorpayPaymentId: payment.id,
-    verifiedAt: now,
-    failedAt: null,
-    totalAmount: total / 100,
-
-    status:
-      cod && paid < total
-        ? "partially-paid"
-        : "paid",
-
-    amountPaid: paid / 100,
-    amountDue: (total - paid) / 100,
-    grossCollected: paid / 100,
-    refundedAmount: 0,
-    amountsReconciled: true,
-    advancePercentage: cod ? 10 : 0,
-    advanceAmount: cod ? paid / 100 : 0,
-    advancePaidAt: cod ? now : null,
-
-    balanceStatus:
-      cod && paid < total
-        ? "pending"
-        : "not-applicable",
-
-    paidAt: paid === total ? now : null,
-  });
 }
 
-function audit(order, status, description) {
-  order.tracking = order.tracking || {};
+function audit(
+  order,
+  status,
+  description,
+) {
+  order.tracking =
+    order.tracking || {};
 
   order.tracking.events =
     order.tracking.events || [];
 
-  const exists = order.tracking.events.some(
-    (event) =>
-      event.status === status &&
-      event.description === description,
-  );
+  const exists =
+    order.tracking.events.some(
+      (event) =>
+        event.status === status &&
+        event.description ===
+          description,
+    );
 
   if (!exists) {
     order.tracking.events.push({
@@ -1313,10 +1528,17 @@ function audit(order, status, description) {
 
 function paidOrder(order) {
   return (
-    FULFILMENT.includes(order.status) &&
+    FULFILMENT.includes(
+      order.status,
+    ) &&
     order.metadata?.inventoryReserved === true &&
-    Boolean(order.payment?.verifiedAt) &&
-    ["paid", "partially-paid"].includes(
+    Boolean(
+      order.payment?.verifiedAt,
+    ) &&
+    [
+      "paid",
+      "partially-paid",
+    ].includes(
       order.payment.status,
     )
   );
@@ -1325,8 +1547,13 @@ function paidOrder(order) {
 function refunding(order) {
   return (
     order.status === "cancelled" ||
-    REFUNDS.includes(order.refund?.status) ||
-    ["refunded", "partially-refunded"].includes(
+    REFUNDS.includes(
+      order.refund?.status,
+    ) ||
+    [
+      "refunded",
+      "partially-refunded",
+    ].includes(
       order.payment?.status,
     )
   );
@@ -1340,16 +1567,21 @@ function resultResponse(
   if (refunding(order)) {
     return res.status(409).json({
       success: false,
-      code: "PAYMENT_REFUND_REVIEW",
 
-      paymentReceived: Boolean(
-        order.payment.verifiedAt,
-      ),
+      code:
+        "PAYMENT_REFUND_REVIEW",
+
+      paymentReceived:
+        Boolean(
+          order.payment.verifiedAt,
+        ),
 
       refundStarted:
-        order.refund?.status === "refunded" ||
+        order.refund?.status ===
+          "refunded" ||
         (
-          order.refund?.status === "pending" &&
+          order.refund?.status ===
+            "pending" &&
           providerId(
             order.refund.reference,
             "rfnd",
@@ -1359,7 +1591,8 @@ function resultResponse(
       message:
         "This order is cancelled or has a refund under review. Do not pay again; check My orders.",
 
-      order: safeOrder(order),
+      order:
+        safeOrder(order),
     });
   }
 
@@ -1367,16 +1600,26 @@ function resultResponse(
     success: true,
     paymentVerified: true,
 
-    ...(alreadyPaid
-      ? { alreadyPaid: true }
-      : {}),
+    ...(
+      alreadyPaid
+        ? {
+            alreadyPaid: true,
+          }
+        : {}
+    ),
 
-    paymentMethod: order.payment.method,
+    paymentMethod:
+      order.payment.method,
 
     paymentSummary: {
-      totalAmount: order.payment.totalAmount,
-      amountPaid: order.payment.amountPaid,
-      amountDue: order.payment.amountDue,
+      totalAmount:
+        order.payment.totalAmount,
+
+      amountPaid:
+        order.payment.amountPaid,
+
+      amountDue:
+        order.payment.amountDue,
 
       advancePercentage:
         order.payment.advancePercentage,
@@ -1388,17 +1631,26 @@ function resultResponse(
         order.payment.balanceStatus,
     },
 
-    order: safeOrder(order),
+    order:
+      safeOrder(order),
   });
 }
 
-function checkGateway(order, gateway) {
+function checkGateway(
+  order,
+  gateway,
+) {
   if (
-    !providerId(gateway?.id, "order") ||
+    !providerId(
+      gateway?.id,
+      "order",
+    ) ||
     gateway.currency !== "INR" ||
-    gatewayAmount(gateway.amount) !==
-      payable(order) ||
-    gateway.receipt !== order.orderNumber
+    gatewayAmount(
+      gateway.amount,
+    ) !== payable(order) ||
+    gateway.receipt !==
+      order.orderNumber
   ) {
     throw problem(
       502,
@@ -1413,7 +1665,10 @@ async function bindGateway(
   attempt,
   gateway,
 ) {
-  checkGateway(order, gateway);
+  checkGateway(
+    order,
+    gateway,
+  );
 
   const ready =
     await PaymentAttempt.findOneAndUpdate(
@@ -1424,23 +1679,35 @@ async function bindGateway(
         $or: [
           {
             state: {
-              $in: ["creating", "uncertain"],
+              $in: [
+                "creating",
+                "uncertain",
+              ],
             },
           },
+
           {
             state: "ready",
-            razorpayOrderId: gateway.id,
+
+            razorpayOrderId:
+              gateway.id,
           },
         ],
       },
+
       {
         $set: {
           state: "ready",
-          razorpayOrderId: gateway.id,
+
+          razorpayOrderId:
+            gateway.id,
         },
 
-        $inc: { __v: 1 },
+        $inc: {
+          __v: 1,
+        },
       },
+
       {
         new: true,
         runValidators: true,
@@ -1462,7 +1729,10 @@ async function bindGateway(
         status: "payment-pending",
 
         "payment.status": {
-          $in: ["pending", "failed"],
+          $in: [
+            "pending",
+            "failed",
+          ],
         },
 
         "payment.verifiedAt": null,
@@ -1472,29 +1742,39 @@ async function bindGateway(
           $ne: true,
         },
 
-        "refund.status": "not-requested",
+        "refund.status":
+          "not-requested",
 
         $or: [
           {
-            "payment.razorpayOrderId": null,
+            "payment.razorpayOrderId":
+              null,
           },
+
           {
             "payment.razorpayOrderId":
               gateway.id,
           },
         ],
       },
+
       {
         $set: {
           "payment.razorpayOrderId":
             gateway.id,
 
-          "payment.status": "pending",
-          "payment.failedAt": null,
+          "payment.status":
+            "pending",
+
+          "payment.failedAt":
+            null,
         },
 
-        $inc: { __v: 1 },
+        $inc: {
+          __v: 1,
+        },
       },
+
       {
         new: true,
         runValidators: true,
@@ -1502,11 +1782,17 @@ async function bindGateway(
     );
 
   const current =
-    saved || await Order.findById(order._id);
+    saved ||
+    (
+      await Order.findById(
+        order._id,
+      )
+    );
 
   if (
     !current ||
-    current.payment.razorpayOrderId !== gateway.id
+    current.payment.razorpayOrderId !==
+      gateway.id
   ) {
     throw problem(
       409,
@@ -1518,17 +1804,31 @@ async function bindGateway(
   return current;
 }
 
-async function providerOrder(order, config) {
+async function providerOrder(
+  order,
+  config,
+  measure,
+) {
   const details = {
     _id: order._id,
     user: order.user,
-    guestSession: order.guestSession,
-    receipt: order.orderNumber,
-    keyId: config.keyId,
-    amount: payable(order),
+
+    guestSession:
+      order.guestSession,
+
+    receipt:
+      order.orderNumber,
+
+    keyId:
+      config.keyId,
+
+    amount:
+      payable(order),
   };
 
-  if (details.receipt.length > 40) {
+  if (
+    details.receipt.length > 40
+  ) {
     throw problem(
       409,
       "This order number needs review before payment.",
@@ -1539,30 +1839,43 @@ async function providerOrder(order, config) {
   let winner = false;
 
   try {
-    attempt = await PaymentAttempt.create(
-      details,
-    );
+    attempt =
+      await PaymentAttempt.create(
+        details,
+      );
 
     winner = true;
   } catch (error) {
-    if (error.code !== 11000) {
+    if (
+      error.code !== 11000
+    ) {
       throw error;
     }
 
-    attempt = await PaymentAttempt.findById(
-      order._id,
-    );
+    attempt =
+      await PaymentAttempt.findById(
+        order._id,
+      );
   }
 
   if (
     !attempt ||
     attempt.keyId !== config.keyId ||
     attempt.amount !== details.amount ||
-    String(attempt.user || "") !==
-      String(order.user || "") ||
-    String(attempt.guestSession || "") !==
-      String(order.guestSession || "") ||
-    attempt.receipt !== details.receipt
+    String(
+      attempt.user || "",
+    ) !==
+      String(
+        order.user || "",
+      ) ||
+    String(
+      attempt.guestSession || "",
+    ) !==
+      String(
+        order.guestSession || "",
+      ) ||
+    attempt.receipt !==
+      details.receipt
   ) {
     throw problem(
       409,
@@ -1579,24 +1892,34 @@ async function providerOrder(order, config) {
         "order",
       )
     ) {
-      const gateway = await gatewayCall(
-        () =>
-          config.client.orders.fetch(
-            attempt.razorpayOrderId,
-          ),
-      );
+      const gateway =
+        await gatewayCall(
+          () =>
+            config.client.orders.fetch(
+              attempt.razorpayOrderId,
+            ),
+          measure,
+          "razorpay_order_read",
+        );
 
-      return bindGateway(
-        order,
-        attempt,
-        gateway,
-      );
+      return {
+        order:
+          await bindGateway(
+            order,
+            attempt,
+            gateway,
+          ),
+
+        fresh: false,
+      };
     }
 
     if (
       attempt.state === "creating" &&
       Date.now() -
-        new Date(attempt.createdAt).getTime() <
+        new Date(
+          attempt.createdAt,
+        ).getTime() <
         30000
     ) {
       throw problem(
@@ -1607,16 +1930,23 @@ async function providerOrder(order, config) {
     }
 
     // Recover an uncertain creation through its exact receipt.
-    const data = await gatewayCall(
-      () =>
-        config.client.orders.all({
-          receipt: details.receipt,
-          count: 100,
-        }),
-    );
+    const data =
+      await gatewayCall(
+        () =>
+          config.client.orders.all({
+            receipt:
+              details.receipt,
+
+            count: 100,
+          }),
+        measure,
+        "razorpay_order_recovery",
+      );
 
     if (
-      !Array.isArray(data?.items) ||
+      !Array.isArray(
+        data?.items,
+      ) ||
       data.items.length >= 100
     ) {
       throw problem(
@@ -1626,12 +1956,16 @@ async function providerOrder(order, config) {
       );
     }
 
-    const matches = data.items.filter(
-      (item) =>
-        item.receipt === details.receipt,
-    );
+    const matches =
+      data.items.filter(
+        (item) =>
+          item.receipt ===
+          details.receipt,
+      );
 
-    if (matches.length !== 1) {
+    if (
+      matches.length !== 1
+    ) {
       throw problem(
         503,
         "Payment setup is not yet confirmed. Retry this checkout later or contact support; do not make another payment.",
@@ -1639,44 +1973,84 @@ async function providerOrder(order, config) {
       );
     }
 
-    return bindGateway(
-      order,
-      attempt,
-      matches[0],
-    );
+    return {
+      order:
+        await bindGateway(
+          order,
+          attempt,
+          matches[0],
+        ),
+
+      fresh: false,
+    };
   }
 
   try {
-    const gateway = await gatewayCall(
-      () =>
-        config.client.orders.create({
-          amount: details.amount,
-          currency: "INR",
-          receipt: details.receipt,
-          partial_payment: false,
+    const gateway =
+      await gatewayCall(
+        () =>
+          config.client.orders.create({
+            amount:
+              details.amount,
 
-          notes: {
-            gymdrobeOrder: order.orderNumber,
-            paymentMethod: order.payment.method,
-            orderNumber: order.orderNumber,
-          },
-        }),
-    );
+            currency: "INR",
 
-    return await bindGateway(
-      order,
-      attempt,
-      gateway,
-    );
+            receipt:
+              details.receipt,
+
+            partial_payment:
+              false,
+
+            notes: {
+              gymdrobeOrder:
+                order.orderNumber,
+
+              paymentMethod:
+                order.payment.method,
+
+              orderNumber:
+                order.orderNumber,
+            },
+          }),
+        measure,
+        "razorpay_order_create",
+      );
+
+    const saved =
+      await bindGateway(
+        order,
+        attempt,
+        gateway,
+      );
+
+    return {
+      order: saved,
+
+      // Only this request's successfully created, untouched provider order
+      // can skip an immediate history lookup. Reused or uncertain attempts
+      // always go through reconciliation before checkout is offered again.
+      fresh:
+        gateway.status === "created" &&
+        gateway.attempts === 0 &&
+        gateway.amount_paid === 0 &&
+        gateway.amount_due ===
+          details.amount,
+    };
   } catch (error) {
     await PaymentAttempt.updateOne(
       {
         _id: order._id,
         state: "creating",
       },
+
       {
-        $set: { state: "uncertain" },
-        $inc: { __v: 1 },
+        $set: {
+          state: "uncertain",
+        },
+
+        $inc: {
+          __v: 1,
+        },
       },
     );
 
@@ -1687,15 +2061,23 @@ async function providerOrder(order, config) {
 async function reconcileExistingPayment(
   order,
   config,
+  measure,
 ) {
-  const data = await gatewayCall(
-    () =>
-      config.client.orders.fetchPayments(
-        order.payment.razorpayOrderId,
-      ),
-  );
+  const data =
+    await gatewayCall(
+      () =>
+        config.client.orders.fetchPayments(
+          order.payment.razorpayOrderId,
+        ),
+      measure,
+      "razorpay_payment_history",
+    );
 
-  if (!Array.isArray(data?.items)) {
+  if (
+    !Array.isArray(
+      data?.items,
+    )
+  ) {
     throw problem(
       502,
       "Payment history could not be verified. Do not pay again.",
@@ -1703,14 +2085,20 @@ async function reconcileExistingPayment(
     );
   }
 
-  const received = data.items.filter(
-    (item) =>
-      ["captured", "refunded"].includes(
-        item.status,
-      ),
-  );
+  const received =
+    data.items.filter(
+      (item) =>
+        [
+          "captured",
+          "refunded",
+        ].includes(
+          item.status,
+        ),
+    );
 
-  if (received.length > 1) {
+  if (
+    received.length > 1
+  ) {
     throw problem(
       409,
       "Multiple payments need review. Do not pay again.",
@@ -1718,19 +2106,29 @@ async function reconcileExistingPayment(
     );
   }
 
-  if (received.length === 1) {
-    const payment = await gatewayCall(
-      () =>
-        config.client.payments.fetch(
-          received[0].id,
-        ),
-    );
+  if (
+    received.length === 1
+  ) {
+    const payment =
+      await gatewayCall(
+        () =>
+          config.client.payments.fetch(
+            received[0].id,
+          ),
+        measure,
+        "razorpay_payment_read",
+      );
 
-    checkPayment(order, payment);
+    checkPayment(
+      order,
+      payment,
+    );
 
     if (
       payment.status !== "captured" ||
-      Number(payment.amount_refunded || 0) > 0
+      Number(
+        payment.amount_refunded || 0,
+      ) > 0
     ) {
       throw problem(
         409,
@@ -1752,39 +2150,63 @@ async function reconcileExistingPayment(
 
   if (
     data.items.some(
-      (item) => item.status === "authorized",
+      (item) =>
+        item.status ===
+        "authorized",
     )
   ) {
     throw problem(
       409,
       "A payment is awaiting confirmation. Do not pay again; retry confirmation or check My orders.",
       "PAYMENT_CONFIRMATION_PENDING",
-      { verificationUncertain: true },
+
+      {
+        verificationUncertain: true,
+      },
     );
   }
 
   return null;
 }
 
-async function createRazorpayOrder(req, res) {
-  res.set("Cache-Control", "no-store");
+async function createRazorpayOrder(
+  req,
+  res,
+) {
+  res.set(
+    "Cache-Control",
+    "no-store",
+  );
 
-  let stage = "checkout-validation";
+  const measure =
+    paymentTiming(res);
+
+  let stage =
+    "checkout-validation";
 
   try {
-    const owner = customerOwner(req);
-    const access = customerFilter(req);
-    const body = bodyOf(req);
+    const owner =
+      customerOwner(req);
 
-    const checkoutToken = text(
-      body.checkoutToken,
-      "Checkout token",
-      200,
-      1,
-    );
+    const access =
+      customerFilter(req);
+
+    const body =
+      bodyOf(req);
+
+    const checkoutToken =
+      text(
+        body.checkoutToken,
+        "Checkout token",
+        200,
+        1,
+      );
 
     if (
-      !["razorpay", "cod-partial"].includes(
+      ![
+        "razorpay",
+        "cod-partial",
+      ].includes(
         body.paymentMethod,
       )
     ) {
@@ -1794,14 +2216,21 @@ async function createRazorpayOrder(req, res) {
       );
     }
 
-    const config = configuration();
+    const config =
+      configuration();
 
-    await Order.init();
+    let order =
+      await measure(
+        "order_lookup",
+        async () => {
+          await Order.init();
 
-    let order = await Order.findOne({
-      ...access,
-      checkoutToken,
-    });
+          return Order.findOne({
+            ...access,
+            checkoutToken,
+          });
+        },
+      );
 
     if (order) {
       if (
@@ -1814,11 +2243,18 @@ async function createRazorpayOrder(req, res) {
         );
       }
 
-      if (refunding(order)) {
-        return resultResponse(res, order);
+      if (
+        refunding(order)
+      ) {
+        return resultResponse(
+          res,
+          order,
+        );
       }
 
-      if (paidOrder(order)) {
+      if (
+        paidOrder(order)
+      ) {
         return resultResponse(
           res,
           order,
@@ -1827,9 +2263,11 @@ async function createRazorpayOrder(req, res) {
       }
 
       if (
-        order.status !== "payment-pending" ||
+        order.status !==
+          "payment-pending" ||
         order.payment.verifiedAt ||
-        order.metadata?.inventoryReserved === true
+        order.metadata
+          ?.inventoryReserved === true
       ) {
         throw problem(
           409,
@@ -1839,7 +2277,9 @@ async function createRazorpayOrder(req, res) {
 
       if (
         order.metadata?.demo !==
-        config.keyId.startsWith("rzp_test_")
+        config.keyId.startsWith(
+          "rzp_test_",
+        )
       ) {
         throw problem(
           409,
@@ -1848,11 +2288,14 @@ async function createRazorpayOrder(req, res) {
         );
       }
 
-      if (order.payment.razorpayOrderId) {
+      if (
+        order.payment.razorpayOrderId
+      ) {
         const recorded =
           await reconcileExistingPayment(
             order,
             config,
+            measure,
           );
 
         if (recorded) {
@@ -1865,33 +2308,44 @@ async function createRazorpayOrder(req, res) {
       }
     }
 
-    stage = "checkout-products-and-address";
+    stage =
+      "checkout-products-and-address";
 
-    const shippingAddress = address(
-      body.shippingAddress,
-    );
+    const shippingAddress =
+      address(
+        body.shippingAddress,
+      );
 
-    const current = await snapshot(body);
+    const current =
+      await measure(
+        "checkout_review",
+        () => snapshot(body),
+      );
 
-    const giftMessage = text(
-      body.giftMessage,
-      "Gift message",
-      250,
-      0,
-      true,
-    );
+    const giftMessage =
+      text(
+        body.giftMessage,
+        "Gift message",
+        250,
+        0,
+        true,
+      );
 
-    const orderNote = text(
-      body.orderNote,
-      "Delivery instructions",
-      300,
-      0,
-      true,
-    );
+    const orderNote =
+      text(
+        body.orderNote,
+        "Delivery instructions",
+        300,
+        0,
+        true,
+      );
 
     const comparison = {
       ...current,
-      deliveryMethod: current.method,
+
+      deliveryMethod:
+        current.method,
+
       shippingAddress,
       giftMessage,
       orderNote,
@@ -1899,7 +2353,8 @@ async function createRazorpayOrder(req, res) {
 
     if (
       order &&
-      quote(order) !== quote(comparison)
+      quote(order) !==
+        quote(comparison)
     ) {
       throw problem(
         409,
@@ -1909,11 +2364,17 @@ async function createRazorpayOrder(req, res) {
     }
 
     if (!order) {
-      const partial = advance(current.pricing);
+      const partial =
+        advance(
+          current.pricing,
+        );
 
       if (
-        body.paymentMethod === "cod-partial" &&
-        cents(partial.advanceAmount) < 100
+        body.paymentMethod ===
+          "cod-partial" &&
+        cents(
+          partial.advanceAmount,
+        ) < 100
       ) {
         throw problem(
           400,
@@ -1922,153 +2383,201 @@ async function createRazorpayOrder(req, res) {
         );
       }
 
-      stage = "order-create";
+      stage =
+        "order-create";
 
       try {
-        order = await Order.create({
-          orderNumber:
-            `GD-${Date.now().toString(36).toUpperCase()}-` +
-            crypto
-              .randomBytes(6)
-              .toString("hex")
-              .toUpperCase(),
+        order =
+          await measure(
+            "order_save",
+            () =>
+              Order.create({
+                orderNumber:
+                  `GD-${Date.now()
+                    .toString(36)
+                    .toUpperCase()}-` +
+                  crypto
+                    .randomBytes(6)
+                    .toString("hex")
+                    .toUpperCase(),
 
-          ...owner,
+                ...owner,
 
-          checkoutToken,
+                checkoutToken,
 
-          source: [
-            "cart",
-            "selection",
-            "buy-now",
-          ].includes(body.source)
-            ? body.source
-            : "cart",
+                source: [
+                  "cart",
+                  "selection",
+                  "buy-now",
+                ].includes(
+                  body.source,
+                )
+                  ? body.source
+                  : "cart",
 
-          status: "payment-pending",
-          giftMessage,
-          orderNote,
-          shippingAddress,
+                status:
+                  "payment-pending",
 
-          customer: {
-            name: shippingAddress.fullName,
-            email: shippingAddress.email,
-            phone: shippingAddress.phone,
-          },
+                giftMessage,
+                orderNote,
+                shippingAddress,
 
-          items: current.items,
+                customer: {
+                  name:
+                    shippingAddress.fullName,
 
-          kitSnapshots:
-            current.kitSnapshots || [],
+                  email:
+                    shippingAddress.email,
 
-          shippingSnapshot:
-            current.shippingSnapshot || null,
+                  phone:
+                    shippingAddress.phone,
+                },
 
-          pricing: {
-            ...current.pricing,
-            currency: "INR",
-          },
+                items:
+                  current.items,
 
-          coupon: current.coupon || {
-            code: null,
-            type: null,
-            value: null,
-            minimum: null,
-          },
+                kitSnapshots:
+                  current.kitSnapshots || [],
 
-          payment: {
-            method: body.paymentMethod,
-            gateway: "razorpay",
-            status: "pending",
+                shippingSnapshot:
+                  current.shippingSnapshot ||
+                  null,
 
-            totalAmount:
-              current.pricing.finalTotal,
+                pricing: {
+                  ...current.pricing,
+                  currency: "INR",
+                },
 
-            amountPaid: 0,
+                coupon:
+                  current.coupon || {
+                    code: null,
+                    type: null,
+                    value: null,
+                    minimum: null,
+                  },
 
-            amountDue:
-              current.pricing.finalTotal,
+                payment: {
+                  method:
+                    body.paymentMethod,
 
-            grossCollected: 0,
-            refundedAmount: 0,
-            amountsReconciled: true,
+                  gateway:
+                    "razorpay",
 
-            advancePercentage:
-              body.paymentMethod === "cod-partial"
-                ? 10
-                : 0,
+                  status:
+                    "pending",
 
-            advanceAmount:
-              body.paymentMethod === "cod-partial"
-                ? partial.advanceAmount
-                : 0,
+                  totalAmount:
+                    current.pricing.finalTotal,
 
-            balanceStatus:
-              body.paymentMethod === "cod-partial"
-                ? "pending"
-                : "not-applicable",
-          },
+                  amountPaid: 0,
 
-          paymentMethod: body.paymentMethod,
-          deliveryMethod: current.method,
+                  amountDue:
+                    current.pricing.finalTotal,
 
-          delivery: {
-            method: current.method,
-            status: "pending",
+                  grossCollected: 0,
+                  refundedAmount: 0,
+                  amountsReconciled: true,
 
-            label:
-              current.method === "express"
-                ? "Express delivery"
-                : "Standard delivery",
+                  advancePercentage:
+                    body.paymentMethod ===
+                    "cod-partial"
+                      ? 10
+                      : 0,
 
-            estimatedTime:
-              current.deliveryReview?.estimatedDays
-                ? `${current.deliveryReview.estimatedDays.minimum}–${current.deliveryReview.estimatedDays.maximum} days (recorded preparation and transit estimate)`
-                : null,
+                  advanceAmount:
+                    body.paymentMethod ===
+                    "cod-partial"
+                      ? partial.advanceAmount
+                      : 0,
 
-            deliveredAt: null,
-          },
+                  balanceStatus:
+                    body.paymentMethod ===
+                    "cod-partial"
+                      ? "pending"
+                      : "not-applicable",
+                },
 
-          tracking: {
-            carrier: null,
-            trackingNumber: null,
-            estimatedDelivery: null,
-            events: [],
-          },
+                paymentMethod:
+                  body.paymentMethod,
 
-          cancellation: {
-            status: "not-cancelled",
-          },
+                deliveryMethod:
+                  current.method,
 
-          returnRequest: {
-            status: "not-requested",
-          },
+                delivery: {
+                  method:
+                    current.method,
 
-          refund: {
-            status: "not-requested",
-            amount: 0,
-            submissionState: "not-started",
-          },
+                  status:
+                    "pending",
 
-          metadata: {
-            version: "7.0",
+                  label:
+                    current.method ===
+                    "express"
+                      ? "Express delivery"
+                      : "Standard delivery",
 
-            demo: config.keyId.startsWith(
-              "rzp_test_",
-            ),
+                  estimatedTime:
+                    current.deliveryReview
+                      ?.estimatedDays
+                      ? `${current.deliveryReview.estimatedDays.minimum}–${current.deliveryReview.estimatedDays.maximum} days (recorded preparation and transit estimate)`
+                      : null,
 
-            inventoryReserved: false,
-          },
-        });
+                  deliveredAt: null,
+                },
+
+                tracking: {
+                  carrier: null,
+                  trackingNumber: null,
+                  estimatedDelivery: null,
+                  events: [],
+                },
+
+                cancellation: {
+                  status:
+                    "not-cancelled",
+                },
+
+                returnRequest: {
+                  status:
+                    "not-requested",
+                },
+
+                refund: {
+                  status:
+                    "not-requested",
+
+                  amount: 0,
+
+                  submissionState:
+                    "not-started",
+                },
+
+                metadata: {
+                  version:
+                    "7.0",
+
+                  demo:
+                    config.keyId.startsWith(
+                      "rzp_test_",
+                    ),
+
+                  inventoryReserved:
+                    false,
+                },
+              }),
+          );
       } catch (error) {
-        if (error.code !== 11000) {
+        if (
+          error.code !== 11000
+        ) {
           throw error;
         }
 
-        order = await Order.findOne({
-          ...access,
-          checkoutToken,
-        });
+        order =
+          await Order.findOne({
+            ...access,
+            checkoutToken,
+          });
 
         if (!order) {
           throw error;
@@ -2077,7 +2586,8 @@ async function createRazorpayOrder(req, res) {
         if (
           order.payment.method !==
             body.paymentMethod ||
-          quote(order) !== quote(comparison)
+          quote(order) !==
+            quote(comparison)
         ) {
           throw problem(
             409,
@@ -2088,23 +2598,46 @@ async function createRazorpayOrder(req, res) {
       }
     }
 
-    stage = "razorpay-order-create-or-recover";
+    stage =
+      "razorpay-order-create-or-recover";
 
     const preparedGateway =
       !order.payment.razorpayOrderId;
 
+    let needsReconciliation =
+      preparedGateway;
+
     if (preparedGateway) {
-      order = await providerOrder(
+      const prepared =
+        await measure(
+          "payment_setup",
+          () =>
+            providerOrder(
+              order,
+              config,
+              measure,
+            ),
+        );
+
+      order =
+        prepared.order;
+
+      needsReconciliation =
+        !prepared.fresh;
+    }
+
+    if (
+      refunding(order)
+    ) {
+      return resultResponse(
+        res,
         order,
-        config,
       );
     }
 
-    if (refunding(order)) {
-      return resultResponse(res, order);
-    }
-
-    if (paidOrder(order)) {
+    if (
+      paidOrder(order)
+    ) {
       return resultResponse(
         res,
         order,
@@ -2112,13 +2645,17 @@ async function createRazorpayOrder(req, res) {
       );
     }
 
-    if (preparedGateway) {
-      stage = "payment-recovery";
+    if (
+      needsReconciliation
+    ) {
+      stage =
+        "payment-recovery";
 
       const recorded =
         await reconcileExistingPayment(
           order,
           config,
+          measure,
         );
 
       if (recorded) {
@@ -2131,15 +2668,19 @@ async function createRazorpayOrder(req, res) {
     }
 
     if (
-      order.status !== "payment-pending" ||
+      order.status !==
+        "payment-pending" ||
       order.payment.verifiedAt ||
-      order.metadata?.inventoryReserved === true ||
+      order.metadata
+        ?.inventoryReserved === true ||
       !providerId(
         order.payment.razorpayOrderId,
         "order",
       ) ||
       order.metadata?.demo !==
-        config.keyId.startsWith("rzp_test_")
+        config.keyId.startsWith(
+          "rzp_test_",
+        )
     ) {
       throw problem(
         409,
@@ -2148,31 +2689,43 @@ async function createRazorpayOrder(req, res) {
       );
     }
 
-    const amount = payable(order);
+    const amount =
+      payable(order);
 
     return res.json({
       success: true,
-      paymentMethod: order.payment.method,
-      keyId: config.keyId,
+
+      paymentMethod:
+        order.payment.method,
+
+      keyId:
+        config.keyId,
 
       razorpayOrderId:
         order.payment.razorpayOrderId,
 
       amount,
-      amountRupees: amount / 100,
-      currency: "INR",
-      orderNumber: order.orderNumber,
+      amountRupees:
+        amount / 100,
+
+      currency:
+        "INR",
+
+      orderNumber:
+        order.orderNumber,
 
       paymentSummary: {
         totalAmount:
           order.pricing.finalTotal,
 
-        amountToPayNow: amount / 100,
+        amountToPayNow:
+          amount / 100,
 
         amountDue:
           (
-            cents(order.pricing.finalTotal) -
-            amount
+            cents(
+              order.pricing.finalTotal,
+            ) - amount
           ) / 100,
 
         advancePercentage:
@@ -2186,106 +2739,156 @@ async function createRazorpayOrder(req, res) {
     return fail(
       res,
       error,
-      Boolean(error.paymentReceived),
+      Boolean(
+        error.paymentReceived,
+      ),
       stage,
-      Boolean(error.paymentReceived),
+      Boolean(
+        error.paymentReceived,
+      ),
     );
   }
 }
 
-async function refundCancelled(order, payment) {
-  const claim = await transaction(
-    async (session) => {
-      const current = await Order.findById(
-        order._id,
-      ).session(session);
+async function refundCancelled(
+  order,
+  payment,
+) {
+  const claim =
+    await transaction(
+      async (session) => {
+        const current =
+          await Order.findById(
+            order._id,
+          ).session(session);
 
-      checkPayment(current, payment);
-
-      if (
-        current.status !== "cancelled" ||
-        current.metadata?.inventoryReserved === true ||
-        ![
-          "not-requested",
-          "not-applicable",
-        ].includes(current.refund?.status)
-      ) {
-        return {
-          order: current,
-          claimed: false,
-        };
-      }
-
-      recordPayment(current, payment);
-
-      const amount = gatewayAmount(
-        payment.amount,
-      );
-
-      if (
-        cents(current.payment.amountPaid) !==
-          amount ||
-        cents(
-          current.payment.refundedAmount || 0,
-        ) !== 0
-      ) {
-        throw problem(
-          409,
-          "This cancellation payment needs reconciliation.",
-          "REFUND_REVIEW_REQUIRED",
+        checkPayment(
+          current,
+          payment,
         );
-      }
 
-      current.payment.amountDue = 0;
+        if (
+          current.status !==
+            "cancelled" ||
+          current.metadata
+            ?.inventoryReserved === true ||
+          ![
+            "not-requested",
+            "not-applicable",
+          ].includes(
+            current.refund?.status,
+          )
+        ) {
+          return {
+            order:
+              current,
 
-      current.payment.balanceStatus =
-        "not-applicable";
+            claimed:
+              false,
+          };
+        }
 
-      current.refund.status = "pending";
-      current.refund.amount = amount / 100;
-      current.refund.reference = "";
-      current.refund.requestedAt = new Date();
+        recordPayment(
+          current,
+          payment,
+        );
 
-      current.refund.submissionState =
-        "submitting";
+        const amount =
+          gatewayAmount(
+            payment.amount,
+          );
 
-      current.refund.submissionStartedAt =
-        new Date();
+        if (
+          cents(
+            current.payment.amountPaid,
+          ) !== amount ||
+          cents(
+            current.payment.refundedAmount ||
+              0,
+          ) !== 0
+        ) {
+          throw problem(
+            409,
+            "This cancellation payment needs reconciliation.",
+            "REFUND_REVIEW_REQUIRED",
+          );
+        }
 
-      current.refund.submissionKey =
-        "GD-STOCK-" +
-        crypto
-          .createHash("sha256")
-          .update(String(current._id))
-          .digest("hex")
-          .slice(0, 40);
+        current.payment.amountDue =
+          0;
 
-      await current.save({ session });
+        current.payment.balanceStatus =
+          "not-applicable";
 
-      return {
-        order: current,
-        claimed: true,
-      };
-    },
-  );
+        current.refund.status =
+          "pending";
 
-  if (!claim.claimed) {
+        current.refund.amount =
+          amount / 100;
+
+        current.refund.reference =
+          "";
+
+        current.refund.requestedAt =
+          new Date();
+
+        current.refund.submissionState =
+          "submitting";
+
+        current.refund.submissionStartedAt =
+          new Date();
+
+        current.refund.submissionKey =
+          "GD-STOCK-" +
+          crypto
+            .createHash("sha256")
+            .update(
+              String(current._id),
+            )
+            .digest("hex")
+            .slice(0, 40);
+
+        await current.save({
+          session,
+        });
+
+        return {
+          order:
+            current,
+
+          claimed:
+            true,
+        };
+      },
+    );
+
+  if (
+    !claim.claimed
+  ) {
     return claim.order;
   }
 
-  const amount = gatewayAmount(payment.amount);
-
-  try {
-    const config = configuration();
-
-    const latest = await gatewayCall(
-      () =>
-        config.client.payments.fetch(
-          payment.id,
-        ),
+  const amount =
+    gatewayAmount(
+      payment.amount,
     );
 
-    checkPayment(claim.order, latest);
+  try {
+    const config =
+      configuration();
+
+    const latest =
+      await gatewayCall(
+        () =>
+          config.client.payments.fetch(
+            payment.id,
+          ),
+      );
+
+    checkPayment(
+      claim.order,
+      latest,
+    );
 
     if (
       latest.status !== "captured" ||
@@ -2300,50 +2903,73 @@ async function refundCancelled(order, payment) {
       );
     }
 
-    const response = await fetch(
-      `https://api.razorpay.com/v1/payments/${encodeURIComponent(payment.id)}/refund`,
-      {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(20000),
+    const response =
+      await fetch(
+        `https://api.razorpay.com/v1/payments/${encodeURIComponent(
+          payment.id,
+        )}/refund`,
 
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
+        {
+          method: "POST",
+          redirect: "error",
 
-          Authorization:
-            "Basic " +
-            Buffer.from(
-              `${config.keyId}:${config.secret}`,
-            ).toString("base64"),
+          signal:
+            AbortSignal.timeout(
+              20000,
+            ),
 
-          "X-Refund-Idempotency":
-            claim.order.refund.submissionKey,
-        },
+          headers: {
+            Accept:
+              "application/json",
 
-        body: JSON.stringify({
-          amount,
-          speed: "normal",
+            "Content-Type":
+              "application/json",
 
-          notes: {
-            gymdrobe_order:
-              claim.order.orderNumber,
+            Authorization:
+              "Basic " +
+              Buffer.from(
+                `${config.keyId}:${config.secret}`,
+              ).toString("base64"),
 
-            reason: "paid_stock_unavailable",
+            "X-Refund-Idempotency":
+              claim.order.refund.submissionKey,
           },
-        }),
-      },
-    );
 
-    const result = await response.json();
+          body: JSON.stringify({
+            amount,
+            speed: "normal",
+
+            notes: {
+              gymdrobe_order:
+                claim.order.orderNumber,
+
+              reason:
+                "paid_stock_unavailable",
+            },
+          }),
+        },
+      );
+
+    const result =
+      await response.json();
 
     if (
       !response.ok ||
-      !providerId(result?.id, "rfnd") ||
-      result.payment_id !== payment.id ||
-      result.currency !== "INR" ||
-      gatewayAmount(result.amount) !== amount ||
-      !["pending", "processed"].includes(
+      !providerId(
+        result?.id,
+        "rfnd",
+      ) ||
+      result.payment_id !==
+        payment.id ||
+      result.currency !==
+        "INR" ||
+      gatewayAmount(
+        result.amount,
+      ) !== amount ||
+      ![
+        "pending",
+        "processed",
+      ].includes(
         result.status,
       )
     ) {
@@ -2352,110 +2978,150 @@ async function refundCancelled(order, payment) {
       );
     }
 
-    await transaction(async (session) => {
-      const current = await Order.findById(
-        order._id,
-      ).session(session);
+    await transaction(
+      async (session) => {
+        const current =
+          await Order.findById(
+            order._id,
+          ).session(session);
 
-      if (
-        !current ||
-        current.refund.status === "refunded" ||
-        current.refund.submissionKey !==
-          claim.order.refund.submissionKey
-      ) {
-        return;
-      }
+        if (
+          !current ||
+          current.refund.status ===
+            "refunded" ||
+          current.refund.submissionKey !==
+            claim.order.refund.submissionKey
+        ) {
+          return;
+        }
 
-      if (
-        current.refund.reference &&
-        current.refund.reference !== result.id
-      ) {
-        throw new Error(
-          "Refund reference changed",
+        if (
+          current.refund.reference &&
+          current.refund.reference !==
+            result.id
+        ) {
+          throw new Error(
+            "Refund reference changed",
+          );
+        }
+
+        current.refund.reference =
+          result.id;
+
+        current.refund.submissionState =
+          "submitted";
+
+        current.refund.status =
+          result.status ===
+          "processed"
+            ? "refunded"
+            : "pending";
+
+        if (
+          result.status ===
+          "processed"
+        ) {
+          current.refund.refundedAt =
+            new Date();
+
+          Object.assign(
+            current.payment,
+            {
+              status:
+                "refunded",
+
+              amountPaid:
+                0,
+
+              grossCollected:
+                amount / 100,
+
+              refundedAmount:
+                amount / 100,
+
+              amountsReconciled:
+                true,
+            },
+          );
+        }
+
+        audit(
+          current,
+
+          result.status ===
+          "processed"
+            ? "refund-completed"
+            : "refund-requested",
+
+          `Razorpay refund ${result.id} is ${result.status}.`,
         );
-      }
 
-      current.refund.reference = result.id;
-
-      current.refund.submissionState =
-        "submitted";
-
-      current.refund.status =
-        result.status === "processed"
-          ? "refunded"
-          : "pending";
-
-      if (result.status === "processed") {
-        current.refund.refundedAt = new Date();
-
-        Object.assign(current.payment, {
-          status: "refunded",
-          amountPaid: 0,
-          grossCollected: amount / 100,
-          refundedAmount: amount / 100,
-          amountsReconciled: true,
+        await current.save({
+          session,
         });
-      }
-
-      audit(
-        current,
-        result.status === "processed"
-          ? "refund-completed"
-          : "refund-requested",
-        `Razorpay refund ${result.id} is ${result.status}.`,
-      );
-
-      await current.save({ session });
-    });
+      },
+    );
   } catch (error) {
     logFailure(
       error,
       "stock-refund-reconciliation",
     );
 
-    await transaction(async (session) => {
-      const current = await Order.findById(
-        order._id,
-      ).session(session);
+    await transaction(
+      async (session) => {
+        const current =
+          await Order.findById(
+            order._id,
+          ).session(session);
 
-      if (
-        !current ||
-        current.refund.status === "refunded" ||
-        current.refund.reference ||
-        current.refund.submissionKey !==
-          claim.order.refund.submissionKey
-      ) {
-        return;
-      }
+        if (
+          !current ||
+          current.refund.status ===
+            "refunded" ||
+          current.refund.reference ||
+          current.refund.submissionKey !==
+            claim.order.refund.submissionKey
+        ) {
+          return;
+        }
 
-      current.refund.status =
-        "manual-required";
+        current.refund.status =
+          "manual-required";
 
-      current.refund.submissionState =
-        "uncertain";
+        current.refund.submissionState =
+          "uncertain";
 
-      audit(
-        current,
-        "refund-manual-required",
-        "Refund outcome needs provider review. Do not send another refund without checking it.",
-      );
+        audit(
+          current,
+          "refund-manual-required",
+          "Refund outcome needs provider review. Do not send another refund without checking it.",
+        );
 
-      await current.save({ session });
-    });
+        await current.save({
+          session,
+        });
+      },
+    );
   }
 
-  return Order.findById(order._id);
+  return Order.findById(
+    order._id,
+  );
 }
 
 async function finalizeCapturedPayment(
   orderId,
   payment,
 ) {
-  const initial = await Order.findById(
-    orderId,
-  );
+  const initial =
+    await Order.findById(
+      orderId,
+    );
 
-  checkPayment(initial, payment);
+  checkPayment(
+    initial,
+    payment,
+  );
 
   if (
     payment.status !== "captured" ||
@@ -2474,191 +3140,246 @@ async function finalizeCapturedPayment(
   let result;
 
   try {
-    result = await transaction(
-      async (session) => {
-        const current = await Order.findById(
-          orderId,
-        ).session(session);
+    result =
+      await transaction(
+        async (session) => {
+          const current =
+            await Order.findById(
+              orderId,
+            ).session(session);
 
-        checkPayment(current, payment);
-
-        if (
-          refunding(current) ||
-          paidOrder(current)
-        ) {
-          return current;
-        }
-
-        if (
-          current.status !== "payment-pending"
-        ) {
-          throw problem(
-            409,
-            "This order needs manual confirmation. Do not pay again.",
+          checkPayment(
+            current,
+            payment,
           );
-        }
 
-        if (
-          current.metadata?.inventoryReserved !== true
-        ) {
-          const touched = new Map();
+          if (
+            refunding(current) ||
+            paidOrder(current)
+          ) {
+            return current;
+          }
 
-          for (const item of current.items) {
-            if (
-              !Number.isSafeInteger(
-                item.quantity,
-              ) ||
-              item.quantity < 1
+          if (
+            current.status !==
+            "payment-pending"
+          ) {
+            throw problem(
+              409,
+              "This order needs manual confirmation. Do not pay again.",
+            );
+          }
+
+          if (
+            current.metadata
+              ?.inventoryReserved !== true
+          ) {
+            const touched =
+              new Map();
+
+            for (
+              const item of
+              current.items
             ) {
-              throw problem(
-                409,
-                "Purchased quantities need review.",
-              );
-            }
+              if (
+                !Number.isSafeInteger(
+                  item.quantity,
+                ) ||
+                item.quantity < 1
+              ) {
+                throw problem(
+                  409,
+                  "Purchased quantities need review.",
+                );
+              }
 
-            const id = String(item.product);
-
-            let product = touched.get(id);
-
-            if (!product) {
-              product =
-                await Product.findById(
+              const id =
+                String(
                   item.product,
-                ).session(session);
-            }
+                );
 
-            if (
-              !product ||
-              product.isActive === false ||
-              getVariantStock(
+              let product =
+                touched.get(id);
+
+              if (!product) {
+                product =
+                  await Product.findById(
+                    item.product,
+                  ).session(session);
+              }
+
+              if (
+                !product ||
+                product.isActive === false ||
+                getVariantStock(
+                  product,
+                  item.selectedSize,
+                  item.selectedColor,
+                ) < item.quantity
+              ) {
+                throw problem(
+                  409,
+                  "Stock changed after payment.",
+                  "PAID_STOCK_UNAVAILABLE",
+                );
+              }
+
+              reserveVariantStock(
                 product,
+                item.quantity,
                 item.selectedSize,
                 item.selectedColor,
-              ) < item.quantity
-            ) {
-              throw problem(
-                409,
-                "Stock changed after payment.",
-                "PAID_STOCK_UNAVAILABLE",
+              );
+
+              touched.set(
+                id,
+                product,
               );
             }
 
-            reserveVariantStock(
-              product,
-              item.quantity,
-              item.selectedSize,
-              item.selectedColor,
-            );
+            for (
+              const product of
+              touched.values()
+            ) {
+              await product.save({
+                session,
+              });
+            }
 
-            touched.set(id, product);
+            current.metadata
+              .inventoryReserved = true;
           }
 
-          for (const product of touched.values()) {
-            await product.save({ session });
+          recordPayment(
+            current,
+            payment,
+          );
+
+          current.status =
+            "confirmed";
+
+          if (
+            current.kitSnapshots?.length &&
+            !current.fulfillmentProgress
+          ) {
+            current.fulfillmentProgress =
+              initializeKitFulfillment(
+                current,
+              );
           }
 
-          current.metadata.inventoryReserved =
-            true;
-        }
+          audit(
+            current,
+            "confirmed",
 
-        recordPayment(current, payment);
+            current.payment.method ===
+            "cod-partial"
+              ? `10% COD advance received. Remaining ₹${current.payment.amountDue} is due on delivery.`
+              : "Online payment verified. Order confirmed by GymDrobe.",
+          );
 
-        current.status = "confirmed";
+          await current.save({
+            session,
+          });
 
-        if (
-          current.kitSnapshots?.length &&
-          !current.fulfillmentProgress
-        ) {
-          current.fulfillmentProgress =
-            initializeKitFulfillment(current);
-        }
-
-        audit(
-          current,
-          "confirmed",
-          current.payment.method === "cod-partial"
-            ? `10% COD advance received. Remaining ₹${current.payment.amountDue} is due on delivery.`
-            : "Online payment verified. Order confirmed by GymDrobe.",
-        );
-
-        await current.save({ session });
-
-        return current;
-      },
-    );
+          return current;
+        },
+      );
   } catch (error) {
     if (
-      error.code !== "PAID_STOCK_UNAVAILABLE"
+      error.code !==
+      "PAID_STOCK_UNAVAILABLE"
     ) {
       throw error;
     }
 
-    result = await transaction(
-      async (session) => {
-        const current = await Order.findById(
-          orderId,
-        ).session(session);
+    result =
+      await transaction(
+        async (session) => {
+          const current =
+            await Order.findById(
+              orderId,
+            ).session(session);
 
-        checkPayment(current, payment);
-
-        if (
-          refunding(current) ||
-          paidOrder(current) ||
-          current.metadata?.inventoryReserved === true
-        ) {
-          return current;
-        }
-
-        if (
-          current.status !== "payment-pending"
-        ) {
-          throw problem(
-            409,
-            "This paid order needs inventory review.",
+          checkPayment(
+            current,
+            payment,
           );
-        }
 
-        recordPayment(current, payment);
+          if (
+            refunding(current) ||
+            paidOrder(current) ||
+            current.metadata
+              ?.inventoryReserved === true
+          ) {
+            return current;
+          }
 
-        current.status = "cancelled";
-        current.payment.amountDue = 0;
+          if (
+            current.status !==
+            "payment-pending"
+          ) {
+            throw problem(
+              409,
+              "This paid order needs inventory review.",
+            );
+          }
 
-        current.payment.balanceStatus =
-          "not-applicable";
+          recordPayment(
+            current,
+            payment,
+          );
 
-        current.delivery.status =
-          "cancelled";
+          current.status =
+            "cancelled";
 
-        Object.assign(
-          current.cancellation,
-          {
-            status: "cancelled",
+          current.payment.amountDue =
+            0;
 
-            reason:
-              "Product stock changed after online payment.",
+          current.payment.balanceStatus =
+            "not-applicable";
 
-            cancelledAt: new Date(),
-          },
-        );
+          current.delivery.status =
+            "cancelled";
 
-        audit(
-          current,
-          "cancelled",
-          "Payment received, but items could not be reserved. Cancellation refund requires confirmation.",
-        );
+          Object.assign(
+            current.cancellation,
+            {
+              status:
+                "cancelled",
 
-        await current.save({ session });
+              reason:
+                "Product stock changed after online payment.",
 
-        return current;
-      },
-    );
+              cancelledAt:
+                new Date(),
+            },
+          );
+
+          audit(
+            current,
+            "cancelled",
+            "Payment received, but items could not be reserved. Cancellation refund requires confirmation.",
+          );
+
+          await current.save({
+            session,
+          });
+
+          return current;
+        },
+      );
   }
 
-  if (result.status === "cancelled") {
-    result = await refundCancelled(
-      result,
-      payment,
-    );
+  if (
+    result.status ===
+    "cancelled"
+  ) {
+    result =
+      await refundCancelled(
+        result,
+        payment,
+      );
   }
 
   return result;
@@ -2668,47 +3389,68 @@ async function verifyRazorpayPayment(
   req,
   res,
 ) {
-  res.set("Cache-Control", "no-store");
+  res.set(
+    "Cache-Control",
+    "no-store",
+  );
 
-  let captured = false;
+  let captured =
+    false;
 
   try {
-    const owner = customerOwner(req);
-    const access = customerFilter(req);
-    const body = bodyOf(req);
+    const owner =
+      customerOwner(req);
 
-    const checkoutToken = text(
-      body.checkoutToken,
-      "Checkout token",
-      200,
-      1,
-    );
+    const access =
+      customerFilter(req);
 
-    const orderId = text(
-      body.razorpay_order_id,
-      "Razorpay order ID",
-      100,
-      1,
-    );
+    const body =
+      bodyOf(req);
 
-    const paymentId = text(
-      body.razorpay_payment_id,
-      "Razorpay payment ID",
-      100,
-      1,
-    );
+    const checkoutToken =
+      text(
+        body.checkoutToken,
+        "Checkout token",
+        200,
+        1,
+      );
 
-    const signature = text(
-      body.razorpay_signature,
-      "Payment signature",
-      64,
-      64,
-    );
+    const orderId =
+      text(
+        body.razorpay_order_id,
+        "Razorpay order ID",
+        100,
+        1,
+      );
+
+    const paymentId =
+      text(
+        body.razorpay_payment_id,
+        "Razorpay payment ID",
+        100,
+        1,
+      );
+
+    const signature =
+      text(
+        body.razorpay_signature,
+        "Payment signature",
+        64,
+        64,
+      );
 
     if (
-      !providerId(orderId, "order") ||
-      !providerId(paymentId, "pay") ||
-      !/^[a-f0-9]{64}$/i.test(signature)
+      !providerId(
+        orderId,
+        "order",
+      ) ||
+      !providerId(
+        paymentId,
+        "pay",
+      ) ||
+      !/^[a-f0-9]{64}$/i.test(
+        signature,
+      )
     ) {
       throw problem(
         400,
@@ -2716,14 +3458,16 @@ async function verifyRazorpayPayment(
       );
     }
 
-    const order = await Order.findOne({
-      ...access,
-      checkoutToken,
-    });
+    const order =
+      await Order.findOne({
+        ...access,
+        checkoutToken,
+      });
 
     if (
       !order ||
-      order.payment.razorpayOrderId !== orderId
+      order.payment.razorpayOrderId !==
+        orderId
     ) {
       throw problem(
         404,
@@ -2731,19 +3475,27 @@ async function verifyRazorpayPayment(
       );
     }
 
-    const config = configuration();
+    const config =
+      configuration();
 
-    const expected = crypto
-      .createHmac("sha256", config.secret)
-      .update(
-        `${order.payment.razorpayOrderId}|${paymentId}`,
-      )
-      .digest();
+    const expected =
+      crypto
+        .createHmac(
+          "sha256",
+          config.secret,
+        )
+        .update(
+          `${order.payment.razorpayOrderId}|${paymentId}`,
+        )
+        .digest();
 
     if (
       !crypto.timingSafeEqual(
         expected,
-        Buffer.from(signature, "hex"),
+        Buffer.from(
+          signature,
+          "hex",
+        ),
       )
     ) {
       throw problem(
@@ -2753,16 +3505,23 @@ async function verifyRazorpayPayment(
       );
     }
 
-    let payment = await gatewayCall(
-      () =>
-        config.client.payments.fetch(
-          paymentId,
-        ),
+    let payment =
+      await gatewayCall(
+        () =>
+          config.client.payments.fetch(
+            paymentId,
+          ),
+      );
+
+    checkPayment(
+      order,
+      payment,
     );
 
-    checkPayment(order, payment);
-
-    if (payment.status === "authorized") {
+    if (
+      payment.status ===
+      "authorized"
+    ) {
       try {
         await gatewayCall(
           () =>
@@ -2773,50 +3532,68 @@ async function verifyRazorpayPayment(
             ),
         );
       } catch {
-        // Fetch the provider's actual state after
-        // an uncertain capture response.
+        // Fetch the actual provider state after an uncertain capture.
       }
 
-      payment = await gatewayCall(
-        () =>
-          config.client.payments.fetch(
-            paymentId,
-          ),
-      );
+      payment =
+        await gatewayCall(
+          () =>
+            config.client.payments.fetch(
+              paymentId,
+            ),
+        );
 
-      checkPayment(order, payment);
+      checkPayment(
+        order,
+        payment,
+      );
     }
 
     if (
       payment.status === "refunded" ||
-      Number(payment.amount_refunded || 0) > 0
+      Number(
+        payment.amount_refunded || 0,
+      ) > 0
     ) {
-      const current = await Order.findById(
-        order._id,
-      );
+      const current =
+        await Order.findById(
+          order._id,
+        );
 
       return res.status(409).json({
         success: false,
-        code: "PAYMENT_REFUND_REVIEW",
-        paymentReceived: true,
+
+        code:
+          "PAYMENT_REFUND_REVIEW",
+
+        paymentReceived:
+          true,
 
         message:
           "This payment has a refund recorded. Do not pay again; check My orders for refund progress.",
 
-        order: safeOrder(current),
+        order:
+          safeOrder(current),
       });
     }
 
-    if (payment.status !== "captured") {
+    if (
+      payment.status !==
+      "captured"
+    ) {
       throw problem(
         409,
         "Payment is not confirmed yet. Do not pay again; retry confirmation or check My orders.",
         "PAYMENT_CONFIRMATION_PENDING",
-        { verificationUncertain: true },
+
+        {
+          verificationUncertain: true,
+        },
       );
     }
 
-    captured = true;
+    captured =
+      true;
 
     const saved =
       await finalizeCapturedPayment(
@@ -2824,7 +3601,10 @@ async function verifyRazorpayPayment(
         payment,
       );
 
-    return resultResponse(res, saved);
+    return resultResponse(
+      res,
+      saved,
+    );
   } catch (error) {
     return fail(
       res,
