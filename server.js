@@ -34,6 +34,10 @@ const shippingSettingsRoutes = require(
   "./routes/shippingSettingsRoutes",
 );
 
+const cartAddonRoutes = require(
+  "./routes/cartAddonRoutes",
+);
+
 const packagePlanRoutes = require(
   "./routes/packagePlanRoutes",
 );
@@ -120,6 +124,8 @@ app.use(
   "/api/shipping-settings",
   shippingSettingsRoutes,
 );
+
+app.use("/api/cart-addons", cartAddonRoutes);
 
 app.use("/api/marketing", marketingRoutes);
 
