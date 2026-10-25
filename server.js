@@ -20,6 +20,15 @@ const paymentWebhookRoutes = require(
 const supportRoutes = require("./routes/supportRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const supplierRoutes = require("./routes/supplierRoutes");
+
+const {
+  createSupplierPortalRouter,
+} = require("./routes/supplierPortalRoutes");
+
+const supplierPortalModels = require(
+  "./models/SupplierPortal",
+);
+
 const kitRoutes = require("./routes/kitRoutes");
 
 const packingLocationRoutes = require(
@@ -108,6 +117,12 @@ app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/package-plans", packagePlanRoutes);
 app.use("/api/suppliers", supplierRoutes);
+
+app.use(
+  "/api/supplier-portal",
+  createSupplierPortalRouter(),
+);
+
 app.use("/api/kits", kitRoutes);
 
 app.use(
@@ -126,7 +141,6 @@ app.use(
 );
 
 app.use("/api/cart-addons", cartAddonRoutes);
-
 app.use("/api/marketing", marketingRoutes);
 
 app.use((req, res) => {
@@ -150,6 +164,7 @@ app.use((error, req, res, next) => {
 
   res.status(status).json({
     success: false,
+
     message:
       status === 413
         ? "Request is too large."
@@ -282,6 +297,19 @@ async function boot() {
 
   await SupportTicket.createIndexes();
   await Supplier.createIndexes();
+
+  if (
+    process.env.SUPPLIER_PORTAL_ENABLED === "true"
+  ) {
+    for (
+      const model of Object.values(
+        supplierPortalModels,
+      )
+    ) {
+      await model.createIndexes();
+    }
+  }
+
   await KitTemplate.createIndexes();
   await PackingLocation.createIndexes();
   await ShippingProfile.createIndexes();
@@ -332,7 +360,8 @@ async function boot() {
     `GymDrobe server running on http://localhost:${PORT}`,
   );
 
-  // Serve shopping first. Start marketing after its indexes are ready.
+  // Serve shopping first.
+  // Start marketing after its indexes are ready.
   void initializeMarketing();
 
   return server;

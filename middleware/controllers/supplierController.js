@@ -2,16 +2,40 @@ const mongoose = require("mongoose");
 const Supplier = require("../../models/Supplier");
 const Product = require("../../models/Product");
 
-const PRIVATE_FIELDS = "+contact +verification +fulfillment +notes";
-const STATUSES = ["draft", "active", "blocked", "archived"];
-const VERIFICATION_STATUSES = ["pending", "verified", "rejected"];
-const CONTACT_KEYS = ["name", "phone", "whatsapp", "email"];
+const PRIVATE_FIELDS =
+  "+contact +verification +fulfillment +notes +portalWorkspace";
+
+const STATUSES = [
+  "draft",
+  "active",
+  "blocked",
+  "archived",
+];
+
+const VERIFICATION_STATUSES = [
+  "pending",
+  "verified",
+  "rejected",
+];
+
+const CONTACT_KEYS = [
+  "name",
+  "phone",
+  "whatsapp",
+  "email",
+];
 
 const own = (value, key) =>
-  Object.prototype.hasOwnProperty.call(value || {}, key);
+  Object.prototype.hasOwnProperty.call(
+    value || {},
+    key
+  );
 
 function problem(status, message, code) {
-  return Object.assign(new Error(message), { status, code });
+  return Object.assign(new Error(message), {
+    status,
+    code,
+  });
 }
 
 function ensureAdmin(req, res) {
@@ -22,14 +46,19 @@ function ensureAdmin(req, res) {
       success: false,
       message: "Admin login is required.",
     });
+
     return false;
   }
 
-  if (req.user.role !== "admin" || req.user.isActive === false) {
+  if (
+    req.user.role !== "admin" ||
+    req.user.isActive === false
+  ) {
     res.status(403).json({
       success: false,
       message: "Active admin access is required.",
     });
+
     return false;
   }
 
@@ -37,14 +66,23 @@ function ensureAdmin(req, res) {
 }
 
 function text(value, label, maximum) {
-  if (value != null && typeof value !== "string") {
-    throw problem(400, `${label} must contain text.`);
+  if (
+    value != null &&
+    typeof value !== "string"
+  ) {
+    throw problem(
+      400,
+      `${label} must contain text.`
+    );
   }
 
   const result = String(value ?? "").trim();
 
   if (result.length > maximum) {
-    throw problem(400, `${label} cannot exceed ${maximum} characters.`);
+    throw problem(
+      400,
+      `${label} cannot exceed ${maximum} characters.`
+    );
   }
 
   return result;
@@ -55,40 +93,71 @@ function keys(value, allowed, label) {
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
-    Object.prototype.toString.call(value) !== "[object Object]"
+    Object.prototype.toString.call(value) !==
+      "[object Object]"
   ) {
-    throw problem(400, `${label} must be an object.`);
+    throw problem(
+      400,
+      `${label} must be an object.`
+    );
   }
 
-  if (Object.keys(value).some((key) => !allowed.includes(key))) {
-    throw problem(400, `${label} contains an unsupported field.`);
+  if (
+    Object.keys(value).some(
+      (key) => !allowed.includes(key)
+    )
+  ) {
+    throw problem(
+      400,
+      `${label} contains an unsupported field.`
+    );
   }
 }
 
 function choice(value, choices, label) {
-  const result = text(value, label, 40);
+  const result = text(
+    value,
+    label,
+    40
+  );
 
   if (!choices.includes(result)) {
-    throw problem(400, `Choose a valid ${label.toLowerCase()}.`);
+    throw problem(
+      400,
+      `Choose a valid ${label.toLowerCase()}.`
+    );
   }
 
   return result;
 }
 
-function identifier(value, label = "Supplier ID") {
+function identifier(
+  value,
+  label = "Supplier ID"
+) {
   if (
     typeof value !== "string" ||
     !/^[a-f0-9]{24}$/i.test(value)
   ) {
-    throw problem(400, `${label} is invalid.`);
+    throw problem(
+      400,
+      `${label} is invalid.`
+    );
   }
 
   return value;
 }
 
-function integer(value, label, minimum, maximum) {
+function integer(
+  value,
+  label,
+  minimum,
+  maximum
+) {
   if (
-    !["number", "string"].includes(typeof value) ||
+    !["number", "string"].includes(
+      typeof value
+    ) ||
     !String(value).trim()
   ) {
     throw problem(
@@ -130,24 +199,42 @@ function revision(body) {
 }
 
 function contactPatch(value) {
-  keys(value, CONTACT_KEYS, "Supplier contact");
+  keys(
+    value,
+    CONTACT_KEYS,
+    "Supplier contact"
+  );
 
   const result = {};
 
   if (own(value, "name")) {
-    result.name = text(value.name, "Contact name", 100);
+    result.name = text(
+      value.name,
+      "Contact name",
+      100
+    );
   }
 
-  for (const field of ["phone", "whatsapp"]) {
-    if (!own(value, field)) continue;
+  for (const field of [
+    "phone",
+    "whatsapp",
+  ]) {
+    if (!own(value, field)) {
+      continue;
+    }
 
     const phone = text(
       value[field],
-      field === "phone" ? "Phone number" : "WhatsApp number",
+      field === "phone"
+        ? "Phone number"
+        : "WhatsApp number",
       40
     ).replace(/[\s()+-]/g, "");
 
-    if (phone && !/^\d{7,15}$/.test(phone)) {
+    if (
+      phone &&
+      !/^\d{7,15}$/.test(phone)
+    ) {
       throw problem(
         400,
         "Phone and WhatsApp numbers need 7–15 digits, including the country code when needed."
@@ -166,7 +253,9 @@ function contactPatch(value) {
 
     if (
       result.email &&
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        result.email
+      )
     ) {
       throw problem(
         400,
@@ -196,9 +285,13 @@ function fulfillmentPatch(value) {
     "dispatchToCustomer",
     "sendToPackingLocation",
   ]) {
-    if (!own(value, field)) continue;
+    if (!own(value, field)) {
+      continue;
+    }
 
-    if (typeof value[field] !== "boolean") {
+    if (
+      typeof value[field] !== "boolean"
+    ) {
       throw problem(
         400,
         "Fulfillment choices must be true or false."
@@ -212,18 +305,29 @@ function fulfillmentPatch(value) {
     "preparationDaysMin",
     "preparationDaysMax",
   ]) {
-    if (!own(value, field)) continue;
+    if (!own(value, field)) {
+      continue;
+    }
 
     result[field] =
-      value[field] == null || value[field] === ""
+      value[field] == null ||
+      value[field] === ""
         ? null
-        : integer(value[field], "Preparation days", 0, 365);
+        : integer(
+            value[field],
+            "Preparation days",
+            0,
+            365
+          );
   }
 
   return result;
 }
 
-function payload(body, updating = false) {
+function payload(
+  body,
+  updating = false
+) {
   keys(
     body,
     [
@@ -254,30 +358,46 @@ function payload(body, updating = false) {
   }
 
   if (own(body, "contact")) {
-    result.contact = contactPatch(body.contact);
+    result.contact = contactPatch(
+      body.contact
+    );
   }
 
   if (own(body, "fulfillment")) {
-    result.fulfillment = fulfillmentPatch(body.fulfillment);
+    result.fulfillment = fulfillmentPatch(
+      body.fulfillment
+    );
   }
 
   if (own(body, "notes")) {
-    result.notes = text(body.notes, "Internal notes", 2000);
+    result.notes = text(
+      body.notes,
+      "Internal notes",
+      2000
+    );
   }
 
   if (!updating && !result.name) {
-    throw problem(400, "Enter the supplier business name.");
+    throw problem(
+      400,
+      "Enter the supplier business name."
+    );
   }
 
   if (
     updating &&
     !Object.entries(result).some(
       ([key, value]) =>
-        !["contact", "fulfillment"].includes(key) ||
+        !["contact", "fulfillment"].includes(
+          key
+        ) ||
         Object.keys(value).length
     )
   ) {
-    throw problem(400, "No supplier changes were provided.");
+    throw problem(
+      400,
+      "No supplier changes were provided."
+    );
   }
 
   return result;
@@ -285,9 +405,15 @@ function payload(body, updating = false) {
 
 function setupIssues(supplier) {
   const issues = [];
-  const verification = supplier.verification || {};
-  const contact = supplier.contact || {};
-  const fulfillment = supplier.fulfillment || {};
+
+  const verification =
+    supplier.verification || {};
+
+  const contact =
+    supplier.contact || {};
+
+  const fulfillment =
+    supplier.fulfillment || {};
 
   if (
     verification.status !== "verified" ||
@@ -299,8 +425,16 @@ function setupIssues(supplier) {
     );
   }
 
-  if (!(contact.phone || contact.whatsapp || contact.email)) {
-    issues.push("Add a supplier contact method.");
+  if (
+    !(
+      contact.phone ||
+      contact.whatsapp ||
+      contact.email
+    )
+  ) {
+    issues.push(
+      "Add a supplier contact method."
+    );
   }
 
   if (
@@ -314,8 +448,11 @@ function setupIssues(supplier) {
     );
   }
 
-  const low = fulfillment.preparationDaysMin;
-  const high = fulfillment.preparationDaysMax;
+  const low =
+    fulfillment.preparationDaysMin;
+
+  const high =
+    fulfillment.preparationDaysMax;
 
   if (
     !Number.isSafeInteger(low) ||
@@ -341,13 +478,21 @@ function serialize(supplier) {
   const issues = setupIssues(supplier);
 
   const statusReasons = {
-    draft: "This supplier is a draft. Complete setup and activate it.",
-    blocked: "This supplier is blocked.",
-    archived: "This supplier is archived.",
+    draft:
+      "This supplier is a draft. Complete setup and activate it.",
+
+    blocked:
+      "This supplier is blocked.",
+
+    archived:
+      "This supplier is archived.",
   };
 
   data.id = String(data._id);
-  data.revision = Number.isSafeInteger(data.__v)
+
+  data.revision = Number.isSafeInteger(
+    data.__v
+  )
     ? data.__v
     : 0;
 
@@ -360,8 +505,10 @@ function serialize(supplier) {
   }
 
   data.setupIssues = issues;
+
   data.available =
-    data.status === "active" && issues.length === 0;
+    data.status === "active" &&
+    issues.length === 0;
 
   data.unavailableReason = data.available
     ? ""
@@ -372,11 +519,16 @@ function serialize(supplier) {
   return data;
 }
 
-function sendError(res, error, fallback) {
+function sendError(
+  res,
+  error,
+  fallback
+) {
   if (
-    ["VersionError", "DocumentNotFoundError"].includes(
-      error.name
-    )
+    [
+      "VersionError",
+      "DocumentNotFoundError",
+    ].includes(error.name)
   ) {
     error = problem(
       409,
@@ -397,10 +549,16 @@ function sendError(res, error, fallback) {
     return res.status(400).json({
       success: false,
       code: "SUPPLIER_INVALID",
+
       message:
-        Object.values(error.errors || {})[0]?.message ||
+        Object.values(
+          error.errors || {}
+        )[0]?.message ||
         "Check the supplier details.",
-      fields: Object.keys(error.errors || {}),
+
+      fields: Object.keys(
+        error.errors || {}
+      ),
     });
   }
 
@@ -412,7 +570,9 @@ function sendError(res, error, fallback) {
     );
   }
 
-  if ([20, 303].includes(error.code)) {
+  if (
+    [20, 303].includes(error.code)
+  ) {
     error = problem(
       503,
       "Supplier changes require MongoDB transactions. Use Atlas or a local replica set.",
@@ -436,10 +596,14 @@ function sendError(res, error, fallback) {
 
   return res.status(status).json({
     success: false,
+
     ...(typeof error.code === "string"
       ? { code: error.code }
       : {}),
-    message: error.status ? error.message : fallback,
+
+    message: error.status
+      ? error.message
+      : fallback,
   });
 }
 
@@ -449,7 +613,11 @@ function withdrawalFilter(supplier) {
     isActive: true,
   };
 
-  if (supplier.status !== "active") return filter;
+  if (
+    supplier.status !== "active"
+  ) {
+    return filter;
+  }
 
   const setup = supplier.fulfillment;
   const alternatives = [];
@@ -463,82 +631,106 @@ function withdrawalFilter(supplier) {
   if (!setup.sendToPackingLocation) {
     alternatives.push(
       {
-        "fulfillment.canSendToPackingLocation": true,
+        "fulfillment.canSendToPackingLocation":
+          true,
       },
       {
         "fulfillment.stockSource": "supplier",
+
         "fulfillment.dispatchBy": {
-          $in: ["gymdrobe", "fulfillment-partner"],
+          $in: [
+            "gymdrobe",
+            "fulfillment-partner",
+          ],
         },
       }
     );
   }
 
   return alternatives.length
-    ? { ...filter, $or: alternatives }
+    ? {
+        ...filter,
+        $or: alternatives,
+      }
     : null;
 }
 
 async function mutate(req, change) {
   const id = identifier(req.params.id);
   const expected = revision(req.body);
-  const session = await mongoose.startSession();
+
+  const session =
+    await mongoose.startSession();
 
   let result;
 
   try {
-    await session.withTransaction(async () => {
-      const supplier = await Supplier.findById(id)
-        .select(PRIVATE_FIELDS)
-        .session(session);
+    await session.withTransaction(
+      async () => {
+        const supplier =
+          await Supplier.findById(id)
+            .select(PRIVATE_FIELDS)
+            .session(session);
 
-      if (!supplier) {
-        throw problem(
-          404,
-          "Supplier not found.",
-          "SUPPLIER_NOT_FOUND"
-        );
-      }
+        if (!supplier) {
+          throw problem(
+            404,
+            "Supplier not found.",
+            "SUPPLIER_NOT_FOUND"
+          );
+        }
 
-      if ((supplier.__v ?? 0) !== expected) {
-        throw problem(
-          409,
-          "This supplier changed. Reload it before saving again.",
-          "SUPPLIER_CHANGED"
-        );
-      }
+        if (
+          (supplier.__v ?? 0) !== expected
+        ) {
+          throw problem(
+            409,
+            "This supplier changed. Reload it before saving again.",
+            "SUPPLIER_CHANGED"
+          );
+        }
 
-      const details = change(supplier) || {};
+        const details =
+          change(supplier) || {};
 
-      // Every mutation checks the optimistic concurrency version.
-      supplier.markModified("status");
+        // Every mutation checks the optimistic
+        // concurrency version.
+        supplier.markModified("status");
 
-      await supplier.save({ session });
+        await supplier.save({ session });
 
-      const filter = withdrawalFilter(supplier);
+        const filter =
+          withdrawalFilter(supplier);
 
-      const withdrawn = filter
-        ? await Product.updateMany(
-            filter,
-            {
-              $set: {
-                isActive: false,
-                "fulfillment.supplierStockConfirmedAt": null,
+        const withdrawn = filter
+          ? await Product.updateMany(
+              filter,
+              {
+                $set: {
+                  isActive: false,
+
+                  "fulfillment.supplierStockConfirmedAt":
+                    null,
+                },
+
+                $inc: {
+                  __v: 1,
+                },
               },
-              $inc: {
-                __v: 1,
-              },
-            },
-            { session }
-          )
-        : null;
+              { session }
+            )
+          : null;
 
-      result = {
-        supplier: serialize(supplier),
-        withdrawnProducts: withdrawn?.modifiedCount || 0,
-        ...details,
-      };
-    });
+        result = {
+          supplier: serialize(supplier),
+
+          withdrawnProducts:
+            withdrawn?.modifiedCount || 0,
+
+          ...details,
+        };
+      }
+    );
 
     return result;
   } finally {
@@ -547,10 +739,17 @@ async function mutate(req, change) {
 }
 
 async function getSuppliers(req, res) {
-  if (!ensureAdmin(req, res)) return;
+  if (!ensureAdmin(req, res)) {
+    return;
+  }
 
   try {
-    const search = text(req.query.search, "Search", 150);
+    const search = text(
+      req.query.search,
+      "Search",
+      150
+    );
+
     const status = text(
       req.query.status,
       "Supplier status",
@@ -587,7 +786,10 @@ async function getSuppliers(req, res) {
         "\\$&"
       );
 
-      const regex = new RegExp(escaped, "i");
+      const regex = new RegExp(
+        escaped,
+        "i"
+      );
 
       filter.$or = [
         "name",
@@ -601,23 +803,32 @@ async function getSuppliers(req, res) {
       }));
     }
 
-    const [suppliers, total] = await Promise.all([
-      Supplier.find(filter)
-        .select(PRIVATE_FIELDS)
-        .sort({ name: 1, _id: 1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .maxTimeMS(10000),
+    const [suppliers, total] =
+      await Promise.all([
+        Supplier.find(filter)
+          .select(PRIVATE_FIELDS)
+          .sort({
+            name: 1,
+            _id: 1,
+          })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .maxTimeMS(10000),
 
-      Supplier.countDocuments(filter).maxTimeMS(10000),
-    ]);
+        Supplier.countDocuments(
+          filter
+        ).maxTimeMS(10000),
+      ]);
 
     return res.json({
       success: true,
       count: suppliers.length,
       total,
       page,
-      pages: Math.max(1, Math.ceil(total / limit)),
+      pages: Math.max(
+        1,
+        Math.ceil(total / limit)
+      ),
       limit,
       suppliers: suppliers.map(serialize),
     });
@@ -631,14 +842,17 @@ async function getSuppliers(req, res) {
 }
 
 async function getSupplierById(req, res) {
-  if (!ensureAdmin(req, res)) return;
+  if (!ensureAdmin(req, res)) {
+    return;
+  }
 
   try {
-    const supplier = await Supplier.findById(
-      identifier(req.params.id)
-    )
-      .select(PRIVATE_FIELDS)
-      .maxTimeMS(10000);
+    const supplier =
+      await Supplier.findById(
+        identifier(req.params.id)
+      )
+        .select(PRIVATE_FIELDS)
+        .maxTimeMS(10000);
 
     if (!supplier) {
       throw problem(
@@ -648,17 +862,19 @@ async function getSupplierById(req, res) {
       );
     }
 
-    const [productCount, activeProductCount] =
-      await Promise.all([
-        Product.countDocuments({
-          supplier: supplier._id,
-        }).maxTimeMS(10000),
+    const [
+      productCount,
+      activeProductCount,
+    ] = await Promise.all([
+      Product.countDocuments({
+        supplier: supplier._id,
+      }).maxTimeMS(10000),
 
-        Product.countDocuments({
-          supplier: supplier._id,
-          isActive: true,
-        }).maxTimeMS(10000),
-      ]);
+      Product.countDocuments({
+        supplier: supplier._id,
+        isActive: true,
+      }).maxTimeMS(10000),
+    ]);
 
     return res.json({
       success: true,
@@ -676,7 +892,9 @@ async function getSupplierById(req, res) {
 }
 
 async function createSupplier(req, res) {
-  if (!ensureAdmin(req, res)) return;
+  if (!ensureAdmin(req, res)) {
+    return;
+  }
 
   try {
     const supplier = new Supplier({
@@ -688,8 +906,10 @@ async function createSupplier(req, res) {
 
     return res.status(201).json({
       success: true,
+
       message:
         "Supplier saved as a draft. Verify it before activation.",
+
       supplier: serialize(supplier),
     });
   } catch (error) {
@@ -702,70 +922,105 @@ async function createSupplier(req, res) {
 }
 
 async function updateSupplier(req, res) {
-  if (!ensureAdmin(req, res)) return;
+  if (!ensureAdmin(req, res)) {
+    return;
+  }
 
   try {
-    const patch = payload(req.body, true);
+    const patch = payload(
+      req.body,
+      true
+    );
 
-    const result = await mutate(req, (supplier) => {
-      const oldIdentity = JSON.stringify([
-        supplier.name,
-        ...CONTACT_KEYS.map(
-          (key) => supplier.contact?.[key] || ""
-        ),
-      ]);
-
-      for (const field of ["name", "notes"]) {
-        if (own(patch, field)) {
-          supplier.set(field, patch[field]);
-        }
-      }
-
-      for (const field of ["contact", "fulfillment"]) {
-        if (!own(patch, field)) continue;
-
-        const current =
-          supplier[field]?.toObject({
-            transform: false,
-          }) || {};
-
-        supplier.set(field, {
-          ...current,
-          ...patch[field],
-        });
-      }
-
-      const identityChanged =
-        oldIdentity !==
-        JSON.stringify([
+    const result = await mutate(
+      req,
+      (supplier) => {
+        const oldIdentity = JSON.stringify([
           supplier.name,
+
           ...CONTACT_KEYS.map(
-            (key) => supplier.contact?.[key] || ""
+            (key) =>
+              supplier.contact?.[key] || ""
           ),
         ]);
 
-      const needsReverification =
-        identityChanged &&
-        supplier.verification.status === "verified";
-
-      if (identityChanged) {
-        supplier.verification.status = "pending";
-        supplier.verification.verifiedBy = null;
-        supplier.verification.verifiedAt = null;
-
-        if (supplier.status === "active") {
-          supplier.status = "draft";
+        for (const field of [
+          "name",
+          "notes",
+        ]) {
+          if (own(patch, field)) {
+            supplier.set(
+              field,
+              patch[field]
+            );
+          }
         }
-      }
 
-      return { needsReverification };
-    });
+        for (const field of [
+          "contact",
+          "fulfillment",
+        ]) {
+          if (!own(patch, field)) {
+            continue;
+          }
+
+          const current =
+            supplier[field]?.toObject({
+              transform: false,
+            }) || {};
+
+          supplier.set(field, {
+            ...current,
+            ...patch[field],
+          });
+        }
+
+        const identityChanged =
+          oldIdentity !==
+          JSON.stringify([
+            supplier.name,
+
+            ...CONTACT_KEYS.map(
+              (key) =>
+                supplier.contact?.[key] || ""
+            ),
+          ]);
+
+        const needsReverification =
+          identityChanged &&
+          supplier.verification.status ===
+            "verified";
+
+        if (identityChanged) {
+          supplier.verification.status =
+            "pending";
+
+          supplier.verification.verifiedBy =
+            null;
+
+          supplier.verification.verifiedAt =
+            null;
+
+          if (
+            supplier.status === "active"
+          ) {
+            supplier.status = "draft";
+          }
+        }
+
+        return {
+          needsReverification,
+        };
+      }
+    );
 
     return res.json({
       success: true,
+
       message: result.needsReverification
         ? "Supplier details changed. Verify the current details before activating and restoring products."
         : "Supplier updated. Withdrawn products need a separate review before restoration.",
+
       ...result,
     });
   } catch (error) {
@@ -778,12 +1033,17 @@ async function updateSupplier(req, res) {
 }
 
 async function setSupplierStatus(req, res) {
-  if (!ensureAdmin(req, res)) return;
+  if (!ensureAdmin(req, res)) {
+    return;
+  }
 
   try {
     keys(
       req.body,
-      ["revision", "status"],
+      [
+        "revision",
+        "status",
+      ],
       "Supplier status"
     );
 
@@ -793,28 +1053,34 @@ async function setSupplierStatus(req, res) {
       "Supplier status"
     );
 
-    const result = await mutate(req, (supplier) => {
-      if (status === "active") {
-        const issues = setupIssues(supplier);
+    const result = await mutate(
+      req,
+      (supplier) => {
+        if (status === "active") {
+          const issues =
+            setupIssues(supplier);
 
-        if (issues.length) {
-          throw problem(
-            400,
-            issues[0],
-            "SUPPLIER_SETUP_INCOMPLETE"
-          );
+          if (issues.length) {
+            throw problem(
+              400,
+              issues[0],
+              "SUPPLIER_SETUP_INCOMPLETE"
+            );
+          }
         }
-      }
 
-      supplier.status = status;
-    });
+        supplier.status = status;
+      }
+    );
 
     return res.json({
       success: true,
+
       message:
         status === "active"
           ? "Supplier activated. Review and restore its products separately."
           : `Supplier marked ${status}. Its published products have been withdrawn.`,
+
       ...result,
     });
   } catch (error) {
@@ -826,13 +1092,22 @@ async function setSupplierStatus(req, res) {
   }
 }
 
-async function setSupplierVerification(req, res) {
-  if (!ensureAdmin(req, res)) return;
+async function setSupplierVerification(
+  req,
+  res
+) {
+  if (!ensureAdmin(req, res)) {
+    return;
+  }
 
   try {
     keys(
       req.body,
-      ["revision", "status", "notes"],
+      [
+        "revision",
+        "status",
+        "notes",
+      ],
       "Supplier verification"
     );
 
@@ -848,7 +1123,10 @@ async function setSupplierVerification(req, res) {
       2000
     );
 
-    if (status !== "pending" && !notes) {
+    if (
+      status !== "pending" &&
+      !notes
+    ) {
       throw problem(
         400,
         "Record what you checked, or why verification was rejected.",
@@ -857,32 +1135,49 @@ async function setSupplierVerification(req, res) {
     }
 
     const actor = identifier(
-      String(req.user._id || req.user.id || ""),
+      String(
+        req.user._id ||
+        req.user.id ||
+        ""
+      ),
       "Admin account ID"
     );
 
-    const result = await mutate(req, (supplier) => {
-      supplier.set("verification", {
-        status,
-        notes,
-        verifiedBy: status === "verified" ? actor : null,
-        verifiedAt: status === "verified" ? new Date() : null,
-      });
+    const result = await mutate(
+      req,
+      (supplier) => {
+        supplier.set("verification", {
+          status,
+          notes,
 
-      if (
-        status !== "verified" &&
-        supplier.status === "active"
-      ) {
-        supplier.status = "draft";
+          verifiedBy:
+            status === "verified"
+              ? actor
+              : null,
+
+          verifiedAt:
+            status === "verified"
+              ? new Date()
+              : null,
+        });
+
+        if (
+          status !== "verified" &&
+          supplier.status === "active"
+        ) {
+          supplier.status = "draft";
+        }
       }
-    });
+    );
 
     return res.json({
       success: true,
+
       message:
         status === "verified"
           ? "Supplier verification recorded. Activation remains a separate action."
           : "Verification updated. Products from an inactive supplier remain withdrawn.",
+
       ...result,
     });
   } catch (error) {

@@ -5,7 +5,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { createRequire } = require("node:module");
+
+const {
+  createRequire,
+} = require("node:module");
 
 const productId = "507f1f77bcf86cd799439011";
 const guestId = "507f1f77bcf86cd799439012";
@@ -49,7 +52,7 @@ function application({
 } = {}) {
   const controllerPath = path.resolve(
     __dirname,
-    "../middleware/controllers/razorpayController.js",
+    "../middleware/controllers/razorpayController.js"
   );
 
   const filename =
@@ -92,11 +95,12 @@ function application({
   const byOwner = (filter) =>
     [...orders.values()].find(
       (row) =>
-        row.checkoutToken === filter.checkoutToken &&
+        row.checkoutToken ===
+          filter.checkoutToken &&
         String(row.user || "") ===
           String(filter.user || "") &&
         String(row.guestSession || "") ===
-          String(filter.guestSession || ""),
+          String(filter.guestSession || "")
     ) || null;
 
   const Order = {
@@ -114,9 +118,7 @@ function application({
       if (byOwner(value)) {
         throw Object.assign(
           Error("Duplicate checkout"),
-          {
-            code: 11000,
-          },
+          { code: 11000 }
         );
       }
 
@@ -124,7 +126,7 @@ function application({
 
       row._id = String(++sequence).padStart(
         24,
-        "0",
+        "0"
       );
 
       row.payment.verifiedAt = null;
@@ -137,7 +139,7 @@ function application({
 
     async findOneAndUpdate(filter, update) {
       const row = orders.get(
-        String(filter._id),
+        String(filter._id)
       );
 
       if (
@@ -150,7 +152,7 @@ function application({
 
       for (
         const [key, value] of Object.entries(
-          update.$set || {},
+          update.$set || {}
         )
       ) {
         const [parent, child] =
@@ -170,15 +172,11 @@ function application({
   const PaymentAttempt = {
     async create(details) {
       if (
-        attempts.has(
-          String(details._id),
-        )
+        attempts.has(String(details._id))
       ) {
         throw Object.assign(
           Error("Duplicate attempt"),
-          {
-            code: 11000,
-          },
+          { code: 11000 }
         );
       }
 
@@ -190,21 +188,19 @@ function application({
 
       attempts.set(
         String(value._id),
-        value,
+        value
       );
 
       return value;
     },
 
     async findById(id) {
-      return attempts.get(
-        String(id),
-      ) || null;
+      return attempts.get(String(id)) || null;
     },
 
     async findOneAndUpdate(filter, update) {
       const value = attempts.get(
-        String(filter._id),
+        String(filter._id)
       );
 
       if (
@@ -216,7 +212,7 @@ function application({
 
       Object.assign(
         value,
-        update.$set,
+        update.$set
       );
 
       return value;
@@ -224,7 +220,7 @@ function application({
 
     async updateOne(filter, update) {
       const value = attempts.get(
-        String(filter._id),
+        String(filter._id)
       );
 
       if (
@@ -233,7 +229,7 @@ function application({
       ) {
         Object.assign(
           value,
-          update.$set,
+          update.$set
         );
       }
     },
@@ -248,7 +244,7 @@ function application({
 
         if (providerFailure) {
           throw Error(
-            "Provider interrupted",
+            "Provider interrupted"
           );
         }
 
@@ -265,7 +261,7 @@ function application({
 
         gatewayOrders.set(
           gateway.id,
-          gateway,
+          gateway
         );
 
         return gateway;
@@ -289,7 +285,7 @@ function application({
             ...gatewayOrders.values(),
           ].filter(
             (row) =>
-              row.receipt === receipt,
+              row.receipt === receipt
           ),
         };
       },
@@ -312,7 +308,7 @@ function application({
         clock += 50;
 
         return history.find(
-          (row) => row.id === id,
+          (row) => row.id === id
         );
       },
     },
@@ -326,12 +322,17 @@ function application({
     then(resolve, reject) {
       return Promise.resolve(value).then(
         resolve,
-        reject,
+        reject
       );
     },
   });
 
   const overrides = {
+    "../../utils/checkoutShipping":
+      require(
+        "./helpers/checkoutShipping.cjs"
+      ).shippingWithRecord(),
+
     "../../models/Order": Order,
 
     "../../models/Product": {
@@ -366,9 +367,8 @@ function application({
   vm.runInNewContext(
     fs.readFileSync(
       filename,
-      "utf8",
+      "utf8"
     ),
-
     {
       module,
       exports: module.exports,
@@ -392,10 +392,9 @@ function application({
       setTimeout,
       clearTimeout,
     },
-
     {
       filename,
-    },
+    }
   );
 
   function response() {
@@ -406,20 +405,17 @@ function application({
 
       set(key, value) {
         this.headers[key] = value;
-
         return this;
       },
 
       status(value) {
         this.statusCode = value;
-
         return this;
       },
 
       json(value) {
         this.data = value;
         this.headersSent = true;
-
         return this;
       },
     };
@@ -439,7 +435,7 @@ function application({
 
     async create(
       body = checkout(),
-      account = false,
+      account = false
     ) {
       const res = response();
 
@@ -461,7 +457,7 @@ function application({
 
       await module.exports.createRazorpayOrder(
         req,
-        res,
+        res
       );
 
       return res;
@@ -478,8 +474,7 @@ function application({
             _id: guestId,
           },
         },
-
-        res,
+        res
       );
 
       return res;
@@ -490,69 +485,67 @@ function application({
 test(
   "a new guest order needs one provider request while retaining exact full and COD advance amounts",
   async () => {
-    for (
-      const method of [
-        "razorpay",
-        "cod-partial",
-      ]
-    ) {
+    for (const method of [
+      "razorpay",
+      "cod-partial",
+    ]) {
       const app = application();
 
       const result = await app.create(
-        checkout(method),
+        checkout(method)
       );
 
       assert.equal(
         result.statusCode,
-        200,
+        200
       );
 
       assert.equal(
         result.data.success,
-        true,
+        true
       );
 
       assert.equal(
         result.data.amount,
         method === "cod-partial"
           ? 10000
-          : 100000,
+          : 100000
       );
 
       assert.deepEqual(
         app.calls,
-        ["create"],
+        ["create"]
       );
 
       assert.equal(
         app.clock,
         120,
-        "Synthetic provider time is 120ms; the old path also spent 80ms reading empty history",
+        "Synthetic provider time is 120ms; the old path also spent 80ms reading empty history"
       );
 
       assert.equal(
         app.orders.size,
-        1,
+        1
       );
 
       assert.equal(
         app.attempts.size,
-        1,
+        1
       );
 
       assert.equal(
         [...app.orders.values()][0]
           .metadata.inventoryReserved,
-        false,
+        false
       );
 
       assert.equal(
         app.product.variants.Black.M,
         5,
-        "Stock is not deducted during payment setup",
+        "Stock is not deducted during payment setup"
       );
     }
-  },
+  }
 );
 
 test(
@@ -562,69 +555,66 @@ test(
 
     const result = await app.create(
       checkout(),
-      true,
+      true
     );
 
     assert.equal(
       result.statusCode,
-      200,
+      200
     );
 
     assert.equal(
       [...app.orders.values()][0].user,
-      accountId,
+      accountId
     );
 
     assert.deepEqual(
       app.calls,
-      ["create"],
+      ["create"]
     );
-  },
+  }
 );
 
 test(
   "new provider orders with missing or nonzero attempt/payment evidence still require history",
   async () => {
-    for (
-      const gatewayChanges of [
-        {
-          status: "attempted",
-        },
-        {
-          attempts: 1,
-        },
-        {
-          amount_paid: 100,
-        },
-        {
-          amount_due: 99900,
-        },
-        {
-          attempts: undefined,
-        },
-        {
-          amount_paid: undefined,
-        },
-      ]
-    ) {
+    for (const gatewayChanges of [
+      {
+        status: "attempted",
+      },
+      {
+        attempts: 1,
+      },
+      {
+        amount_paid: 100,
+      },
+      {
+        amount_due: 99900,
+      },
+      {
+        attempts: undefined,
+      },
+      {
+        amount_paid: undefined,
+      },
+    ]) {
       const app = application({
         gatewayChanges,
       });
 
-      const result =
-        await app.create();
+      const result = await app.create();
 
       assert.equal(
         result.statusCode,
-        200,
+        200
       );
 
       assert.deepEqual(
         app.calls,
-        ["create", "history"],
+        ["create", "history"]
       );
     }
-  },
+  }
 );
 
 test(
@@ -632,42 +622,39 @@ test(
   async () => {
     const app = application();
 
-    const first =
-      await app.create();
-
-    const retry =
-      await app.create();
+    const first = await app.create();
+    const retry = await app.create();
 
     assert.equal(
       retry.statusCode,
-      200,
+      200
     );
 
     assert.equal(
       retry.data.orderNumber,
-      first.data.orderNumber,
+      first.data.orderNumber
     );
 
     assert.equal(
       retry.data.razorpayOrderId,
-      first.data.razorpayOrderId,
+      first.data.razorpayOrderId
     );
 
     assert.deepEqual(
       app.calls,
-      ["create", "history"],
+      ["create", "history"]
     );
 
     assert.equal(
       app.orders.size,
-      1,
+      1
     );
 
     assert.equal(
       app.attempts.size,
-      1,
+      1
     );
-  },
+  }
 );
 
 test(
@@ -682,31 +669,30 @@ test(
       status: "authorized",
     });
 
-    const retry =
-      await app.create();
+    const retry = await app.create();
 
     assert.equal(
       retry.statusCode,
-      409,
+      409
     );
 
     assert.equal(
       retry.data.code,
-      "PAYMENT_CONFIRMATION_PENDING",
+      "PAYMENT_CONFIRMATION_PENDING"
     );
 
     assert.equal(
       retry.data.verificationUncertain,
-      true,
+      true
     );
 
     assert.equal(
       app.calls.filter(
-        (name) => name === "create",
+        (name) => name === "create"
       ).length,
-      1,
+      1
     );
-  },
+  }
 );
 
 test(
@@ -724,28 +710,24 @@ test(
       ...app.attempts.values(),
     ][0];
 
-    order.payment.razorpayOrderId =
-      null;
-
-    attempt.state =
-      "uncertain";
+    order.payment.razorpayOrderId = null;
+    attempt.state = "uncertain";
 
     app.history.push({
       id: "pay_Authorized",
       status: "authorized",
     });
 
-    const retry =
-      await app.create();
+    const retry = await app.create();
 
     assert.equal(
       retry.statusCode,
-      409,
+      409
     );
 
     assert.equal(
       retry.data.code,
-      "PAYMENT_CONFIRMATION_PENDING",
+      "PAYMENT_CONFIRMATION_PENDING"
     );
 
     assert.deepEqual(
@@ -754,9 +736,9 @@ test(
         "create",
         "recover",
         "history",
-      ],
+      ]
     );
-  },
+  }
 );
 
 test(
@@ -769,12 +751,11 @@ test(
     [...app.orders.values()][0]
       .payment.razorpayOrderId = null;
 
-    const retry =
-      await app.create();
+    const retry = await app.create();
 
     assert.equal(
       retry.statusCode,
-      200,
+      200
     );
 
     assert.deepEqual(
@@ -783,61 +764,56 @@ test(
         "create",
         "fetch-order",
         "history",
-      ],
+      ]
     );
-  },
+  }
 );
 
 test(
   "changed prices, required variants and stock are validated before calling the provider",
   async () => {
-    for (
-      const mutate of [
-        (app, body) => {
-          body.expectedTotal = 1;
-        },
+    for (const mutate of [
+      (app, body) => {
+        body.expectedTotal = 1;
+      },
 
-        (app, body) => {
-          body.items[0].selectedSize =
-            null;
-        },
+      (app, body) => {
+        body.items[0].selectedSize = null;
+      },
 
-        (app) => {
-          app.product.variants.Black.M =
-            0;
-        },
-      ]
-    ) {
+      (app) => {
+        app.product.variants.Black.M = 0;
+      },
+    ]) {
       const app = application();
       const body = checkout();
 
       mutate(app, body);
 
-      const result =
-        await app.create(body);
+      const result = await app.create(body);
 
       assert.equal(
         result.data.success,
-        false,
+        false
       );
 
       assert.ok(
         [400, 409].includes(
-          result.statusCode,
-        ),
+          result.statusCode
+        )
       );
 
       assert.deepEqual(
         app.calls,
-        [],
+        []
       );
 
       assert.equal(
         app.orders.size,
-        0,
+        0
       );
     }
-  },
+  }
 );
 
 test(
@@ -845,45 +821,44 @@ test(
   async () => {
     const app = application();
 
-    const results =
-      await Promise.all([
-        app.create(),
-        app.create(),
-      ]);
+    const results = await Promise.all([
+      app.create(),
+      app.create(),
+    ]);
 
     assert.ok(
       results.some(
-        (res) => res.data.success,
-      ),
+        (res) => res.data.success
+      )
     );
 
     assert.equal(
       app.orders.size,
-      1,
+      1
     );
 
     assert.equal(
       app.attempts.size,
-      1,
+      1
     );
 
     assert.equal(
       app.calls.filter(
-        (name) => name === "create",
+        (name) => name === "create"
       ).length,
-      1,
+      1
     );
 
     for (const res of results) {
       assert.ok(
         res.data.success ||
-        [
-          "PAYMENT_STARTING",
-          "PAYMENT_SETUP_CHANGED",
-        ].includes(res.data.code),
+          [
+            "PAYMENT_STARTING",
+            "PAYMENT_SETUP_CHANGED",
+          ].includes(res.data.code)
       );
     }
-  },
+  }
 );
 
 test(
@@ -893,33 +868,30 @@ test(
       providerFailure: true,
     });
 
-    const first =
-      await app.create();
+    const first = await app.create();
 
     assert.equal(
       first.data.success,
-      false,
+      false
     );
 
     assert.equal(
-      [...app.attempts.values()][0]
-        .state,
-      "uncertain",
+      [...app.attempts.values()][0].state,
+      "uncertain"
     );
 
-    const retry =
-      await app.create();
+    const retry = await app.create();
 
     assert.equal(
       retry.data.code,
-      "PAYMENT_SETUP_UNCERTAIN",
+      "PAYMENT_SETUP_UNCERTAIN"
     );
 
     assert.deepEqual(
       app.calls,
-      ["create", "recover"],
+      ["create", "recover"]
     );
-  },
+  }
 );
 
 test(
@@ -927,32 +899,31 @@ test(
   async () => {
     const app = application();
 
-    const result =
-      await app.create();
+    const result = await app.create();
 
     const timing =
       result.headers["Server-Timing"];
 
     assert.match(
       timing,
-      /razorpay_order_create;dur=120\.00/,
+      /razorpay_order_create;dur=120\.00/
     );
 
     assert.match(
       timing,
-      /checkout_review;dur=/,
+      /checkout_review;dur=/
     );
 
     assert.match(
       timing,
-      /order_save;dur=/,
+      /order_save;dur=/
     );
 
     assert.doesNotMatch(
       timing,
-      /guest|customer|@|673001|GD-|order_Test|rzp_/,
+      /guest|customer|@|673001|GD-|order_Test|rzp_/
     );
-  },
+  }
 );
 
 test(
@@ -960,37 +931,35 @@ test(
   async () => {
     const app = application();
 
-    const result =
-      await app.create();
+    const result = await app.create();
 
-    const verified =
-      await app.verify({
-        checkoutToken:
-          checkout().checkoutToken,
+    const verified = await app.verify({
+      checkoutToken:
+        checkout().checkoutToken,
 
-        razorpay_order_id:
-          result.data.razorpayOrderId,
+      razorpay_order_id:
+        result.data.razorpayOrderId,
 
-        razorpay_payment_id:
-          "pay_Test1",
+      razorpay_payment_id:
+        "pay_Test1",
 
-        razorpay_signature:
-          "0".repeat(64),
-      });
+      razorpay_signature:
+        "0".repeat(64),
+    });
 
     assert.equal(
       verified.statusCode,
-      400,
+      400
     );
 
     assert.equal(
       verified.data.code,
-      "PAYMENT_SIGNATURE_INVALID",
+      "PAYMENT_SIGNATURE_INVALID"
     );
 
     assert.deepEqual(
       app.calls,
-      ["create"],
+      ["create"]
     );
-  },
+  }
 );

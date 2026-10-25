@@ -710,10 +710,7 @@ test(
     const fs = require("node:fs");
     const path = require("node:path");
     const vm = require("node:vm");
-
-    const {
-      createRequire,
-    } = require("node:module");
+    const { createRequire } = require("node:module");
 
     const {
       kitDraft,
@@ -1013,7 +1010,7 @@ test(
 
     assert.equal(
       response.quote.purchaseEnabled,
-      false,
+      true,
     );
 
     assert.equal(
@@ -1056,6 +1053,13 @@ test(
       res,
     );
 
-    assert.equal(status, 401);
+    // Quotes are intentionally public and do not start a payment.
+    // Missing confirmed package coverage keeps purchase disabled.
+    assert.equal(status, 200);
+
+    assert.equal(
+      response.quote.purchaseEnabled,
+      false,
+    );
   },
 );

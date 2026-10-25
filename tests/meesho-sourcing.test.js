@@ -5,10 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-
-const {
-  createRequire,
-} = require("node:module");
+const { createRequire } = require("node:module");
 
 const mongoose = require("mongoose");
 
@@ -45,7 +42,13 @@ function internals(filename, names) {
   vm.runInNewContext(source, {
     module,
     exports: module.exports,
-    require: createRequire(absolute),
+
+    require: (name) =>
+      name === "../../utils/checkoutShipping"
+        ? require("./helpers/checkoutShipping.cjs")
+            .shippingWithRecord()
+        : createRequire(absolute)(name),
+
     console,
     Buffer,
     process,
@@ -217,12 +220,7 @@ test(
       "https://www.athflex.com/products/shirt",
     );
 
-    for (const empty of [
-      "",
-      "   ",
-      null,
-      undefined,
-    ]) {
+    for (const empty of ["", "   ", null, undefined]) {
       assert.equal(
         normalizeMeeshoLink(empty),
         "",
@@ -393,33 +391,29 @@ test(
             /\+meeshoProductLink/,
           );
 
-          return Promise.resolve(
-            fixture(),
-          );
+          return Promise.resolve(fixture());
         },
       }),
     );
 
-    const result =
-      await payments.snapshot({
-        items: [
-          {
-            id: String(id),
-            quantity: 2,
-            selectedSize: "M",
-            selectedColor: "Black",
-            price: 1,
+    const result = await payments.snapshot({
+      items: [
+        {
+          id: String(id),
+          quantity: 2,
+          selectedSize: "M",
+          selectedColor: "Black",
+          price: 1,
 
-            sourcing: {
-              meeshoProductLink:
-                "https://untrusted.invalid/forged",
-            },
-
+          sourcing: {
             meeshoProductLink:
-              currentLink,
+              "https://untrusted.invalid/forged",
           },
-        ],
-      });
+
+          meeshoProductLink: currentLink,
+        },
+      ],
+    });
 
     const item = result.items[0];
 
@@ -506,22 +500,18 @@ test(
       false,
     );
 
-    const publicQuery =
-      Order.findOne();
+    const publicQuery = Order.findOne();
 
     publicQuery._applyPaths();
 
     assert.equal(
-      publicQuery._fields[
-        "items.sourcing"
-      ],
+      publicQuery._fields["items.sourcing"],
       0,
     );
 
-    const adminQuery =
-      Order.findOne().select(
-        "+items.sourcing",
-      );
+    const adminQuery = Order.findOne().select(
+      "+items.sourcing",
+    );
 
     adminQuery._applyPaths();
 
@@ -553,15 +543,9 @@ test(
       payments.safeOrder,
       orders.safeOrder,
     ]) {
-      for (const value of [
-        data,
-        document,
-      ]) {
-        const response =
-          serialize(value);
-
-        const json =
-          JSON.stringify(response);
+      for (const value of [data, document]) {
+        const response = serialize(value);
+        const json = JSON.stringify(response);
 
         assert.equal(
           json.includes(originalLink),
@@ -617,34 +601,28 @@ test(
     const snapshot =
       snapshotProductSourcing(product);
 
-    product.meeshoProductLink =
-      currentLink;
+    product.meeshoProductLink = currentLink;
 
     assert.equal(
       snapshot.meeshoProductLink,
       originalLink,
     );
 
-    for (const link of [
-      originalLink,
-      "",
-    ]) {
+    for (const link of [originalLink, ""]) {
       const data = purchase({
         meeshoProductLink: link,
         sizeLabel: "Pack size",
         colorLabel: "Flavour",
       });
 
-      const response =
-        await withAdminSourcing(
-          data,
-          orders.safeOrder(data),
-          admin,
-        );
+      const response = await withAdminSourcing(
+        data,
+        orders.safeOrder(data),
+        admin,
+      );
 
       assert.equal(
-        response.items[0].sourcing
-          .meeshoProductLink,
+        response.items[0].sourcing.meeshoProductLink,
         link,
       );
 
@@ -693,8 +671,7 @@ test(
                   ? [
                       {
                         _id: id,
-                        meeshoProductLink:
-                          currentLink,
+                        meeshoProductLink: currentLink,
                       },
                     ]
                   : [],
@@ -706,12 +683,11 @@ test(
 
     const data = purchase(null);
 
-    const current =
-      await withAdminSourcing(
-        data,
-        orders.safeOrder(data),
-        admin,
-      );
+    const current = await withAdminSourcing(
+      data,
+      orders.safeOrder(data),
+      admin,
+    );
 
     assert.equal(
       current.items[0].sourcing.source,
@@ -719,19 +695,17 @@ test(
     );
 
     assert.equal(
-      current.items[0].sourcing
-        .meeshoProductLink,
+      current.items[0].sourcing.meeshoProductLink,
       currentLink,
     );
 
     available = false;
 
-    const missing =
-      await withAdminSourcing(
-        data,
-        orders.safeOrder(data),
-        admin,
-      );
+    const missing = await withAdminSourcing(
+      data,
+      orders.safeOrder(data),
+      admin,
+    );
 
     assert.equal(
       missing.items[0].sourcing.source,
@@ -739,8 +713,7 @@ test(
     );
 
     assert.equal(
-      missing.items[0].sourcing
-        .meeshoProductLink,
+      missing.items[0].sourcing.meeshoProductLink,
       "",
     );
   },
@@ -788,13 +761,11 @@ test(
     await assert.rejects(
       withAdminSourcing(
         purchase(),
-
         {
           items: [
             { productId: "wrong" },
           ],
         },
-
         admin,
       ),
       /could not be matched/,
@@ -826,16 +797,14 @@ test(
 
     data.isSelected = () => false;
 
-    const result =
-      await withAdminSourcing(
-        data,
-        orders.safeOrder(data),
-        admin,
-      );
+    const result = await withAdminSourcing(
+      data,
+      orders.safeOrder(data),
+      admin,
+    );
 
     assert.equal(
-      result.items[0].sourcing
-        .meeshoProductLink,
+      result.items[0].sourcing.meeshoProductLink,
       originalLink,
     );
   },
@@ -845,19 +814,12 @@ test(
   "purchased items stay immutable while payment, tracking and return fields remain editable",
   async () => {
     const original = purchase();
-
-    const document =
-      Order.hydrate(original);
+    const document = Order.hydrate(original);
 
     document.status = "processing";
-
-    document.tracking.carrier =
-      "Test courier";
-
+    document.tracking.carrier = "Test courier";
     document.payment.status = "paid";
-
-    document.returnRequest.reason =
-      "Fixture return";
+    document.returnRequest.reason = "Fixture return";
 
     await document.validate();
 
@@ -872,7 +834,6 @@ test(
     await assert.rejects(
       Order.updateOne(
         { _id: original._id },
-
         {
           $set: {
             "items.0.sourcing.meeshoProductLink":
@@ -886,7 +847,6 @@ test(
     await assert.rejects(
       Order.updateOne(
         { _id: original._id },
-
         {
           $rename: {
             other: "items",
@@ -899,7 +859,6 @@ test(
     await assert.rejects(
       Order.findOneAndUpdate(
         { _id: original._id },
-
         {
           $set: {
             items: [],
@@ -925,11 +884,10 @@ test(
       payments.quote(second),
     );
 
-    const amounts =
-      payments.advance({
-        totalAfterCoupon: 1800,
-        finalTotal: 1999,
-      });
+    const amounts = payments.advance({
+      totalAfterCoupon: 1800,
+      finalTotal: 1999,
+    });
 
     assert.equal(
       amounts.advanceAmount,

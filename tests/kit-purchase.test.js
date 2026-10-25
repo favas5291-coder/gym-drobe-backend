@@ -3,10 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-
-const {
-  createRequire,
-} = require("node:module");
+const { createRequire } = require("node:module");
 
 const Order = require("../models/Order");
 
@@ -330,7 +327,10 @@ test(
         ]),
     );
 
-    assert.deepEqual(values, [9000, 9000, 8999]);
+    assert.deepEqual(
+      values,
+      [9000, 9000, 8999],
+    );
 
     assert.equal(
       values.reduce((a, b) => a + b, 0),
@@ -413,7 +413,6 @@ test(
             order,
             [{ index: 0, quantity: 1 }],
           ),
-
         (error) => error.code === "REFUND_AMOUNT_INVALID",
       );
     }
@@ -841,7 +840,6 @@ test(
       items: [
         {
           id,
-
           kitGroup: {
             id: "kit-group-1",
           },
@@ -850,6 +848,12 @@ test(
 
       shippingAddress: purchase().shippingAddress,
       expectedTotal: 569.06,
+
+      expectedReviewKey:
+        require("../utils/kitReviewKey").kitReviewKey(
+          quote,
+          "682001",
+        ),
 
       shippingSnapshot: {
         shippingPaise: 0,
@@ -885,7 +889,6 @@ test(
         shippingAddress: purchase().shippingAddress,
         expectedTotal: 1,
       }),
-
       (error) =>
         error.code === "CHECKOUT_TOTAL_CHANGED",
     );
@@ -937,62 +940,44 @@ test(
 );
 
 test(
-  "kit payment endpoint remains blocked while operational fulfillment is unfinished",
-  async () => {
-    const absolute = path.resolve(
-      __dirname,
-      "../middleware/controllers/paymentController.js",
-    );
+  "kit payment endpoint forwards selections to backend validation and rejects purchased snapshots",
+  () => {
+    let delegated = 0;
 
-    const base = createRequire(absolute);
-
-    const module = {
-      exports: {},
-    };
-
-    vm.runInNewContext(
-      fs.readFileSync(absolute, "utf8"),
-
+    const { createRazorpayOrder } = internals(
+      "paymentController.js",
+      "createRazorpayOrder",
       {
-        module,
-        exports: module.exports,
-
-        require: (name) =>
-          name === "./razorpayController"
-            ? {
-                createRazorpayOrder() {
-                  throw new Error(
-                    "Must not start payment",
-                  );
-                },
-              }
-            : base(name),
+        "./razorpayController": {
+          createRazorpayOrder() {
+            delegated += 1;
+          },
+        },
       },
     );
 
-    let status;
-    let response;
-
     const res = {
+      statusCode: 200,
+
       set() {},
 
       status(value) {
-        status = value;
+        this.statusCode = value;
         return this;
       },
 
       json(value) {
-        response = value;
+        this.data = value;
+        return this;
       },
     };
 
-    module.exports.createRazorpayOrder(
+    createRazorpayOrder(
       {
         body: {
           items: [
             {
               id,
-
               kitGroup: {
                 id: "kit-group-1",
               },
@@ -1003,11 +988,75 @@ test(
       res,
     );
 
-    assert.equal(status, 409);
+    assert.equal(delegated, 1);
 
-    assert.equal(
-      response.code,
-      "KIT_CHECKOUT_NOT_READY",
+    createRazorpayOrder(
+      {
+        body: {
+          items: [
+            {
+              id,
+              kit: {},
+            },
+          ],
+        },
+      },
+      res,
     );
+
+    assert.equal(delegated, 1);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.data.code, "INVALID_CHECKOUT");
+  },
+);
+
+test(
+  "kit purchase rejects incomplete shipping and missing or stale review keys at the purchase boundary",
+  async () => {
+    const quote = review();
+
+    const { snapshot } = internals(
+      "razorpayController.js",
+      "snapshot",
+      {
+        "../../utils/checkoutReview": {
+          loadCheckoutReview: async () => ({
+            quote,
+            products: [],
+          }),
+        },
+      },
+    );
+
+    const body = {
+      items: [
+        {
+          id,
+          kitGroup: {
+            id: "kit-group-1",
+          },
+        },
+      ],
+
+      shippingAddress: purchase().shippingAddress,
+    };
+
+    for (const expectedReviewKey of [
+      undefined,
+      "0".repeat(64),
+    ]) {
+      await assert.rejects(
+        snapshot({
+          ...body,
+          expectedReviewKey,
+        }),
+        (error) =>
+          error.code === "CHECKOUT_REVIEW_CHANGED",
+      );
+    }
+
+    quote.shippingReview.ready = false;
+
+    await assert.rejects(snapshot(body));
   },
 );

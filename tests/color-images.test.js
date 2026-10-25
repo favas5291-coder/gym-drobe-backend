@@ -3,10 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-
-const {
-  createRequire,
-} = require("node:module");
+const { createRequire } = require("node:module");
 
 const mongoose = require("mongoose");
 
@@ -19,9 +16,7 @@ const {
   selectedProductImage,
 } = require("../utils/productImages");
 
-const {
-  kitDraft,
-} = require("../utils/kitDefinitions");
+const { kitDraft } = require("../utils/kitDefinitions");
 
 const {
   buildKitCheckoutPricing,
@@ -30,11 +25,7 @@ const {
 const id = new mongoose.Types.ObjectId();
 const user = new mongoose.Types.ObjectId();
 
-const colors = [
-  "Black",
-  "Blue",
-  "White",
-];
+const colors = ["Black", "Blue", "White"];
 
 function fixture() {
   return new Product({
@@ -61,12 +52,10 @@ function fixture() {
         M: 3,
         L: 3,
       },
-
       Blue: {
         M: 0,
         L: 3,
       },
-
       White: {
         M: 3,
         L: 0,
@@ -117,7 +106,13 @@ function internals(file, names) {
   vm.runInNewContext(source, {
     module,
     exports: module.exports,
-    require: createRequire(absolute),
+
+    require: (name) =>
+      name === "../../utils/checkoutShipping"
+        ? require("./helpers/checkoutShipping.cjs")
+            .shippingWithRecord()
+        : createRequire(absolute)(name),
+
     console,
     Buffer,
     process,
@@ -151,18 +146,12 @@ test(
 
     assert.deepEqual(
       productImageSources(product, "Blue"),
-      [
-        "/blue.jpg",
-        "/blue-back.jpg",
-      ],
+      ["/blue.jpg", "/blue-back.jpg"],
     );
 
     assert.deepEqual(
       productImageSources(product, "White"),
-      [
-        "/default.jpg",
-        "/default-back.jpg",
-      ],
+      ["/default.jpg", "/default-back.jpg"],
     );
 
     assert.equal(
@@ -268,9 +257,7 @@ test(
         [
           {
             color: "Black",
-            images: Array(21).fill(
-              "/black.jpg",
-            ),
+            images: Array(21).fill("/black.jpg"),
           },
         ],
         colors,
@@ -283,7 +270,6 @@ test(
           { length: 6 },
           (_, index) => ({
             color: `Colour${index}`,
-
             images: Array.from(
               { length: 20 },
               (_, number) =>

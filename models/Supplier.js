@@ -6,10 +6,14 @@ function optionalDays() {
     default: null,
     min: 0,
     max: 365,
+
     validate: {
       validator: (value) =>
-        value == null || Number.isSafeInteger(value),
-      message: "Days must be a whole number from 0 to 365.",
+        value == null ||
+        Number.isSafeInteger(value),
+
+      message:
+        "Days must be a whole number from 0 to 365.",
     },
   };
 }
@@ -25,9 +29,11 @@ function optionalPhone() {
     type: String,
     default: "",
     set: phone,
+
     validate: {
       validator: (value) =>
         !value || /^\d{7,15}$/.test(value),
+
       message:
         "Enter a phone number with 7–15 digits, including its country code when needed.",
     },
@@ -42,17 +48,24 @@ const contactSchema = new mongoose.Schema(
       trim: true,
       maxlength: 100,
     },
+
     phone: optionalPhone(),
     whatsapp: optionalPhone(),
+
     email: {
       type: String,
       default: "",
       trim: true,
       lowercase: true,
       maxlength: 150,
+
       validate: {
         validator: (value) =>
-          !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+          !value ||
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+            value
+          ),
+
         message:
           "Enter a valid supplier contact email address.",
       },
@@ -65,18 +78,25 @@ const verificationSchema = new mongoose.Schema(
   {
     status: {
       type: String,
-      enum: ["pending", "verified", "rejected"],
+      enum: [
+        "pending",
+        "verified",
+        "rejected",
+      ],
       default: "pending",
     },
+
     verifiedAt: {
       type: Date,
       default: null,
     },
+
     verifiedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
+
     notes: {
       type: String,
       default: "",
@@ -93,10 +113,12 @@ const fulfillmentSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
     sendToPackingLocation: {
       type: Boolean,
       default: false,
     },
+
     preparationDaysMin: optionalDays(),
     preparationDaysMax: optionalDays(),
   },
@@ -128,8 +150,8 @@ const supplierSchema = new mongoose.Schema(
       maxlength: 100,
     },
 
-    // The supplier business name is separate from
-    // the brand displayed on a product.
+    // The supplier business name is separate
+    // from the brand displayed on a product.
     name: {
       type: String,
       required: true,
@@ -140,8 +162,23 @@ const supplierSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["draft", "active", "blocked", "archived"],
+      enum: [
+        "draft",
+        "active",
+        "blocked",
+        "archived",
+      ],
       default: "draft",
+    },
+
+    // A staged portal enrollment must not
+    // accidentally unlock legacy dispatch.
+    // Phase 3/4 will replace this gate with
+    // full marketplace order eligibility.
+    portalWorkspace: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SupplierWorkspace",
+      select: false,
     },
 
     contact: {
@@ -149,16 +186,19 @@ const supplierSchema = new mongoose.Schema(
       default: () => ({}),
       select: false,
     },
+
     verification: {
       type: verificationSchema,
       default: () => ({}),
       select: false,
     },
+
     fulfillment: {
       type: fulfillmentSchema,
       default: () => ({}),
       select: false,
     },
+
     notes: {
       type: String,
       default: "",
@@ -177,7 +217,10 @@ const supplierSchema = new mongoose.Schema(
 supplierSchema.pre("validate", function () {
   if (
     !this.supplierCode &&
-    (this.isNew || this.isSelected("supplierCode"))
+    (
+      this.isNew ||
+      this.isSelected("supplierCode")
+    )
   ) {
     this.set(
       "supplierCode",
@@ -187,7 +230,10 @@ supplierSchema.pre("validate", function () {
   }
 
   if (
-    (this.isNew || this.isModified("verification")) &&
+    (
+      this.isNew ||
+      this.isModified("verification")
+    ) &&
     this.verification?.status === "verified"
   ) {
     if (
@@ -203,18 +249,40 @@ supplierSchema.pre("validate", function () {
 
   const changed =
     this.isNew ||
-    ["status", "contact", "verification", "fulfillment"]
-      .some((field) => this.isModified(field));
+    [
+      "status",
+      "contact",
+      "verification",
+      "fulfillment",
+    ].some((field) => this.isModified(field));
 
-  if (this.status !== "active" || !changed) {
+  if (
+    this.status !== "active" ||
+    !changed
+  ) {
     return;
+  }
+
+  if (
+    !this.isSelected("portalWorkspace") ||
+    this.portalWorkspace
+  ) {
+    this.invalidate(
+      "status",
+      "Marketplace suppliers remain drafts until supplier inventory and order routing are enabled. Load the full supplier record before activation."
+    );
   }
 
   // Admin APIs must load private fields before
   // activating or changing an active supplier.
   if (
-    ["contact", "verification", "fulfillment"]
-      .some((field) => !this.isSelected(field))
+    [
+      "contact",
+      "verification",
+      "fulfillment",
+    ].some(
+      (field) => !this.isSelected(field)
+    )
   ) {
     this.invalidate(
       "status",
@@ -241,7 +309,11 @@ supplierSchema.pre("validate", function () {
 
   if (
     !contact ||
-    !(contact.phone || contact.whatsapp || contact.email)
+    !(
+      contact.phone ||
+      contact.whatsapp ||
+      contact.email
+    )
   ) {
     this.invalidate(
       "contact",
@@ -278,13 +350,15 @@ function hidePrivateFields(document, result) {
   delete result.verification;
   delete result.fulfillment;
   delete result.notes;
+  delete result.portalWorkspace;
   delete result.__v;
 
   return result;
 }
 
-// Admin serializers must explicitly select private fields
-// and use toObject({ transform: false }).
+// Admin serializers must explicitly select
+// private fields and use
+// toObject({ transform: false }).
 supplierSchema.set("toJSON", {
   transform: hidePrivateFields,
 });
@@ -297,8 +371,11 @@ supplierSchema.index(
   { supplierCode: 1 },
   {
     unique: true,
+
     partialFilterExpression: {
-      supplierCode: { $type: "string" },
+      supplierCode: {
+        $type: "string",
+      },
     },
   }
 );
