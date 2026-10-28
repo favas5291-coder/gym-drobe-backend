@@ -1775,10 +1775,13 @@ async function getProducts(req, res) {
   );
 
   try {
+    // Public catalogue reads do not mutate documents: skip Mongoose
+    // hydration to reduce CPU and memory on every cold/large listing request.
+    // serializeProduct still removes supplier and purchase-cost fields.
     const products =
       await Product.find({
         isActive: true,
-      });
+      }).lean();
 
     const reviewed =
       await attachReviews(products);
