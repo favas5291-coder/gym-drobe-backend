@@ -10,6 +10,7 @@ function removePrivateFields(doc, ret) {
   delete ret.passwordResetExpires;
   delete ret.passwordResetRequestedAt;
   delete ret.authVersion;
+  delete ret.shoppingSyncVersion;
   delete ret.__v;
   return ret;
 }
@@ -87,6 +88,9 @@ const userSchema = new mongoose.Schema(
       min: 0,
       select: false,
     },
+
+    // Transactional write gate shared by shopping sync and account deletion.
+    shoppingSyncVersion: { type: Number, default: 0, min: 0, select: false },
 
     // Retained for compatibility with existing records.
     passwordResetToken: {

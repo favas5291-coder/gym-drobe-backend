@@ -10,7 +10,7 @@ const initializeIndexes = require("../utils/initializeIndexes");
 
 // Execute the actual server bootstrap with controlled database readiness.
 // No listener, database connection or provider request leaves this fixture.
-function application(held) {
+function application(held, syncEnabled = false) {
   let release;
   let reject;
   let listening = 0;
@@ -60,6 +60,7 @@ function application(held) {
     );
     if (id === "./models/SupplierPortal") return {};
     if (id === "./routes/supplierPortalRoutes") return { createSupplierPortalRouter: () => () => {} };
+    if (id === "./routes/shoppingRoutes") return { createShoppingRouter: () => () => {} };
     if (id.startsWith("./routes/")) return () => {};
     if (id.startsWith("./models/")) return model(id.split("/").at(-1));
     throw new Error(`Unexpected bootstrap dependency: ${id}`);
@@ -68,7 +69,7 @@ function application(held) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../server.js"), "utf8"), {
     require: requireFixture,
     module: moduleFixture,
-    process: { env: { APPLE_SIGN_IN_ENABLED: "false", SUPPLIER_PORTAL_ENABLED: "false", PORT: "0" } },
+    process: { env: { APPLE_SIGN_IN_ENABLED: "false", SUPPLIER_PORTAL_ENABLED: "false", SHOPPING_SYNC_ENABLED: String(syncEnabled), PORT: "0" } },
     console: { log() {}, error() {} },
     setTimeout,
     clearTimeout,
@@ -82,9 +83,9 @@ function application(held) {
   };
 }
 
-for (const collection of ["Order", "User", "GuestCheckoutSession"]) {
+for (const collection of ["Order", "User", "GuestCheckoutSession", "ShoppingState", "ShoppingOperation"]) {
   test(`HTTP traffic waits for ${collection} constraints with Apple sign-in disabled`, async () => {
-    const app = application(collection);
+    const app = application(collection, collection.startsWith("Shopping"));
     const startup = app.startServer();
     try {
       await new Promise(setImmediate);

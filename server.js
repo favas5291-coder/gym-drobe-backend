@@ -10,6 +10,7 @@ const initializeIndexes = require("./utils/initializeIndexes");
 
 const productRoutes = require("./routes/productRoutes");
 const authRoutes = require("./routes/authRoutes");
+const { createShoppingRouter } = require("./routes/shoppingRoutes");
 const addressRoutes = require("./routes/addressRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
@@ -60,6 +61,8 @@ const SupportTicket = require("./models/SupportTicket");
 const User = require("./models/User");
 const Order = require("./models/Order");
 const GuestCheckoutSession = require("./models/GuestCheckoutSession");
+const ShoppingState = require("./models/ShoppingState");
+const ShoppingOperation = require("./models/ShoppingOperation");
 const Supplier = require("./models/Supplier");
 const KitTemplate = require("./models/KitTemplate");
 const PackingLocation = require("./models/PackingLocation");
@@ -114,6 +117,7 @@ app.get("/api/health", (req, res) => {
 
 app.use("/api/products", productRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/shopping-state", createShoppingRouter());
 app.use("/api/addresses", addressRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -305,6 +309,7 @@ async function boot() {
     User,
     Order,
     GuestCheckoutSession,
+    ...(process.env.SHOPPING_SYNC_ENABLED === "true" ? [ShoppingState, ShoppingOperation] : []),
     SupportTicket,
     Supplier,
     KitTemplate,

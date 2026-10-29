@@ -3,6 +3,8 @@ const User = require("../../models/User");
 const Address = require("../../models/Address");
 const Review = require("../../models/Review");
 const SupportTicket = require("../../models/SupportTicket");
+const ShoppingState = require("../../models/ShoppingState");
+const ShoppingOperation = require("../../models/ShoppingOperation");
 const apple = require("../../utils/appleIdentity");
 
 function policy() {
@@ -39,6 +41,8 @@ async function deleteAccount(req, res) {
       await Address.deleteMany({ user: customer._id }, { session });
       await Review.deleteMany({ user: customer._id }, { session });
       await SupportTicket.deleteMany({ user: customer._id }, { session });
+      await ShoppingState.deleteOne({ _id: customer._id }, { session });
+      await ShoppingOperation.deleteMany({ user: customer._id }, { session });
     });
     return res.json({ success: true, deleted: true, retentionNotice: policy().retentionNotice });
   } catch {
