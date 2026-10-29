@@ -1775,6 +1775,7 @@ async function getProducts(req, res) {
   );
 
   try {
+    const started = performance.now();
     // Public catalogue reads do not mutate documents: skip Mongoose
     // hydration to reduce CPU and memory on every cold/large listing request.
     // serializeProduct still removes supplier and purchase-cost fields.
@@ -1783,17 +1784,26 @@ async function getProducts(req, res) {
         isActive: true,
       }).lean();
 
+    const productsRead = performance.now();
+
     const reviewed =
       await attachReviews(products);
+
+    const reviewsRead = performance.now();
+    const publicProducts = reviewed.map((product) => serializeProduct(product));
+    // Public-catalogue durations separate database work from network/host delay.
+    // No query text, credentials, identifiers or customer information is exposed.
+    res.set("Server-Timing", [
+      `products;dur=${(productsRead - started).toFixed(1)}`,
+      `reviews;dur=${(reviewsRead - productsRead).toFixed(1)}`,
+      `serialize;dur=${(performance.now() - reviewsRead).toFixed(1)}`,
+    ].join(", "));
 
     return res.json({
       success: true,
       count: reviewed.length,
 
-      products: reviewed.map(
-        (product) =>
-          serializeProduct(product)
-      ),
+      products: publicProducts,
     });
   } catch (error) {
     return sendError(
