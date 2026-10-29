@@ -9,7 +9,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   transactions:
-    runs-on: ubuntu-latest
+    # MongoDB 8 refuses affected 6.19–7.0.13 kernels. Keep the LTS runner
+    # until newer runner kernels satisfy MongoDB's documented compatibility.
+    runs-on: ubuntu-22.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +23,7 @@ jobs:
       - run: npm run check
       - name: Start disposable loopback MongoDB replica set
         run: |
+          uname -r
           docker run --detach --name gymdrobe-fixture-mongo -p 127.0.0.1:27018:27017 mongo:8.0 --replSet rs0 --bind_ip_all
           for attempt in $(seq 1 30); do
             if docker exec gymdrobe-fixture-mongo mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; then break; fi
