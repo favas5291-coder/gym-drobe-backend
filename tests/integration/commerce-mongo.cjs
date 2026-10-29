@@ -53,6 +53,14 @@ async function run() {
     assert.equal(await Receipt.countDocuments({ user: alice._id }), 9);
     assert.deepEqual((await service.read(bob._id)).cart, []);
   });
+  await check("receipt persistence failure rolls back an actual Mongo shopping-state write", async () => {
+    const originalCreate = Receipt.create;
+    Receipt.create = async () => { throw new Error("Fixture interrupted receipt persistence"); };
+    try { await assert.rejects(service.mutate(alice._id, op(9, [{ type: "adjust", line, delta: 1 }]))); }
+    finally { Receipt.create = originalCreate; }
+    assert.equal((await service.read(alice._id)).cart[0].quantity, 9);
+    assert.equal(await Receipt.countDocuments({ user: alice._id }), 9);
+  });
   const install = crypto.randomUUID(), binding = crypto.randomUUID();
   const body = { installationId: install, binding, token: "a".repeat(64), platform: "ios", environment: "sandbox", orderUpdates: true, refresh: false, claimAt: now };
   await check("shared-phone rebind rejects stale token callbacks and stale sign-out", async () => {
@@ -91,14 +99,28 @@ async function run() {
     await pushStore.finish({ ...row.toObject(), claim: row.claim }, { state: "failed", code: "TOKEN_INVALID", invalidate: true, invalidateTokenHash: "old-token-hash", started: true }, now + 1000);
     assert.equal((await Device.findById(device.device)).enabled, true);
   });
+  await check("actual order projection pages its source cursor and overlapping scans do not duplicate alerts", async () => {
+    const sources = Array.from({ length: 101 }, () => ({ _id: new mongoose.Types.ObjectId(), user: bob._id, updatedAt: new Date(now + 2000), tracking: { events: [{ status: "shipped", timestamp: new Date(now + 2000) }] } }));
+    await Order.collection.insertMany(sources);
+    await Control.updateOne({ _id: "order-push" }, { $set: { scanAt: new Date(now + 1000), scanFloor: new Date(now + 1000), scanId: "", scanBefore: new Date(now + 4000) } });
+    await pushStore.scan(now + 15000);
+    assert.equal(await Delivery.countDocuments({ user: bob._id }), 101);
+    await pushStore.scan(now + 15000);
+    assert.equal(await Delivery.countDocuments({ user: bob._id }), 102);
+    await pushStore.scan(now + 15000);
+    assert.equal(await Delivery.countDocuments({ user: bob._id }), 102);
+  });
   await check("account deletion removes owned private state atomically and prevents its recreation", async () => {
     process.env.ACCOUNT_DELETION_ENABLED = "true";
     process.env.ACCOUNT_ORDER_RETENTION_NOTICE = "Fixture-only notice. Financial records are retained for integration assertions.";
     const res = response();
-    await deleteAccount({ user: { _id: bob._id, role: "customer" }, body: { confirmation: "DELETE" }, authIssuedAt: Math.floor(Date.now() / 1000) }, res);
+    await Promise.allSettled([
+      deleteAccount({ user: { _id: bob._id, role: "customer" }, body: { confirmation: "DELETE" }, authIssuedAt: Math.floor(Date.now() / 1000) }, res),
+      pushStore.register(bob._id, registration({ ...body, binding: crypto.randomUUID(), claimAt: now + 50000 }, now + 50000, encryption)),
+    ]);
     assert.equal(res.body.deleted, true);
     assert.equal(await Device.countDocuments({ user: bob._id }), 0); assert.equal(await Delivery.countDocuments({ user: bob._id }), 0);
-    assert.equal(await Order.countDocuments({ user: bob._id }), 1, "Financial/fulfillment order remains retained");
+    assert.equal(await Order.countDocuments({ user: bob._id }), 102, "Financial/fulfillment orders remain retained");
     assert.equal(await User.countDocuments({ _id: alice._id }), 1);
     await assert.rejects(pushStore.register(bob._id, registration({ ...body, binding: crypto.randomUUID(), claimAt: now + 2000 }, now + 2000, encryption)));
     await assert.rejects(service.mutate(bob._id, op(0, [{ type: "seed", selection: { cart: [{ ...line, quantity: 1 }], wishlist: [] } }])));
