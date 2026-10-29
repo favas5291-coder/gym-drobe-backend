@@ -22,15 +22,15 @@ test("deletion requires recent authentication, customer role, confirmation, and 
   process.env.ACCOUNT_ORDER_RETENTION_NOTICE = "Fixture retention notice for financial records; not a real store policy.";
   const originals = [User.findById, User.deleteOne, Address.deleteMany, Review.deleteMany, SupportTicket.deleteMany, mongoose.startSession];
   const operations = [], session = { withTransaction: async (operation) => { operations.push("transaction"); await operation(); }, endSession: async () => { operations.push("ended"); } };
-  User.findById = () => ({ select: async () => ({ _id: "customer-id" }) });
-  for (const [model, name, method] of [[User, "profile", "deleteOne"], [Address, "addresses", "deleteMany"], [Review, "reviews", "deleteMany"], [SupportTicket, "support", "deleteMany"]]) model[method] = async (query, options) => { assert.equal(options.session, session); assert.equal(query.user || query._id, "customer-id"); operations.push(name); };
+  User.findById = () => ({ select: async () => ({ _id: "customer-id", role: "customer" }) });
+  for (const [model, name, method] of [[User, "profile", "deleteOne"], [Address, "addresses", "deleteMany"], [Review, "reviews", "deleteMany"], [SupportTicket, "support", "deleteMany"]]) model[method] = async (query, options) => { assert.equal(options.session, session); assert.equal(query.user || query._id, "customer-id"); operations.push(name); return { deletedCount: 1 }; };
   mongoose.startSession = async () => session;
   const req = { user: { _id: "customer-id", role: "customer" }, authIssuedAt: Math.floor(Date.now() / 1000), body: { confirmation: "DELETE" } };
   try {
     for (const [override, status] of [[{ authIssuedAt: 0 }, 401], [{ body: { confirmation: "delete" } }, 400], [{ user: { role: "admin" } }, 403]]) { const res = response(); await deleteAccount({ ...req, ...override }, res); assert.equal(res.statusCode, status); }
     assert.deepEqual(operations, []);
     const res = response(); await deleteAccount(req, res);
-    assert.equal(res.body.deleted, true); assert.deepEqual(operations, ["transaction", "addresses", "reviews", "support", "profile", "ended"]);
+    assert.equal(res.body.deleted, true); assert.deepEqual(operations, ["transaction", "profile", "addresses", "reviews", "support", "ended"]);
     Address.deleteMany = async () => { throw new Error("database outage"); };
     const failed = response(); await deleteAccount(req, failed); assert.equal(failed.statusCode, 503); assert.notEqual(failed.body.deleted, true);
   } finally {

@@ -23,6 +23,7 @@ async function deleteAccount(req, res) {
   let session;
   try {
     const customer = await User.findById(req.user._id).select("+appleRefreshToken");
+    if (customer && customer.role !== "customer") return res.status(403).json({ success: false, message: "Store staff accounts require administrator assistance." });
     if (!customer) return res.status(401).json({ success: false, message: "Your account no longer exists." });
     // Revocation is idempotent. Fail before deleting data if Apple is unavailable.
     if (customer.appleRefreshToken) {
@@ -33,10 +34,11 @@ async function deleteAccount(req, res) {
     await session.withTransaction(async () => {
       // Keep immutable financial/fulfillment records under the configured retention
       // policy. Do not delete unpaid/paid orders or alter stock/payment state.
+      const removed = await User.deleteOne({ _id: customer._id, role: "customer" }, { session });
+      if (removed.deletedCount !== 1) throw new Error("Account changed during deletion");
       await Address.deleteMany({ user: customer._id }, { session });
       await Review.deleteMany({ user: customer._id }, { session });
       await SupportTicket.deleteMany({ user: customer._id }, { session });
-      await User.deleteOne({ _id: customer._id, role: "customer" }, { session });
     });
     return res.json({ success: true, deleted: true, retentionNotice: policy().retentionNotice });
   } catch {

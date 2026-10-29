@@ -22,14 +22,14 @@ async function appleRequest(path, fields) {
     method: "POST", signal: AbortSignal.timeout(12000),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: process.env.APPLE_CLIENT_ID, client_secret: clientSecret(), ...fields }),
-  });
+  }).catch(() => { throw Object.assign(new Error("Apple service unavailable."), { status: 503 }); });
   if (!response.ok) throw Object.assign(new Error("Apple authorization failed."), { status: response.status >= 500 ? 503 : 401 });
   return path === "revoke" ? null : response.json();
 }
 async function keys(force = false) {
   if (!force && cachedKeys && keysExpire > Date.now()) return cachedKeys;
   if (!refreshing) refreshing = (async () => {
-    const response = await fetch("https://appleid.apple.com/auth/keys", { signal: AbortSignal.timeout(12000) });
+    const response = await fetch("https://appleid.apple.com/auth/keys", { signal: AbortSignal.timeout(12000) }).catch(() => { throw Object.assign(new Error("Apple keys unavailable."), { status: 503 }); });
     if (!response.ok) throw Object.assign(new Error("Apple keys unavailable."), { status: 503 });
     const data = await response.json();
     if (!Array.isArray(data.keys)) throw new Error("Invalid Apple keys.");
