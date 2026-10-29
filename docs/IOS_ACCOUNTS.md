@@ -21,7 +21,7 @@ Store the encryption key durably in the hosting secret manager. Losing it preven
 
 Existing Google accounts are not silently linked by email. An Apple email collision asks the customer to use their existing method. Explicit authenticated provider linking remains future work; private-relay email can represent a distinct account. Test this behavior before release.
 
-The current backend JWT lifetime/version and Google audience remain unchanged. User's existing Google `sub` remains the identity on that method. Unique partial indexes support both provider IDs; normal required User index initialization creates the new Apple index. Test startup against a staging MongoDB before enabling.
+The current backend JWT lifetime/version and Google audience remain unchanged. User's existing Google `sub` remains the identity on that method. Unique partial indexes support both provider IDs; when Apple sign-in is enabled, startup waits for User index creation before opening the HTTP listener. Test startup against a staging MongoDB before enabling.
 
 ## Permanent account deletion
 

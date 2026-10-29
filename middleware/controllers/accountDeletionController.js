@@ -27,7 +27,7 @@ async function deleteAccount(req, res) {
     if (!customer) return res.status(401).json({ success: false, message: "Your account no longer exists." });
     // Revocation is idempotent. Fail before deleting data if Apple is unavailable.
     if (customer.appleRefreshToken) {
-      if (!apple.configured()) throw new Error("Apple revocation configuration missing");
+      if (!apple.configured(false)) throw new Error("Apple revocation configuration missing");
       await apple.revoke(customer.appleRefreshToken);
     }
     session = await mongoose.startSession();

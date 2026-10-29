@@ -4,8 +4,8 @@ let cachedKeys;
 let keysExpire = 0;
 let refreshing;
 
-function configured() {
-  return process.env.APPLE_SIGN_IN_ENABLED === "true" &&
+function configured(requireEnabled = true) {
+  return (!requireEnabled || process.env.APPLE_SIGN_IN_ENABLED === "true") &&
     process.env.APPLE_CLIENT_ID === "com.gymdrobe.app" &&
     Boolean(process.env.JWT_SECRET && process.env.APPLE_TEAM_ID && process.env.APPLE_KEY_ID && process.env.APPLE_PRIVATE_KEY) &&
     /^[a-f\d]{64}$/i.test(process.env.APPLE_TOKEN_ENCRYPTION_KEY || "");
