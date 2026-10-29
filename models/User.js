@@ -4,6 +4,8 @@ const bcrypt = require("bcryptjs");
 function removePrivateFields(doc, ret) {
   delete ret.password;
   delete ret.googleId;
+  delete ret.appleId;
+  delete ret.appleRefreshToken;
   delete ret.passwordResetToken;
   delete ret.passwordResetExpires;
   delete ret.passwordResetRequestedAt;
@@ -63,6 +65,9 @@ const userSchema = new mongoose.Schema(
       maxlength: 255,
     },
 
+    appleId: { type: String, select: false, maxlength: 255 },
+    appleRefreshToken: { type: String, select: false, maxlength: 4096 },
+
     role: {
       type: String,
       enum: ["customer", "admin"],
@@ -116,6 +121,8 @@ userSchema.index(
   }
 );
 
+userSchema.index({ appleId: 1 }, { unique: true, partialFilterExpression: { appleId: { $type: "string" } } });
+
 userSchema.pre("validate", function () {
   if (typeof this.name === "string") {
     this.name = this.name.trim();
@@ -129,7 +136,7 @@ userSchema.pre("validate", function () {
     this.phone = this.phone.replace(/\D/g, "");
   }
 
-  if (this.isNew && !this.password && !this.googleId) {
+  if (this.isNew && !this.password && !this.googleId && !this.appleId) {
     this.invalidate("googleId", "A sign-in method is required.");
   }
 });
