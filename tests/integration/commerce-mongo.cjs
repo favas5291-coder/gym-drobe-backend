@@ -79,7 +79,7 @@ async function run() {
   await check("parallel workers claim one durable send and cannot resend an accepted message", async () => {
     orderId = new mongoose.Types.ObjectId();
     // Minimal actual DB order source; no checkout/provider/stock mutation.
-    await Order.collection.insertOne({ _id: orderId, user: bob._id, updatedAt: new Date(now + 500), tracking: { events: [{ status: "confirmed", timestamp: new Date(now + 500) }] } });
+    await Order.collection.insertOne({ _id: orderId, user: bob._id, orderNumber: "GD-FIXTURE-ACCEPTED", checkoutToken: crypto.randomUUID(), updatedAt: new Date(now + 500), tracking: { events: [{ status: "confirmed", timestamp: new Date(now + 500) }] } });
     const row = deliveryFor({ _id: orderId, user: bob._id }, orderEvents({ _id: orderId, user: bob._id, tracking: { events: [{ status: "confirmed", timestamp: now + 500 }] } }, now + 1000)[0], await Device.findById(device.device).lean(), now + 1000);
     await Delivery.create(row); await Control.create({ _id: "order-push", enabled: true, scanAt: new Date(now + 1000), scanFloor: new Date(now + 1000), scanBefore: new Date(now + 1000) });
     let sends = 0;
@@ -100,7 +100,7 @@ async function run() {
     assert.equal((await Device.findById(device.device)).enabled, true);
   });
   await check("actual order projection pages its source cursor and overlapping scans do not duplicate alerts", async () => {
-    const sources = Array.from({ length: 101 }, () => ({ _id: new mongoose.Types.ObjectId(), user: bob._id, updatedAt: new Date(now + 2000), tracking: { events: [{ status: "shipped", timestamp: new Date(now + 2000) }] } }));
+    const sources = Array.from({ length: 101 }, (_, index) => ({ _id: new mongoose.Types.ObjectId(), user: bob._id, orderNumber: `GD-FIXTURE-${index}`, checkoutToken: crypto.randomUUID(), updatedAt: new Date(now + 2000), tracking: { events: [{ status: "shipped", timestamp: new Date(now + 2000) }] } }));
     await Order.collection.insertMany(sources);
     await Control.updateOne({ _id: "order-push" }, { $set: { scanAt: new Date(now + 1000), scanFloor: new Date(now + 1000), scanId: "", scanBefore: new Date(now + 4000) } });
     await pushStore.scan(now + 15000);
