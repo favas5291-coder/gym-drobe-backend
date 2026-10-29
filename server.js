@@ -58,6 +58,8 @@ const marketingRoutes = require(
 
 const SupportTicket = require("./models/SupportTicket");
 const User = require("./models/User");
+const Order = require("./models/Order");
+const GuestCheckoutSession = require("./models/GuestCheckoutSession");
 const Supplier = require("./models/Supplier");
 const KitTemplate = require("./models/KitTemplate");
 const PackingLocation = require("./models/PackingLocation");
@@ -298,7 +300,11 @@ async function boot() {
   }
 
   await initializeIndexes([
-    ...(process.env.APPLE_SIGN_IN_ENABLED === "true" ? [User] : []),
+    // Identity, checkout idempotency and guest credential constraints must
+    // be ready before any authentication or commerce request is accepted.
+    User,
+    Order,
+    GuestCheckoutSession,
     SupportTicket,
     Supplier,
     KitTemplate,
