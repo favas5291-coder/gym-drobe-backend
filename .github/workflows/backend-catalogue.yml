@@ -4,6 +4,10 @@ on:
     paths:
       - middleware/controllers/productController.js
       - tests/catalog-performance.test.js
+      - tests/startup-performance.test.js
+      - utils/initializeIndexes.js
+      - utils/productReviews.js
+      - server.js
       - .github/workflows/backend-catalogue.yml
   workflow_dispatch:
 jobs:
@@ -16,7 +20,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Public catalogue data/privacy regression
-        run: node --test tests/catalog-performance.test.js
+      - name: Backend regression suite
+        run: npm test
       - name: Syntax and file health
         run: node scripts/check-backend-files.cjs

@@ -6,6 +6,7 @@ const mongoose = require("mongoose");
 dotenv.config();
 
 const connectDB = require("./config/db");
+const initializeIndexes = require("./utils/initializeIndexes");
 
 const productRoutes = require("./routes/productRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -295,26 +296,18 @@ async function boot() {
     );
   }
 
-  await SupportTicket.createIndexes();
-  await Supplier.createIndexes();
-
-  if (
-    process.env.SUPPLIER_PORTAL_ENABLED === "true"
-  ) {
-    for (
-      const model of Object.values(
-        supplierPortalModels,
-      )
-    ) {
-      await model.createIndexes();
-    }
-  }
-
-  await KitTemplate.createIndexes();
-  await PackingLocation.createIndexes();
-  await ShippingProfile.createIndexes();
-  await ShippingSettings.createIndexes();
-  await PackagePlan.createIndexes();
+  await initializeIndexes([
+    SupportTicket,
+    Supplier,
+    KitTemplate,
+    PackingLocation,
+    ShippingProfile,
+    ShippingSettings,
+    PackagePlan,
+    ...(process.env.SUPPLIER_PORTAL_ENABLED === "true"
+      ? Object.values(supplierPortalModels)
+      : []),
+  ]);
 
   if (shuttingDown) {
     throw new Error(

@@ -14,6 +14,9 @@ function publicReview(row) {
 }
 
 async function attachReviews(products) {
+  // An empty catalogue has no reviews; avoid a second DB round trip.
+  if (!products.length) return [];
+
   const rows = await Review.find({
     product: {
       $in: products.map((product) => product._id),
