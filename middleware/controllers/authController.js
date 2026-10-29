@@ -498,6 +498,7 @@ function googleOnly(req, res) {
 }
 
 module.exports = {
+  sendSession,
   googleChallenge,
   googleLogin,
   getMe,
