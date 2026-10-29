@@ -5,6 +5,7 @@ const Review = require("../../models/Review");
 const SupportTicket = require("../../models/SupportTicket");
 const ShoppingState = require("../../models/ShoppingState");
 const ShoppingOperation = require("../../models/ShoppingOperation");
+const { Device: NotificationDevice, Delivery: NotificationDelivery } = require("../../models/NotificationStore");
 const apple = require("../../utils/appleIdentity");
 
 function policy() {
@@ -43,6 +44,8 @@ async function deleteAccount(req, res) {
       await SupportTicket.deleteMany({ user: customer._id }, { session });
       await ShoppingState.deleteOne({ _id: customer._id }, { session });
       await ShoppingOperation.deleteMany({ user: customer._id }, { session });
+      await NotificationDevice.deleteMany({ user: customer._id }, { session });
+      await NotificationDelivery.deleteMany({ user: customer._id }, { session });
     });
     return res.json({ success: true, deleted: true, retentionNotice: policy().retentionNotice });
   } catch {

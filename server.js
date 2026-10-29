@@ -11,6 +11,10 @@ const initializeIndexes = require("./utils/initializeIndexes");
 const productRoutes = require("./routes/productRoutes");
 const authRoutes = require("./routes/authRoutes");
 const { createShoppingRouter } = require("./routes/shoppingRoutes");
+const { createNotificationRouter } = require("./routes/notificationRoutes");
+const notificationModels = require("./models/NotificationStore");
+const { encryptionKey: notificationEncryptionKey } = require("./utils/notifications/domain");
+const { startNotificationWorker, stopNotificationWorker } = require("./utils/notifications/worker");
 const addressRoutes = require("./routes/addressRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
@@ -118,6 +122,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/products", productRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/shopping-state", createShoppingRouter());
+app.use("/api/notifications", createNotificationRouter());
 app.use("/api/addresses", addressRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -297,6 +302,8 @@ async function initializeMarketing(attempt = 1) {
 async function boot() {
   await connectDB();
 
+  if (process.env.PUSH_REGISTRATION_ENABLED === "true") notificationEncryptionKey();
+
   if (shuttingDown) {
     throw new Error(
       "SERVER_STOPPING",
@@ -310,6 +317,7 @@ async function boot() {
     Order,
     GuestCheckoutSession,
     ...(process.env.SHOPPING_SYNC_ENABLED === "true" ? [ShoppingState, ShoppingOperation] : []),
+    ...(process.env.PUSH_REGISTRATION_ENABLED === "true" ? Object.values(notificationModels) : []),
     SupportTicket,
     Supplier,
     KitTemplate,
@@ -369,6 +377,7 @@ async function boot() {
   // Serve shopping first.
   // Start marketing after its indexes are ready.
   void initializeMarketing();
+  startNotificationWorker();
 
   return server;
 }
@@ -405,6 +414,7 @@ function shutdown() {
   }
 
   stopMarketingWorker();
+  stopNotificationWorker();
 
   stopping = (async () => {
     const deadline = setTimeout(

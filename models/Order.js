@@ -1391,6 +1391,9 @@ orderSchema.pre("validate", function () {
   }
 });
 
+// Bounded notification projector scans by update timestamp and ID.
+orderSchema.index({ updatedAt: 1, _id: 1 });
+
 orderSchema.index(
   {
     user: 1,

@@ -1,0 +1,44 @@
+name: Isolated commerce database integrations
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: commerce-mongo-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  transactions:
+    # MongoDB 8 refuses affected 6.19–7.0.13 kernels. Keep the LTS runner
+    # until newer runner kernels satisfy MongoDB's documented compatibility.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - name: Start disposable loopback MongoDB replica set
+        run: |
+          uname -r
+          docker run --detach --name gymdrobe-fixture-mongo -p 127.0.0.1:27018:27017 mongo:8.0 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 30); do
+            if docker exec gymdrobe-fixture-mongo mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; then break; fi
+            if [ "$(docker inspect --format '{{.State.Running}}' gymdrobe-fixture-mongo)" != "true" ]; then docker logs gymdrobe-fixture-mongo; exit 1; fi
+            sleep 1
+          done
+          docker logs gymdrobe-fixture-mongo
+          docker exec gymdrobe-fixture-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          docker exec gymdrobe-fixture-mongo mongosh --quiet --eval 'for(let i=0;i<60;i++){if(db.hello().isWritablePrimary)quit(0);sleep(500)}quit(1)'
+      - name: Verify transactions, concurrent retries, token ownership and deletion
+        env:
+          GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_ci?replicaSet=rs0&directConnection=true
+        run: node tests/integration/commerce-mongo.cjs
+      - name: Remove disposable test database container
+        if: always()
+        run: |
+          docker logs gymdrobe-fixture-mongo || true
+          docker rm --force gymdrobe-fixture-mongo || true
