@@ -10,7 +10,7 @@ const initializeIndexes = require("../utils/initializeIndexes");
 
 // Execute the actual server bootstrap with controlled database readiness.
 // No listener, database connection or provider request leaves this fixture.
-function application(held, syncEnabled = false) {
+function application(held, syncEnabled = false, pushEnabled = false) {
   let release;
   let reject;
   let listening = 0;
@@ -55,6 +55,10 @@ function application(held, syncEnabled = false) {
     if (id === "./utils/initializeIndexes") return initializeIndexes;
     if (id === "./utils/marketing/config") return { DEFAULTS: {} };
     if (id === "./utils/marketing/worker") return { startMarketingWorker() {}, stopMarketingWorker() {} };
+    if (id === "./utils/notifications/domain") return { encryptionKey() {} };
+    if (id === "./utils/notifications/worker") return { startNotificationWorker() {}, stopNotificationWorker() {} };
+    if (id === "./models/NotificationStore") return Object.fromEntries(["Device", "Delivery", "Control"].map(name => [name, model(`Notification${name}`)]));
+    if (id === "./routes/notificationRoutes") return { createNotificationRouter: () => () => {} };
     if (id === "./models/MarketingStore") return Object.fromEntries(
       ["Config", "Consent", "Event", "Checkpoint", "FeedChunk"].map((name) => [name, model(`Marketing${name}`)]),
     );
@@ -69,7 +73,7 @@ function application(held, syncEnabled = false) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../server.js"), "utf8"), {
     require: requireFixture,
     module: moduleFixture,
-    process: { env: { APPLE_SIGN_IN_ENABLED: "false", SUPPLIER_PORTAL_ENABLED: "false", SHOPPING_SYNC_ENABLED: String(syncEnabled), PORT: "0" } },
+    process: { env: { APPLE_SIGN_IN_ENABLED: "false", SUPPLIER_PORTAL_ENABLED: "false", SHOPPING_SYNC_ENABLED: String(syncEnabled), PUSH_REGISTRATION_ENABLED: String(pushEnabled), PORT: "0" } },
     console: { log() {}, error() {} },
     setTimeout,
     clearTimeout,
@@ -83,9 +87,9 @@ function application(held, syncEnabled = false) {
   };
 }
 
-for (const collection of ["Order", "User", "GuestCheckoutSession", "ShoppingState", "ShoppingOperation"]) {
+for (const collection of ["Order", "User", "GuestCheckoutSession", "ShoppingState", "ShoppingOperation", "NotificationDevice", "NotificationDelivery", "NotificationControl"]) {
   test(`HTTP traffic waits for ${collection} constraints with Apple sign-in disabled`, async () => {
-    const app = application(collection, collection.startsWith("Shopping"));
+    const app = application(collection, collection.startsWith("Shopping"), collection.startsWith("Notification"));
     const startup = app.startServer();
     try {
       await new Promise(setImmediate);
