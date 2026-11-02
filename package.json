@@ -9,6 +9,7 @@
     "seed": "node scripts/seedProducts.js",
     "test": "node --test tests/*.test.js",
     "check": "node scripts/check-backend-files.cjs && npm test",
+    "staging:check": "node scripts/checkStaging.cjs",
     "test:sourcing": "node --test tests/meesho-sourcing.test.js"
   },
   "keywords": [],

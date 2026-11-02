@@ -10,10 +10,11 @@ const initializeIndexes = require("../utils/initializeIndexes");
 
 // Execute the actual server bootstrap with controlled database readiness.
 // No listener, database connection or provider request leaves this fixture.
-function application(held, syncEnabled = false, pushEnabled = false) {
+function application(held, syncEnabled = false, pushEnabled = false, env = {}) {
   let release;
   let reject;
   let listening = 0;
+  let connected = 0;
   let disconnected = false;
   const waiting = new Promise((resolve, fail) => {
     release = resolve;
@@ -51,7 +52,8 @@ function application(held, syncEnabled = false, pushEnabled = false) {
     if (id === "dotenv") return { config() {} };
     if (id === "cors") return () => (_req, _res, next) => next();
     if (id === "mongoose") return { disconnect: async () => { disconnected = true; } };
-    if (id === "./config/db") return async () => {};
+    if (id === "./config/db") return async () => { connected++; };
+    if (id === "./utils/stagingReadiness") return require("../utils/stagingReadiness");
     if (id === "./utils/initializeIndexes") return initializeIndexes;
     if (id === "./utils/marketing/config") return { DEFAULTS: {} };
     if (id === "./utils/marketing/worker") return { startMarketingWorker() {}, stopMarketingWorker() {} };
@@ -73,7 +75,7 @@ function application(held, syncEnabled = false, pushEnabled = false) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../server.js"), "utf8"), {
     require: requireFixture,
     module: moduleFixture,
-    process: { env: { APPLE_SIGN_IN_ENABLED: "false", SUPPLIER_PORTAL_ENABLED: "false", SHOPPING_SYNC_ENABLED: String(syncEnabled), PUSH_REGISTRATION_ENABLED: String(pushEnabled), PORT: "0" } },
+    process: { env: { APPLE_SIGN_IN_ENABLED: "false", SUPPLIER_PORTAL_ENABLED: "false", SHOPPING_SYNC_ENABLED: String(syncEnabled), PUSH_REGISTRATION_ENABLED: String(pushEnabled), PORT: "0", ...env } },
     console: { log() {}, error() {} },
     setTimeout,
     clearTimeout,
@@ -83,6 +85,7 @@ function application(held, syncEnabled = false, pushEnabled = false) {
     release,
     reject,
     get listening() { return listening; },
+    get connected() { return connected; },
     get disconnected() { return disconnected; },
   };
 }
@@ -118,4 +121,31 @@ test("failed order constraints keep the HTTP listener closed", async () => {
   } finally {
     await app.shutdown();
   }
+});
+
+test("unsafe staging configuration fails the real bootstrap before database access or listening", async () => {
+  const app = application(null, false, false, {
+    GYMDROBE_ENV: "staging", RAZORPAY_KEY_ID: "rzp_live_PrivateFixture",
+    MONGO_URI: "mongodb://private:password@database.example/production",
+  });
+  try {
+    await assert.rejects(app.startServer(), error => error.code === "STAGING_CONFIGURATION_BLOCKED" && !error.message.includes("PrivateFixture") && !error.message.includes("password"));
+    assert.equal(app.connected, 0);
+    assert.equal(app.listening, 0);
+  } finally { await app.shutdown(); }
+});
+
+test("a valid staging configuration reaches the existing index and listener readiness path", async () => {
+  const app = application(null, false, false, {
+    GYMDROBE_ENV: "staging", GYMDROBE_STAGING_DATABASE: "gymdrobe_staging_bootstrap",
+    MONGO_URI: "mongodb://127.0.0.1:27017/gymdrobe_staging_bootstrap",
+    RAZORPAY_KEY_ID: "rzp_test_Fixture", RAZORPAY_KEY_SECRET: "private-provider-fixture",
+    RAZORPAY_WEBHOOK_SECRET: "private-webhook-fixture", JWT_SECRET: "a-dedicated-private-fixture-jwt-at-least-32-characters",
+    FRONTEND_URL: "http://localhost:5173",
+  });
+  try {
+    await app.startServer();
+    assert.equal(app.connected, 1);
+    assert.equal(app.listening, 1);
+  } finally { await app.shutdown(); }
 });
