@@ -45,7 +45,7 @@ test("configuration results and guard errors exclude every supplied credential, 
 
 test("live, absent and placeholder payment credentials are blocked", () => {
   for (const key of ["rzp_live_A1", "rzp_test_replace_me", "", "rzp_test_../private"]) blocked(fixture({ RAZORPAY_KEY_ID: key }), "test-payment-key");
-  for (const value of ["", "replace-with-a-private-value", "your_secret", "${PAYMENT_SECRET}", "<secret>"]) {
+  for (const value of ["", "replace", "example", "replace-with-a-private-value", "your_secret", "${PAYMENT_SECRET}", "<secret>"]) {
     blocked(fixture({ RAZORPAY_KEY_SECRET: value }), "payment-secret");
     blocked(fixture({ RAZORPAY_WEBHOOK_SECRET: value }), "webhook-secret");
   }
@@ -65,8 +65,8 @@ test("the actual driver parses SRV, multi-host and encoded Mongo credentials wit
 });
 
 test("known production domains, credentials in URLs and remote HTTP are blocked", () => {
-  for (const origin of ["https://gymdrobe.com", "https://WWW.GYMDROBE.COM./", "https://sub.gymdrobe.com", "https://gym-store-xi.vercel.app", "https://user:password@staging.example", "http://staging.example", "https://staging.example/path", "https://staging.example?token=private", "https://staging.example#private"]) blocked(fixture({ FRONTEND_URL: origin }), "staging-frontend");
-  for (const origin of ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"]) assert.equal(inspectStagingConfiguration(fixture({ FRONTEND_URL: origin })).status, "configuration-passed");
+  for (const origin of ["https://gymdrobe.com", "https://WWW.GYMDROBE.COM./", "https://gym-store-xi.vercel.app", "https://user:password@staging.example", "http://staging.example", "https://staging.example/path", "https://staging.example?token=private", "https://staging.example#private"]) blocked(fixture({ FRONTEND_URL: origin }), "staging-frontend");
+  for (const origin of ["https://staging.gymdrobe.com", "http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"]) assert.equal(inspectStagingConfiguration(fixture({ FRONTEND_URL: origin })).status, "configuration-passed");
 });
 
 test("staging payment checks block push and supplied outbound email/advertising credentials", () => {

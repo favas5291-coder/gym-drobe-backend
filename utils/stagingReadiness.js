@@ -2,7 +2,7 @@
 
 const value = (env, name) => String(env[name] || "").trim();
 const mode = (env) => value(env, "GYMDROBE_ENV").toLowerCase();
-const placeholder = (text) => !text || /^(?:your[_ -]|paste[_ -]|replace[_ -]|example[_ -]|changeme$|password$|secret$|<|\$\{)/i.test(text);
+const placeholder = (text) => !text || /^(?:(?:your|paste|replace|example)(?:[_ -]|$)|changeme$|password$|secret$|<|\$\{)/i.test(text);
 
 // Parse only. Constructing the driver does not connect; never import db.js,
 // models, server.js or provider clients from this configuration check.
@@ -21,7 +21,7 @@ function stagingOrigin(origin) {
     const url = new URL(origin);
     const host = url.hostname.toLowerCase().replace(/\.$/, "");
     const local = ["localhost", "127.0.0.1", "[::1]"].includes(host);
-    const live = host === "gymdrobe.com" || host.endsWith(".gymdrobe.com") || host === "gym-store-xi.vercel.app";
+    const live = ["gymdrobe.com", "www.gymdrobe.com", "gym-store-xi.vercel.app"].includes(host);
     return !live && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/"
       && (url.protocol === "https:" || (local && url.protocol === "http:"));
   } catch {
