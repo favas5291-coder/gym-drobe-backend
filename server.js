@@ -300,6 +300,11 @@ async function initializeMarketing(attempt = 1) {
 }
 
 async function boot() {
+  // Validate the actual environment after dotenv has loaded, before touching
+  // a database, creating indexes, opening HTTP or starting outbound workers.
+  if (process.env.GYMDROBE_ENV) {
+    require("./utils/stagingReadiness").assertStagingIsolation(process.env);
+  }
   await connectDB();
 
   if (process.env.PUSH_REGISTRATION_ENABLED === "true") notificationEncryptionKey();
