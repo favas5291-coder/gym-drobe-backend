@@ -4,3 +4,8 @@ node_modules/
 !.env.example
 !.env.staging.example
 *.log
+
+# Local model weights; provision explicitly on the server.
+/models-cache/
+*.onnx
+*.download
