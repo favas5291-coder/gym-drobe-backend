@@ -85,6 +85,14 @@ const app = express();
 
 app.use(cors());
 
+// API responses may contain customer data or current payment/stock state.
+// Apply before parsers/routes so authentication, validation and error replies
+// receive the same cache policy; raw webhook bytes remain untouched.
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
 // Razorpay signature verification requires the exact raw body.
 // Keep this before express.json().
 app.use(
