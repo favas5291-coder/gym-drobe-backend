@@ -13,3 +13,5 @@ Official advisory references:
 - https://github.com/advisories/GHSA-mrwp-f3q8-3g9p
 - https://github.com/advisories/GHSA-6pq8-jhm2-2vcw
 - https://github.com/advisories/GHSA-g3hv-75wg-m249
+
+Local verification:112 tests and source checks pass; the audit reports zero known vulnerabilities. The loopback redirect test fails with the previous dependency and passes after the patch. The compressed-body availability case passes after the patch; it does not claim comprehensive exploit coverage. CI now also runs for package/lockfile and all test changes and checks known dependency advisories.
