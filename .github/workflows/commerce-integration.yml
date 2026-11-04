@@ -37,6 +37,13 @@ jobs:
         env:
           GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_ci?replicaSet=rs0&directConnection=true
         run: node tests/integration/commerce-mongo.cjs
+      - name: Provision the pinned local visual-search model
+        run: npm run visual-search:download -- "$RUNNER_TEMP/gymdrobe-clip"
+      - name: Verify real visual indexing, model inference and HTTP catalogue matches
+        env:
+          GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_ci?replicaSet=rs0&directConnection=true
+          VISUAL_SEARCH_MODEL_DIR: ${{ runner.temp }}/gymdrobe-clip
+        run: node tests/integration/visual-search-mongo.cjs
       - name: Remove disposable test database container
         if: always()
         run: |

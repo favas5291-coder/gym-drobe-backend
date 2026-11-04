@@ -106,6 +106,8 @@ app.use(
   paymentWebhookRoutes,
 );
 
+app.use("/api/visual-search", require("./routes/visualSearchRoutes"));
+
 app.use(
   express.json({
     limit: "1mb",
@@ -432,6 +434,7 @@ function shutdown() {
     deadline.unref?.();
 
     try {
+      await require("./utils/visualSearch/model").close();
       // Finish pending startup before disconnecting MongoDB.
       // boot() checks shuttingDown before opening the listener.
       await startup?.catch(

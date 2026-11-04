@@ -53,6 +53,7 @@ function application(held, syncEnabled = false, pushEnabled = false, env = {}) {
     if (id === "cors") return () => (_req, _res, next) => next();
     if (id === "mongoose") return { disconnect: async () => { disconnected = true; } };
     if (id === "./config/db") return async () => { connected++; };
+    if (id === "./utils/visualSearch/model") return { close: async () => {} };
     if (id === "./utils/stagingReadiness") return require("../utils/stagingReadiness");
     if (id === "./utils/initializeIndexes") return initializeIndexes;
     if (id === "./utils/marketing/config") return { DEFAULTS: {} };

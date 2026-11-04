@@ -1,0 +1,2 @@
+const fs=require('node:fs'),{embed,close}=require('../utils/visualSearch/model'),{normalizeImage}=require('../utils/visualSearch/image');
+(async()=>{const start=Date.now(),v=await embed(await normalizeImage(fs.readFileSync(process.argv[2])));console.log(JSON.stringify({dimensions:v.length,finite:v.every(Number.isFinite),elapsedMs:Date.now()-start}));})().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(close);
