@@ -51,6 +51,7 @@ async function protect(req, res, next) {
     }
 
     req.user = user;
+    req.authIssuedAt = decoded.iat;
     return next();
   } catch (error) {
     if (

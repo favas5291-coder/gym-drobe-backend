@@ -10,6 +10,11 @@ const initializeIndexes = require("./utils/initializeIndexes");
 
 const productRoutes = require("./routes/productRoutes");
 const authRoutes = require("./routes/authRoutes");
+const { createShoppingRouter } = require("./routes/shoppingRoutes");
+const { createNotificationRouter } = require("./routes/notificationRoutes");
+const notificationModels = require("./models/NotificationStore");
+const { encryptionKey: notificationEncryptionKey } = require("./utils/notifications/domain");
+const { startNotificationWorker, stopNotificationWorker } = require("./utils/notifications/worker");
 const addressRoutes = require("./routes/addressRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
@@ -57,6 +62,11 @@ const marketingRoutes = require(
 );
 
 const SupportTicket = require("./models/SupportTicket");
+const User = require("./models/User");
+const Order = require("./models/Order");
+const GuestCheckoutSession = require("./models/GuestCheckoutSession");
+const ShoppingState = require("./models/ShoppingState");
+const ShoppingOperation = require("./models/ShoppingOperation");
 const Supplier = require("./models/Supplier");
 const KitTemplate = require("./models/KitTemplate");
 const PackingLocation = require("./models/PackingLocation");
@@ -85,9 +95,8 @@ const app = express();
 
 app.use(cors());
 
-// API responses may contain customer data or current payment/stock state.
-// Apply before parsers/routes so authentication, validation and error replies
-// receive the same cache policy; raw webhook bytes remain untouched.
+// Include authorization, parsing and route errors in the API cache policy.
+// Headers do not alter the raw bytes used for webhook verification.
 app.use("/api", (_req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
@@ -104,6 +113,8 @@ app.use(
   paymentWebhookRoutes,
 );
 
+app.use("/api/visual-search", require("./routes/visualSearchRoutes"));
+
 app.use(
   express.json({
     limit: "1mb",
@@ -119,6 +130,8 @@ app.get("/api/health", (req, res) => {
 
 app.use("/api/products", productRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/shopping-state", createShoppingRouter());
+app.use("/api/notifications", createNotificationRouter());
 app.use("/api/addresses", addressRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -296,7 +309,14 @@ async function initializeMarketing(attempt = 1) {
 }
 
 async function boot() {
+  // Validate the actual environment after dotenv has loaded, before touching
+  // a database, creating indexes, opening HTTP or starting outbound workers.
+  if (process.env.GYMDROBE_ENV) {
+    require("./utils/stagingReadiness").assertStagingIsolation(process.env);
+  }
   await connectDB();
+
+  if (process.env.PUSH_REGISTRATION_ENABLED === "true") notificationEncryptionKey();
 
   if (shuttingDown) {
     throw new Error(
@@ -305,6 +325,13 @@ async function boot() {
   }
 
   await initializeIndexes([
+    // Identity, checkout idempotency and guest credential constraints must
+    // be ready before any authentication or commerce request is accepted.
+    User,
+    Order,
+    GuestCheckoutSession,
+    ...(process.env.SHOPPING_SYNC_ENABLED === "true" ? [ShoppingState, ShoppingOperation] : []),
+    ...(process.env.PUSH_REGISTRATION_ENABLED === "true" ? Object.values(notificationModels) : []),
     SupportTicket,
     Supplier,
     KitTemplate,
@@ -364,6 +391,7 @@ async function boot() {
   // Serve shopping first.
   // Start marketing after its indexes are ready.
   void initializeMarketing();
+  startNotificationWorker();
 
   return server;
 }
@@ -400,6 +428,7 @@ function shutdown() {
   }
 
   stopMarketingWorker();
+  stopNotificationWorker();
 
   stopping = (async () => {
     const deadline = setTimeout(
@@ -412,6 +441,7 @@ function shutdown() {
     deadline.unref?.();
 
     try {
+      await require("./utils/visualSearch/model").close();
       // Finish pending startup before disconnecting MongoDB.
       // boot() checks shuttingDown before opening the listener.
       await startup?.catch(

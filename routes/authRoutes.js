@@ -7,6 +7,10 @@ const {
   updateProfile,
 } = require("../middleware/controllers/authController");
 
+const { appleChallenge, appleLogin } = require("../middleware/controllers/appleAuthController");
+
+const { deletionPolicy, deleteAccount } = require("../middleware/controllers/accountDeletionController");
+
 const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -89,6 +93,12 @@ router.post(
   rateLimit(30, 15 * 60000),
   googleLogin
 );
+
+router.get("/apple/challenge", rateLimit(60, 15 * 60000), appleChallenge);
+router.post("/apple", rateLimit(30, 15 * 60000), appleLogin);
+
+router.get("/account-deletion", protect, deletionPolicy);
+router.delete("/account-deletion", rateLimit(5, 15 * 60000), protect, deleteAccount);
 
 // Current account.
 router.get("/me", protect, getMe);
