@@ -95,6 +95,13 @@ const app = express();
 
 app.use(cors());
 
+// Include authorization, parsing and route errors in the API cache policy.
+// Headers do not alter the raw bytes used for webhook verification.
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
 // Razorpay signature verification requires the exact raw body.
 // Keep this before express.json().
 app.use(
