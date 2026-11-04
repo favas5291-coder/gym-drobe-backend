@@ -2,6 +2,9 @@ name: Backend catalogue performance regression
 on:
   pull_request:
     paths:
+      - package.json
+      - package-lock.json
+      - 'tests/**'
       - middleware/controllers/productController.js
       - tests/catalog-performance.test.js
       - tests/startup-performance.test.js
@@ -13,6 +16,7 @@ on:
 jobs:
   catalogue:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,3 +28,5 @@ jobs:
         run: npm test
       - name: Syntax and file health
         run: node scripts/check-backend-files.cjs
+      - name: Known dependency security advisories
+        run: npm audit --audit-level=moderate

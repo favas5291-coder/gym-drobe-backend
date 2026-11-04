@@ -3,10 +3,10 @@
 ## Verified in this continuation
 
 - Prepared source: payment-staging/visual-search foundation at `2bb5d631afc271ba8e2bb7bf2c3c1b4dbec06ab4`, combined with the existing order-notifications review branch. This is an aggregate review, not a second implementation.
-- `npm run check`: 164 tests passed, zero failed or skipped, plus source/file checks.
+- `npm run check`: 166 tests passed, zero failed or skipped, plus source/file checks.
 - `npm run staging:check`: blocked as expected because no isolated database, dedicated JWT secret, Razorpay test key pair/webhook secret or staging origin is configured locally. No secret values are included in the report.
 - Connected Render workspace has the existing production GymDrobe backend on the free plan; no separate payment staging service is present. No resource, environment variable or production deployment was changed.
-- Existing main `0a33e10576a68f9ec8f5f8f1fea9157176375095` remains the deployed production foundation. Prepared Apple identity, shopping synchronization, push and visual-search work must not be described as live.
+- Production main is now `745adaea8196cf776c311d78c2eae08e89e651a5`: the separate dependency-only PR9 passed112 tests/audit and deployed on the existing free Render service. This review incorporates those compatible patches without enabling staged features. Prepared Apple identity, shopping synchronization, push and visual-search work must not be described as live.
 
 ## Why production rollout remains blocked
 
@@ -30,3 +30,7 @@ No additional service costs are authorized. No production database inspection, D
 ## Available isolated integration checks
 
 The existing CI uses a disposable loopback MongoDB 8 replica set for transaction/concurrency/deletion cases and a pinned local model for visual-index HTTP checks. These do not call payment, email or push providers. Retain the run/source evidence separately from staging-provider, physical-device and production evidence.
+
+## Dependency compatibility checkpoint
+
+Reuse the production security patch: body-parser2.4.0, follow-redirects1.16.2, qs6.17.1 and the built-in development watcher. Preserve all prepared staging/visual-search commands. Local aggregate166 tests and source checks pass; npm audit reports zero known vulnerabilities. The added loopback redirect assertion fails with the old dependency and passes with the patch. New database integration runs remain distinct from actual provider acceptance.
