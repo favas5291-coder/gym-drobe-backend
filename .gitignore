@@ -9,3 +9,5 @@ node_modules/
 /models-cache/
 *.onnx
 *.download
+
+/.visual-model/
