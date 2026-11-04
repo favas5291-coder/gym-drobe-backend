@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "node --watch server.js",
     "seed": "node scripts/seedProducts.js",
     "test": "node --test tests/*.test.js",
     "check": "node scripts/check-backend-files.cjs && npm test",
@@ -24,8 +24,5 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.10.2",
     "razorpay": "^2.9.8"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.14"
   }
 }
