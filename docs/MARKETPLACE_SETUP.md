@@ -39,6 +39,14 @@ A verified, reconciled COD advance supports item cancellation: the exact purchas
 
 Returns through the admin item controls require actual receipt/inspection evidence; the admin is responsible for the purchased policy and any recorded exception. Financial snapshots are immutable. External refund records are reconciliation actions; the dashboard does not execute refunds or independently confirm provider/bank references. Provider automation for those records is deferred.
 
+### Existing items in mixed orders
+
+Admin Orders and shipments includes lazy-loaded controls for purchased items without a supplier snapshot. The API restricts these controls to orders containing supplier fulfilment groups; ordinary legacy orders keep their existing resolution workflow. A purchased supplier item cannot be routed through unassigned-item controls, even if its current catalogue ownership changed. Missing/inconsistent supplier snapshots require reconciliation instead of guessing an owner.
+
+Partial quantities use the same immutable purchased discount/rounding allocations, collection checks and refund-reference safeguards as supplier items. The records have scope `legacy`, no supplier or entitlement and zero supplier reversal. Existing records with no scope remain supplier records through their existing references; no historical backfill is needed. Transactions lock affected supplier accounts and the versioned customer order to prevent concurrent quantity, refund and payout races. An already-completed external refund can be recorded separately; no provider call is made.
+
+Restocking requires recorded reservation and a still-unassigned historical product. Otherwise reconcile stock manually. Cancellation uses the customer order dispatch state, and a return requires admin-confirmed delivery and actual receipt/inspection evidence. These item controls preserve purchased shipping; shipping-refund rules and any resulting allocation work remain a launch gate.
+
 ## Images, privacy and costs
 
 - Picker accepts JPEG/PNG/WebP, reduces to 1280px before upload; server validates MIME versus decoded type, single frame, dimensions/pixel count and byte limit, then strips metadata by WebP re-encoding.

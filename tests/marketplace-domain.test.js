@@ -28,3 +28,11 @@ test("immutable supplier shipment membership hydrates and permits status updates
 test("disabled marketplace models require explicit supporting collection/index initialization",()=>{for(const model of Object.values(require("../models/Marketplace"))){assert.equal(model.schema.options.autoCreate,false,model.modelName);assert.equal(model.schema.options.autoIndex,false,model.modelName);}});
 
 test("supplement expiry rejects impossible dates and malformed category arrays before publication",()=>{const f=require("./fixtures/marketplace-data.cjs"),base={...f.draft,category:"Supplements",batch:"TEST-BATCH"};for(const expiryDate of ["2027-13-01","2027-02-31","not-a-date","2020-01-01"])assert.throws(()=>D.draft({...base,expiryDate},true),/expiry/);assert.equal(D.draft({...base,expiryDate:"2030-12-01"},true).expiryDate,"2030-12-01");assert.throws(()=>D.draft({...f.draft,variantImages:"bad"}),/variant image groups/);assert.throws(()=>D.draft({...f.draft,careInstructions:{bad:true}}),/care instructions/);});
+
+test("legacy item resolutions cannot manufacture supplier ownership or supplier adjustments",async()=>{
+ const M=require("../models/Marketplace"),mongoose=require("mongoose"),id=()=>new mongoose.Types.ObjectId();
+ const row={scope:"legacy",order:id(),itemIndex:1,requestKey:"fixture-legacy-resolution",kind:"cancellation",quantity:1,customerCreditPaise:12500,customerRefundPaise:12500,supplierReversalPaise:0,reason:"Synthetic purchased item cancellation.",restockedQuantity:0,status:"refund-pending",actor:id()};
+ await new M.Resolution(row).validate();await assert.rejects(new M.Resolution({...row,supplier:id()}).validate(),/cannot create supplier/);await assert.rejects(new M.Resolution({...row,entitlement:id()}).validate(),/cannot create supplier/);await assert.rejects(new M.Resolution({...row,supplierReversalPaise:1}).validate(),/cannot create supplier/);
+ await assert.rejects(new M.Resolution({...row,scope:"supplier"}).validate(),/supplier.*required|entitlement.*required/);
+ const fields={...row,supplier:id(),entitlement:id()};delete fields.scope;const old=M.Resolution.hydrate(fields);assert.equal(old.scope,undefined);assert.equal(old.isModified("scope"),false);await old.validate();
+});
