@@ -46,7 +46,7 @@ async function inspectLegacy(actor,orderId){
   for(let index=0;index<order.items.length;index++){
     const item=order.items[index];if(item.marketplace)continue;
     if(entitlements.some(e=>e.itemIndex===index))D.fail("Purchased supplier ownership requires reconciliation.",409);
-    items.push({id:String(index),itemIndex:index,orderId:String(order._id),name:item.name,quantity:item.quantity,resolvedQuantity:rows.filter(r=>r.itemIndex===index).reduce((n,r)=>n+r.quantity,0),unitPricePaise:paise(item.price)});
+    items.push({id:String(index),itemIndex:index,orderId:String(order._id),name:item.name,sku:item.sku||"",selectedSize:item.selectedSize||"",selectedColor:item.selectedColor||"",quantity:item.quantity,resolvedQuantity:rows.filter(r=>r.itemIndex===index).reduce((n,r)=>n+r.quantity,0),unitPricePaise:paise(item.price)});
   }
   return {order:{id:String(order._id),orderNumber:order.orderNumber,status:order.status},items,resolutions:rows.filter(r=>r.scope==="legacy").map(safe)};
 }

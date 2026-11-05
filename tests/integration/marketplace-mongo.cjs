@@ -88,7 +88,7 @@ async function run(){
   legacyMixed=await createOrder([purchased(product),legacyPurchase(2)],"razorpay",true,{couponDiscount:.03,totalAfterCoupon:799.99,shipping:40,finalTotal:839.99});
   const route=`/admin/orders/${legacyMixed._id}`;
   assert.equal((await request(route+"/resolutions",{actor:alice})).status,403);
-  const inspected=await request(route+"/resolutions",{actor:admin});assert.equal(inspected.status,200,JSON.stringify(inspected));assert.deepEqual(inspected.items.map(i=>i.itemIndex),[1]);assert.equal(inspected.items[0].unitPricePaise,12501);
+  const inspected=await request(route+"/resolutions",{actor:admin});assert.equal(inspected.status,200,JSON.stringify(inspected));assert.deepEqual(inspected.items.map(i=>i.itemIndex),[1]);assert.equal(inspected.items[0].unitPricePaise,12501);assert.equal(inspected.items[0].selectedSize,"M");assert.equal(inspected.items[0].selectedColor,"Black");
   const body=legacyBody();assert.equal((await request(route+"/items/1/resolutions",{actor:alice,method:"POST",body})).status,403);
   assert.equal((await request(route+"/items/0/resolutions",{actor:admin,method:"POST",body})).status,409);
   assert.equal((await request(route+"/items/1e0/resolutions",{actor:admin,method:"POST",body})).status,400);
