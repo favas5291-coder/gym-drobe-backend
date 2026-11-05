@@ -1,0 +1,45 @@
+name: Supplier marketplace acceptance
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: marketplace-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  marketplace:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm audit --audit-level=moderate
+      - name: Start isolated loopback replica set
+        run: |
+          docker run --detach --name gymdrobe-marketplace-fixture -p 127.0.0.1:27018:27017 mongo:8.0 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 30); do
+            if docker exec gymdrobe-marketplace-fixture mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec gymdrobe-marketplace-fixture mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          docker exec gymdrobe-marketplace-fixture mongosh --quiet --eval 'for(let i=0;i<60;i++){if(db.hello().isWritablePrimary)quit(0);sleep(500)}quit(1)'
+      - name: Actual supplier API, database transactions and payout concurrency
+        env:
+          GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_marketplace_ci?replicaSet=rs0&directConnection=true
+        run: node tests/integration/marketplace-mongo.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: marketplace-acceptance
+          path: test-results/
+      - name: Stop disposable database
+        if: always()
+        run: |
+          docker logs gymdrobe-marketplace-fixture || true
+          docker rm --force gymdrobe-marketplace-fixture || true

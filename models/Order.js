@@ -277,6 +277,7 @@ const sourcingSchema = new mongoose.Schema(
 
 const orderItemSchema = new mongoose.Schema(
   {
+    marketplace: { type: mongoose.Schema.Types.Mixed, default: undefined, immutable: true, select: false },
     sourcing: {
       type: sourcingSchema,
       default: null,
@@ -753,6 +754,8 @@ const paymentSchema = new mongoose.Schema(
 
 const orderSchema = new mongoose.Schema(
   {
+    marketplaceResolutions: { type:[new mongoose.Schema({key:String,itemIndex:Number,kind:String,quantity:Number,customerCreditPaise:Number,customerRefundPaise:Number,status:String,reference:String,refundedAt:Date},{_id:false,strict:"throw"})],default:undefined },
+    supplierShipments: { type: [new mongoose.Schema({ key: String, itemIndices: [Number], status: String, carrier: String, trackingNumber: String, trackingUrl: String, deliveredAt: Date }, { _id: false, strict: "throw" })], default: undefined },
     orderNumber: {
       type: String,
       required: true,
@@ -1066,6 +1069,7 @@ function hideSourcing(document, result) {
 
   for (const item of result.items || []) {
     delete item.sourcing;
+    delete item.marketplace;
   }
 
   if (result.fulfillmentProgress) {
@@ -1429,6 +1433,12 @@ orderSchema.index({
   "payment.method": 1,
   "payment.balanceStatus": 1,
   createdAt: -1,
+});
+
+orderSchema.pre("save", async function () {
+  if (this.isNew && this.items.some(item => item.marketplace)) {
+    await require("../utils/marketplace/settlement").initializeOrder(this, this.$session());
+  }
 });
 
 module.exports =
