@@ -754,7 +754,7 @@ const paymentSchema = new mongoose.Schema(
 
 const orderSchema = new mongoose.Schema(
   {
-    marketplaceResolutions: { type:[new mongoose.Schema({key:String,itemIndex:Number,kind:String,quantity:Number,customerRefundPaise:Number,status:String,reference:String,refundedAt:Date},{_id:false,strict:"throw"})],default:undefined },
+    marketplaceResolutions: { type:[new mongoose.Schema({key:String,itemIndex:Number,kind:String,quantity:Number,customerCreditPaise:Number,customerRefundPaise:Number,status:String,reference:String,refundedAt:Date},{_id:false,strict:"throw"})],default:undefined },
     supplierShipments: { type: [new mongoose.Schema({ key: String, itemIndices: [Number], status: String, carrier: String, trackingNumber: String, trackingUrl: String, deliveredAt: Date }, { _id: false, strict: "throw" })], default: undefined },
     orderNumber: {
       type: String,

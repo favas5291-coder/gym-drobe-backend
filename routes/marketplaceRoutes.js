@@ -34,6 +34,7 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/media",handler(req=>Media.upload(req.user,req.body)));
   r.delete("/media/:id",handler(req=>Media.remove(req.user,req.params.id)));
   r.use("/admin",(req,res,next)=>{try{S.actorRequired(req.user,true);next();}catch(e){res.status(e.status).json({success:false,message:e.message});}});
+  r.post("/admin/orders/:id/collection",handler(req=>require("../utils/marketplace/resolution").recordCollection(req.user,req.params.id,req.body)));
   r.post("/admin/earnings/:id/resolutions",handler(req=>require("../utils/marketplace/resolution").create(req.user,req.params.id,req.body)));
   r.post("/admin/resolutions/:id/refund",handler(req=>require("../utils/marketplace/resolution").recordRefund(req.user,req.params.id,req.body)));
   r.get("/admin/reporting",handler(req=>F.reporting(req.user)));
@@ -46,6 +47,7 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/admin/suppliers/:id/invitation",handler(req=>S.regenerateInvitation(req.user,req.params.id,req.body)));
   r.patch("/admin/suppliers/:id/status",handler(req=>S.setStatus(req.user,req.params.id,req.body)));
   r.post("/admin/listings/:id/review",handler(req=>S.review(req.user,req.params.id,req.body)));
+  r.get("/admin/destinations/:id",handler(async req=>{const d=await S.M.Destination.findById(S.D.id(req.params.id));if(!d)S.D.fail("Destination not found.",404);return {destination:S.safeDestination(d)};}));
   r.post("/admin/destinations/:id/verify",handler(req=>S.verifyPayment(req.user,req.params.id,req.body)));
   r.post("/admin/destinations/:id/reveal",authLimit,handler(req=>S.revealPayment(req.user,req.params.id,req.body)));
   r.post("/admin/suppliers/:id/payouts",handler(req=>F.reservePayout(req.user,req.params.id,req.body)));

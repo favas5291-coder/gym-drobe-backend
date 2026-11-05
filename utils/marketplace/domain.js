@@ -145,5 +145,5 @@ function paymentDetails(value) {
   return result;
 }
 function maskPayment(d) { return {accountHolder:d.accountHolder,accountNumber:d.accountNumber?"••••"+d.accountNumber.slice(-4):"",ifsc:d.ifsc,upiId:d.upiId?d.upiId.slice(0,2)+"••••@"+d.upiId.split("@")[1]:""}; }
-function csv(rows) { return rows.map(row=>row.map(v=>'"'+String(v??"").replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"').join(",")).join("\r\n"); }
+function csv(rows) { return rows.map(row=>row.map(v=>'"'+String(v??"").replace(/^(?:\s*[=+@\-]|[\t\r\n])/,"'$&").replaceAll('"','""')+'"').join(",")).join("\r\n"); }
 module.exports = { fail, object, text, integer, id, digest, email, password, address, business, terms, key, image, draft, reviewPrices, allocateExact, lineFinance, seal, unseal, paymentDetails, maskPayment, csv, MAX };
