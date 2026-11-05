@@ -54,9 +54,11 @@ function draft(value, submit = false) {
   const out = { name: text(value.name || "Untitled product", "name", 200, 2), brand: text(value.brand || "", "brand", 100, submit ? 1 : 0), category: text(value.category || "", "category", 100, submit ? 1 : 0), description: text(value.description || "", "description", 5000, submit ? 10 : 0) };
   if (!Array.isArray(value.images) || value.images.length > 12 || (submit && !value.images.length)) fail("Provide up to twelve product images.");
   out.images = [...new Set(value.images.map(image))];
+  if(value.variantImages!==undefined&&(!Array.isArray(value.variantImages)||value.variantImages.length>30))fail("Provide up to thirty variant image groups.");
   out.variantImages = (value.variantImages || []).map(v => { object(v, ["color", "images"], "Variant images"); if (!Array.isArray(v.images) || v.images.length > 8) fail("Too many variant images."); return { color: option(v.color), images: v.images.map(image) }; });
   if (out.variantImages.length > 30) fail("Too many variant image groups.");
   for (const field of ["material", "sizeChart", "manufacturer", "origin", "warranty", "batch", "expiryDate"]) out[field] = text(value[field] || "", field, 1000);
+  if(value.careInstructions!==undefined&&(!Array.isArray(value.careInstructions)||value.careInstructions.length>12))fail("Provide up to twelve care instructions.");
   out.careInstructions = (value.careInstructions || []).map(v => text(v, "care instruction", 300));
   if (out.careInstructions.length > 12) fail("Too many care instructions.");
   out.specifications = value.specifications || {};
@@ -75,7 +77,7 @@ function draft(value, submit = false) {
   out.returnConditions = text(value.returnConditions || "", "return conditions", 2000, submit ? 2 : 0);
   if (submit && out.returnsEligible === "unconfirmed") fail("Confirm the purchased returns policy before submission.");
   if (/protein|supplement|creatine|nutrition|fish oil|pre.?workout/i.test(out.category) && submit) {
-    if (!out.batch || !/^\d{4}-\d{2}-\d{2}$/.test(out.expiryDate) || new Date(out.expiryDate).getTime() <= Date.now()) fail("Supplements require batch and future expiry date.");
+    if (!out.batch || !/^\d{4}-\d{2}-\d{2}$/.test(out.expiryDate) || !Number.isFinite(new Date(out.expiryDate).getTime()) || new Date(out.expiryDate).toISOString().slice(0,10)!==out.expiryDate || new Date(out.expiryDate).getTime() <= Date.now()) fail("Supplements require batch and future expiry date.");
     if (!out.manufacturer || !out.origin) fail("Supplements require manufacturer and origin.");
   }
   if (!Array.isArray(value.variants) || !value.variants.length || value.variants.length > 100) fail("Provide one to 100 variants.");
