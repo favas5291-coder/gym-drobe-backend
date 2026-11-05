@@ -376,6 +376,7 @@ function safeOrder(order) {
     customer: value.customer,
     shippingAddress: value.shippingAddress,
 
+    ...(value.marketplaceResolutions?.length ? {marketplaceResolutions:value.marketplaceResolutions} : {}),
     ...(value.supplierShipments?.length ? { supplierShipments: value.supplierShipments } : {}),
     items: (value.items || []).map((item) => ({
       id: String(item.product),
@@ -1394,6 +1395,7 @@ const cancelOrder = handler(
           customerFilter(req),
         );
 
+        if(order.marketplaceResolutions?.length)throw problem(409,"This order has item-level resolutions. Contact support; admin must resolve remaining items individually to prevent duplicate stock restoration or refunds.","MARKETPLACE_ITEM_RESOLUTION_REQUIRED");
         if (
           order.status === "cancelled" ||
           order.cancellation?.status ===

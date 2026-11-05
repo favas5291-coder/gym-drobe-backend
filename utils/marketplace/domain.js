@@ -82,9 +82,9 @@ function draft(value, submit = false) {
   const seen = new Set(), skus = new Set();
   out.variants = value.variants.map(v => {
     object(v, ["size", "color", "supplierSku", "barcode", "supplierUnitAmount", "mrpUnitAmount", "stock", "supplierPromotionMaximumPaise", "promotionAgreement"], "Supplier variant");
-    const row = { size: option(v.size, 50), color: option(v.color), supplierSku: text(v.supplierSku, "supplier SKU", 80, 1), barcode: text(v.barcode || "", "barcode", 60), supplierUnitAmount: integer(v.supplierUnitAmount, "Supplier unit paise", 1), mrpUnitAmount: v.mrpUnitAmount == null ? null : integer(v.mrpUnitAmount, "MRP paise", 1), stock: integer(v.stock, "Variant stock", 0, 1000000), supplierPromotionMaximumPaise: integer(v.supplierPromotionMaximumPaise || 0, "Agreed supplier promotion contribution", 0, v.supplierUnitAmount), promotionAgreement: text(v.promotionAgreement || "", "promotion agreement reference", 500) };
+    const row = { size: option(v.size, 50), color: option(v.color), supplierSku: text(v.supplierSku||"", "supplier SKU", 80, submit?1:0), barcode: text(v.barcode || "", "barcode", 60), supplierUnitAmount: integer(v.supplierUnitAmount, "Supplier unit paise", submit?1:0), mrpUnitAmount: v.mrpUnitAmount == null ? null : integer(v.mrpUnitAmount, "MRP paise", 1), stock: integer(v.stock, "Variant stock", 0, 1000000), supplierPromotionMaximumPaise: integer(v.supplierPromotionMaximumPaise || 0, "Agreed supplier promotion contribution", 0, v.supplierUnitAmount), promotionAgreement: text(v.promotionAgreement || "", "promotion agreement reference", 500) };
     if (row.supplierPromotionMaximumPaise && !row.promotionAgreement) fail("Supplier-funded promotions need explicit agreement reference.");
-    if (seen.has(key(row)) || skus.has(row.supplierSku)) fail("Each variant and supplier SKU must be unique in this listing.");
+    if (seen.has(key(row)) || (row.supplierSku&&skus.has(row.supplierSku))) fail("Each variant and supplier SKU must be unique in this listing.");
     seen.add(key(row)); skus.add(row.supplierSku); return row;
   });
   if (new Set(out.variants.map(v => Boolean(v.size))).size > 1 || new Set(out.variants.map(v => Boolean(v.color))).size > 1) fail("Use consistent size and colour dimensions for all variants.");

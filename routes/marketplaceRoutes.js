@@ -34,6 +34,8 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/media",handler(req=>Media.upload(req.user,req.body)));
   r.delete("/media/:id",handler(req=>Media.remove(req.user,req.params.id)));
   r.use("/admin",(req,res,next)=>{try{S.actorRequired(req.user,true);next();}catch(e){res.status(e.status).json({success:false,message:e.message});}});
+  r.post("/admin/earnings/:id/resolutions",handler(req=>require("../utils/marketplace/resolution").create(req.user,req.params.id,req.body)));
+  r.post("/admin/resolutions/:id/refund",handler(req=>require("../utils/marketplace/resolution").recordRefund(req.user,req.params.id,req.body)));
   r.get("/admin/reporting",handler(req=>F.reporting(req.user)));
   r.post("/admin/expenses",handler(req=>F.addExpense(req.user,req.body)));
   r.post("/admin/listings/:id/financial-preview",handler(req=>S.financialPreview(req.user,req.params.id,req.body)));

@@ -506,6 +506,7 @@ function safeOrder(order) {
     customer: value.customer,
     shippingAddress: value.shippingAddress,
 
+    ...(value.marketplaceResolutions?.length ? {marketplaceResolutions:value.marketplaceResolutions} : {}),
     ...(value.supplierShipments?.length ? { supplierShipments: value.supplierShipments } : {}),
     items: (value.items || []).map(
       (item) => ({
