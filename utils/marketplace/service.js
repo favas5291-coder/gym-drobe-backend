@@ -127,7 +127,7 @@ async function review(actor,lid,input) {
           ...shape,price:min/100,discount:0,isActive:true,supplier:a.supplier,marketplaceAccount:a._id,marketplaceListing:l._id,
           marketplaceCommercial:{...candidate,variants:rows,supplierId:String(a.supplier)},
           variantPrices:rows.map(row=>({size:row.size,color:row.color,customerUnitAmount:row.customerUnitAmount,mrpUnitAmount:row.mrpUnitAmount,taxInclusive:true})),
-          variantSkus:rows.map(row=>({size:row.size||"",color:row.color||"",sku:`MS-${String(a._id).slice(-8)}-${D.digest(row.supplierSku).slice(0,16)}`})),
+          variantSkus:rows.map(row=>({size:row.size||"",color:row.color||"",sku:`MS-${String(a._id).slice(-8)}-${String(l._id).slice(-8)}-${D.digest(row.supplierSku).slice(0,12)}`})),
           fulfillment:{stockSource:"supplier",dispatchBy:"supplier",preparationDaysMin:draft.shippingLeadDays,preparationDaysMax:draft.shippingLeadDays,supplierStockConfirmedAt:new Date()}
         });
         product.$locals.marketplaceWrite=true;await product.save({session});l.product=product._id;l.live={...candidate,variants:rows};l.offerRevision=candidate.offerRevision;
