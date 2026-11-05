@@ -34,11 +34,11 @@ const fulfilment = new Schema({
 const entitlement = new Schema({
   order:{...ref("Order"),required:true,immutable:true},itemIndex:{type:Number,required:true,immutable:true},supplier:{...ref("MarketplaceAccount"),required:true,immutable:true},
   snapshot:{type:Schema.Types.Mixed,required:true,immutable:true},targetAmount:{...money,default:0},pendingAmount:{...money,default:0},
-  resolvedQuantity:{type:Number,min:0,default:0,validate:Number.isSafeInteger},refundPending:{type:Boolean,default:false},paidAmount:{...money,default:0},reservedAmount:{...money,default:0},reversedAmount:{...money,default:0},stateDigest:String,
+  resolvedQuantity:{type:Number,min:0,default:0,validate:Number.isSafeInteger},refundPending:{type:Boolean,default:false},withheldAmount:{...money,default:0},recoverySettledAmount:{...money,default:0},paidAmount:{...money,default:0},reservedAmount:{...money,default:0},reversedAmount:{...money,default:0},stateDigest:String,
 },options);entitlement.index({order:1,itemIndex:1},{unique:true});entitlement.index({supplier:1,createdAt:-1});
 const payout = new Schema({
   supplier:{...ref("MarketplaceAccount"),required:true,immutable:true},requestKey:{type:String,required:true,immutable:true},
-  items:{type:[Schema.Types.Mixed],required:true,immutable:true,default:undefined},amount:{...money,required:true,immutable:true},destination:{...ref("MarketplaceDestination"),required:true,immutable:true},
+  items:{type:[Schema.Types.Mixed],required:true,immutable:true,default:undefined},adjustments:{type:[Schema.Types.Mixed],immutable:true,default:undefined},amount:{...money,required:true,immutable:true},destination:{...ref("MarketplaceDestination"),required:true,immutable:true},
   destinationMasked:{type:Schema.Types.Mixed,required:true,immutable:true}, status:{type:String,enum:["reserved","paid","cancelled"],default:"reserved"},
   reference:String,transferDate:Date,recordedBy:ref("User"),recordedAt:Date,proof:ref("MarketplaceMedia"),reason:String,
 },options);payout.index({supplier:1,requestKey:1},{unique:true});payout.index({reference:1},{unique:true,partialFilterExpression:{reference:{$type:"string"}}});
