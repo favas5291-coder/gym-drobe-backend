@@ -129,6 +129,10 @@ async function run(){
   const returned=await R.createLegacy(admin,String(o._id),1,{...body,restockQuantity:0});assert.equal(returned.resolution.customerRefundPaise,12501);assert.equal(returned.resolution.supplierReversalPaise,0);
   const refund={revision:returned.resolution.revision,reference:"FIXTURE-LEGACY-RETURN-REFUND",refundedAt:new Date(Date.now()-1000).toISOString(),confirmExternalRefund:true};await R.recordRefund(admin,returned.resolution.id,refund);assert.equal((await M.Entitlement.findOne({order:o._id})).resolvedQuantity,0);
  });
+ await pass("item resolution updates customer shipment snapshots without cancelling remaining legacy items",async()=>{
+  const mixed=await createOrder([purchased(product),legacyPurchase()]),e=await M.Entitlement.findOne({order:mixed._id});
+  await R.create(admin,String(e._id),legacyBody());const current=await Order.findById(mixed._id);assert.equal(current.supplierShipments.length,1);assert.equal(current.supplierShipments[0].status,"cancelled");assert.deepEqual([...current.supplierShipments[0].itemIndices],[0]);assert.notEqual(current.status,"cancelled");assert.equal(current.items[1].quantity,1);assert.equal(current.marketplaceResolutions.length,1);assert.equal(current.marketplaceResolutions[0].itemIndex,0);
+ });
  await pass("ordinary orders and damaged supplier ownership cannot use legacy item controls",async()=>{
   const ordinary=await createOrder([legacyPurchase()]);await assert.rejects(R.inspectLegacy(admin,String(ordinary._id)),/ordinary-order/);await assert.rejects(R.createLegacy(admin,String(ordinary._id),0,legacyBody()),/ordinary-order/);
   const damaged=await createOrder([purchased(product),legacyPurchase()]);await Order.collection.updateOne({_id:damaged._id},{$unset:{"items.0.marketplace":""}});
