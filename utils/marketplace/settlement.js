@@ -32,7 +32,7 @@ async function snapshotItems(items,products,pricing) {
 function supplierTarget(order,entitlement,group,now=new Date()){
   const s=entitlement.snapshot,q=s.quantity;let cancelled=entitlement.resolvedQuantity||0;
   if(order.status==="cancelled")cancelled=q;
-  const r=order.returnRequest||{},rows=r.items||[];const match=rows.find(row=>row.itemIndex===entitlement.itemIndex);
+  const r=order.returnRequest||{},rows=r.items||[];const match=rows.find(row=>row.index===entitlement.itemIndex);
   const returned=r.type==="return"&&r.status==="completed"&&match?match.quantity:0;
   const validQuantity=Math.max(0,q-Math.min(q,cancelled+returned));
   const amount=Number(BigInt(s.supplierPayablePaise)*BigInt(validQuantity)/BigInt(q));

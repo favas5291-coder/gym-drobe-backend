@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 const MAX = 10000000000;
 function fail(message, status = 400, code = "MARKETPLACE_VALIDATION") {
-  throw Object.assign(new Error(message), { status, code });
+  throw Object.assign(new Error(message), { status, code, gymdrobe:true });
 }
 function object(value, allowed, label = "Request") {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).some(k => !allowed.includes(k))) fail(`${label} contains unsupported fields.`);
