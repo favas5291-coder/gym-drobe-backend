@@ -1,3 +1,7 @@
 node_modules/
 .env
 *.log
+.marketplace-test-runtime/
+test-results/
+.env.*
+!.env.marketplace.example

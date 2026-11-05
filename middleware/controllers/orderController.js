@@ -376,6 +376,7 @@ function safeOrder(order) {
     customer: value.customer,
     shippingAddress: value.shippingAddress,
 
+    ...(value.supplierShipments?.length ? { supplierShipments: value.supplierShipments } : {}),
     items: (value.items || []).map((item) => ({
       id: String(item.product),
       productId: String(item.product),

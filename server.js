@@ -126,6 +126,7 @@ app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/package-plans", packagePlanRoutes);
 app.use("/api/suppliers", supplierRoutes);
+app.use("/api/marketplace", require("./routes/marketplaceRoutes").createMarketplaceRouter());
 
 app.use(
   "/api/supplier-portal",
@@ -315,7 +316,17 @@ async function boot() {
     ...(process.env.SUPPLIER_PORTAL_ENABLED === "true"
       ? Object.values(supplierPortalModels)
       : []),
+    ...(process.env.MARKETPLACE_ENABLED === "true"
+      ? [require("./models/User"), require("./models/Product"), require("./models/Order"), ...Object.values(require("./models/Marketplace"))]
+      : []),
   ]);
+
+  if (process.env.MARKETPLACE_ENABLED === "true") {
+    if (!/^[a-f\d]{64}$/i.test(process.env.MARKETPLACE_DATA_KEY || "")) throw new Error("MARKETPLACE_DATA_KEY_REQUIRED");
+    const hello = await mongoose.connection.db.admin().command({ hello: 1 });
+    if (!hello.setName && hello.msg !== "isdbgrid") throw new Error("MARKETPLACE_REPLICA_SET_REQUIRED");
+    await require("./models/Marketplace").Quota.updateOne({_id:"global"},{$setOnInsert:{bytes:0}},{upsert:true});
+  }
 
   if (shuttingDown) {
     throw new Error(

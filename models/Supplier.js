@@ -181,6 +181,8 @@ const supplierSchema = new mongoose.Schema(
       select: false,
     },
 
+    marketplaceAccount: { type: mongoose.Schema.Types.ObjectId, ref: "MarketplaceAccount", select: false },
+
     contact: {
       type: contactSchema,
       default: () => ({}),
@@ -264,8 +266,7 @@ supplierSchema.pre("validate", function () {
   }
 
   if (
-    !this.isSelected("portalWorkspace") ||
-    this.portalWorkspace
+    (!this.isSelected("portalWorkspace") || this.portalWorkspace) && !this.marketplaceAccount
   ) {
     this.invalidate(
       "status",
@@ -351,6 +352,7 @@ function hidePrivateFields(document, result) {
   delete result.fulfillment;
   delete result.notes;
   delete result.portalWorkspace;
+  delete result.marketplaceAccount;
   delete result.__v;
 
   return result;

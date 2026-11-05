@@ -506,6 +506,7 @@ function safeOrder(order) {
     customer: value.customer,
     shippingAddress: value.shippingAddress,
 
+    ...(value.supplierShipments?.length ? { supplierShipments: value.supplierShipments } : {}),
     items: (value.items || []).map(
       (item) => ({
         id: String(item.product),
@@ -684,7 +685,7 @@ async function findProduct(id) {
   ) {
     const product =
       await Product.findById(id)
-        .select("+meeshoProductLink");
+        .select("+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing");
 
     if (product) {
       return product;
@@ -698,7 +699,7 @@ async function findProduct(id) {
     const product =
       await Product.findOne({
         legacyId: Number(id),
-      }).select("+meeshoProductLink");
+      }).select("+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing");
 
     if (product) {
       return product;
@@ -707,7 +708,7 @@ async function findProduct(id) {
 
   return Product.findOne({
     slug: id.toLowerCase(),
-  }).select("+meeshoProductLink");
+  }).select("+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing");
 }
 
 async function snapshot(body) {
@@ -784,7 +785,7 @@ async function snapshot(body) {
     );
 
     return {
-      items: reviewed.items.map(
+      items: await require("../../utils/marketplace/settlement").snapshotItems(reviewed.items.map(
         (item) => ({
           ...item,
 
@@ -795,7 +796,7 @@ async function snapshot(body) {
               ),
             ),
         }),
-      ),
+      ), products, reviewed.pricing),
 
       kitSnapshots:
         reviewed.kitSnapshots,
@@ -1047,11 +1048,13 @@ async function snapshot(body) {
         originalPrice:
           getOriginalPrice(
             product,
+            size, color,
           ),
 
         price:
           getDiscountedPrice(
             product,
+            size, color,
           ),
 
         discount: Number(
@@ -1229,7 +1232,7 @@ async function snapshot(body) {
   }
 
   return {
-    items,
+    items: await require("../../utils/marketplace/settlement").snapshotItems(items,[...products.values()],pricing),
     coupon,
     pricing,
     method,
@@ -2169,6 +2172,14 @@ async function reconcileExistingPayment(
   return null;
 }
 
+async function createCheckoutOrder(data) {
+  if (!data.items?.some(item => item.marketplace)) return Order.create(data);
+  return transaction(async session => {
+    const [order] = await Order.create([data], { session });
+    return order;
+  });
+}
+
 async function createRazorpayOrder(
   req,
   res,
@@ -2391,7 +2402,7 @@ async function createRazorpayOrder(
           await measure(
             "order_save",
             () =>
-              Order.create({
+              createCheckoutOrder({
                 orderNumber:
                   `GD-${Date.now()
                     .toString(36)

@@ -43,7 +43,7 @@ const forbiddenKeys = new Set([
 ]);
 
 const ADMIN_FIELDS =
-  "+supplier +purchaseCost +fulfillment +meeshoProductLink";
+  "+supplier +purchaseCost +fulfillment +meeshoProductLink +marketplaceAccount";
 
 const SUPPLIER_FIELDS =
   "+contact +verification +fulfillment";
@@ -1127,6 +1127,9 @@ function serializeProduct(
 
   delete data.isNewArrival;
   delete data.__v;
+  delete data.marketplaceAccount;
+  delete data.marketplaceListing;
+  delete data.marketplaceCommercial;
 
   if (admin) {
     data.supplier =
@@ -2379,6 +2382,10 @@ async function updateProduct(
       );
     }
 
+    if (product.marketplaceAccount) {
+      throw httpError(409, "Use supplier marketplace review and stock controls for this listing; commercial changes must be audited.");
+    }
+
     const payload =
       normalizePayload(req.body);
 
@@ -2472,6 +2479,10 @@ async function updateProductInventory(
         404,
         "Product not found."
       );
+    }
+
+    if (product.marketplaceAccount) {
+      throw httpError(409, "Use supplier marketplace review and stock controls for this listing; commercial changes must be audited.");
     }
 
     object(
@@ -2584,6 +2595,10 @@ async function setVisibility(
         404,
         "Product not found."
       );
+    }
+
+    if (product.marketplaceAccount) {
+      throw httpError(409, "Use supplier marketplace review and stock controls for this listing; commercial changes must be audited.");
     }
 
     protectSave(product);

@@ -44,7 +44,19 @@ function roundMoney(value) {
 }
 
 // Product prices use whole rupees, matching the frontend.
-function getOriginalPrice(product = {}) {
+function marketplaceVariant(product, size, color) {
+  const rows = product?.variantPrices;
+  if (!Array.isArray(rows) || !rows.length) return null;
+  size = size === undefined ? product.selectedSize : size;
+  color = color === undefined ? product.selectedColor : color;
+  if (size === undefined && color === undefined) return [...rows].sort((a,b)=>a.customerUnitAmount-b.customerUnitAmount)[0];
+  const row = rows.find(row=>(row.size||null)===(size||null)&&(row.color||null)===(color||null));
+  if (!row || !Number.isSafeInteger(row.customerUnitAmount) || row.customerUnitAmount < 1) throw new Error("Marketplace variant price requires review.");
+  return row;
+}
+function getOriginalPrice(product = {}, size, color) {
+  const row = marketplaceVariant(product,size,color);
+  if (row) return (row.mrpUnitAmount ?? row.customerUnitAmount)/100;
   return Math.max(
     0,
     Math.round(number(product?.price)),
@@ -66,7 +78,9 @@ function getDiscountPercent(product = {}) {
   return getDiscountPercentage(product);
 }
 
-function getDiscountedPrice(product = {}) {
+function getDiscountedPrice(product = {}, size, color) {
+  const row = marketplaceVariant(product,size,color);
+  if (row) return row.customerUnitAmount/100;
   return Math.round(
     getOriginalPrice(product) *
       (

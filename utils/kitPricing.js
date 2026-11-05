@@ -402,7 +402,7 @@ function calculateKitQuote({
       );
     }
 
-    const unitPrice = getDiscountedPrice(product);
+    const unitPrice = getDiscountedPrice(product, row.selectedSize, row.selectedColor);
 
     const lineSubtotalPaise =
       paise(unitPrice) * row.quantity;
@@ -427,7 +427,7 @@ function calculateKitQuote({
       selectedColor: row.selectedColor,
       quantity: row.quantity,
       unitPrice,
-      originalUnitPrice: getOriginalPrice(product),
+      originalUnitPrice: getOriginalPrice(product, row.selectedSize, row.selectedColor),
       availableStock: available,
       lineSubtotalPaise,
     };

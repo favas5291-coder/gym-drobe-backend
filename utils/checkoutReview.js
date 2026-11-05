@@ -240,7 +240,7 @@ async function loadCheckoutReview(body) {
       $or: clauses,
     })
       .select(
-        "+kitSettings +supplier " +
+        "+kitSettings +supplier +marketplaceAccount +marketplaceCommercial +marketplaceListing " +
           "+fulfillment +meeshoProductLink",
       )
       .lean(),
@@ -529,6 +529,9 @@ async function loadCheckoutReview(body) {
 
   // Internal result: API controllers must return only the
   // customer-safe quote, never these raw product records.
+  try {
+    await require("./marketplace/settlement").snapshotItems(quote.items, products, quote.pricing);
+  } catch (error) { error.gymdrobe = true; throw error; }
   return {
     quote,
     products,

@@ -649,6 +649,12 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
+    marketplaceAccount: { type: mongoose.Schema.Types.ObjectId, ref: "MarketplaceAccount", select: false, index: true },
+    marketplaceListing: { type: mongoose.Schema.Types.ObjectId, ref: "MarketplaceListing", select: false },
+    marketplaceCommercial: { type: mongoose.Schema.Types.Mixed, select: false },
+    // This is the customer-safe projection; supplier prices/terms never appear here.
+    variantPrices: { type: [new mongoose.Schema({ size: String, color: String, customerUnitAmount: { type: Number, min: 1, validate: Number.isSafeInteger }, mrpUnitAmount: { type: Number, default: null }, taxInclusive: { type: Boolean, enum: [true] } }, { _id: false, strict: "throw" })], default: undefined },
+
     // Keep the legacy field name for existing records.
     // This supports generic brand/supplier product links.
     meeshoProductLink: {
@@ -1338,6 +1344,9 @@ function transformProduct(
   delete result.purchaseCost;
   delete result.fulfillment;
   delete result.meeshoProductLink;
+  delete result.marketplaceAccount;
+  delete result.marketplaceListing;
+  delete result.marketplaceCommercial;
 
   return result;
 }
