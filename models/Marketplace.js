@@ -17,7 +17,7 @@ profile.index({status:1,updatedAt:-1});
 const listing = new Schema({
   supplier:{...ref("MarketplaceAccount"),required:true,immutable:true}, product:ref("Product"),
   status:{type:String,enum:["draft","submitted","changes-requested","approved","published","paused","archived","rejected"],default:"draft"},
-  draft:{type:Schema.Types.Mixed,required:true}, live:{type:Schema.Types.Mixed,default:null},
+  draft:{type:Schema.Types.Mixed,required:true}, live:{type:Schema.Types.Mixed,default:null}, approvedCandidate:{type:Schema.Types.Mixed,default:null},
   offerRevision:{type:Number,default:0}, feedback:{type:String,default:""}, submittedAt:Date, reviewedAt:Date,reviewedBy:ref("User"),
 },options);
 listing.index({supplier:1,updatedAt:-1});listing.index({status:1,submittedAt:1});listing.index({product:1},{unique:true,partialFilterExpression:{product:{$type:"objectId"}}});
@@ -49,8 +49,9 @@ const ledger = new Schema({
 },{timestamps:{createdAt:true,updatedAt:false},strict:"throw"});ledger.index({key:1},{unique:true});ledger.index({supplier:1,createdAt:-1});
 const audit = new Schema({actor:ref("User"),supplier:ref("MarketplaceAccount"),entity:String,action:String,before:Schema.Types.Mixed,after:Schema.Types.Mixed,reason:String},{timestamps:{createdAt:true,updatedAt:false},strict:"throw"});audit.index({supplier:1,createdAt:-1});
 const media = new Schema({owner:{...ref("User"),required:true,immutable:true},kind:{type:String,enum:["product","payout-proof"],required:true,immutable:true},content:{type:Buffer,select:false,required:true,immutable:true},thumbnail:{type:Buffer,select:false,immutable:true},size:{type:Number,required:true,immutable:true},width:Number,height:Number,digest:{type:String,required:true,immutable:true},mime:{type:String,enum:["image/webp"],default:"image/webp",immutable:true}},options);media.index({owner:1,digest:1,kind:1},{unique:true});
+const expense = new Schema({requestKey:{type:String,required:true,unique:true,immutable:true},category:{type:String,required:true,immutable:true},amount:{...money,required:true,immutable:true},date:{type:Date,required:true,immutable:true},reference:{type:String,required:true,immutable:true},reason:{type:String,required:true,immutable:true},paidBy:{type:String,enum:["platform","supplier"],required:true,immutable:true},actor:{...ref("User"),required:true,immutable:true}},options);
 const quota = new Schema({_id:String,bytes:{type:Number,default:0}}, {versionKey:false});
 const immutable = schema => { schema.pre("save",function(){if(!this.isNew&&this.isModified())throw new Error("Append-only record cannot be rewritten.");});for(const op of ["updateOne","updateMany","findOneAndUpdate","replaceOne","findOneAndReplace","deleteOne","deleteMany","findOneAndDelete"])schema.pre(op,function(){throw new Error("Append-only record cannot be rewritten or removed.");}); };
-immutable(ledger);immutable(audit);
+immutable(ledger);immutable(audit);immutable(expense);
 const model=(name,schema)=>mongoose.models[name]||mongoose.model(name,schema);
-module.exports={Account:model("MarketplaceAccount",profile),Listing:model("MarketplaceListing",listing),Destination:model("MarketplaceDestination",destination),Fulfilment:model("MarketplaceFulfilment",fulfilment),Entitlement:model("MarketplaceEntitlement",entitlement),Payout:model("MarketplacePayout",payout),Ledger:model("MarketplaceLedger",ledger),Audit:model("MarketplaceAudit",audit),Media:model("MarketplaceMedia",media),Quota:model("MarketplaceQuota",quota)};
+module.exports={Account:model("MarketplaceAccount",profile),Listing:model("MarketplaceListing",listing),Destination:model("MarketplaceDestination",destination),Fulfilment:model("MarketplaceFulfilment",fulfilment),Entitlement:model("MarketplaceEntitlement",entitlement),Payout:model("MarketplacePayout",payout),Ledger:model("MarketplaceLedger",ledger),Audit:model("MarketplaceAudit",audit),Media:model("MarketplaceMedia",media),Quota:model("MarketplaceQuota",quota),Expense:model("MarketplaceExpense",expense)};

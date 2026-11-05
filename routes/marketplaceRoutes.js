@@ -13,13 +13,14 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/session",authLimit,handler(req=>S.login(req.body)));
   r.get("/media/:id",optionalAuth,handler(async(req,res)=>{const d=await Media.get(req.user,req.params.id);res.type(d.mime).set("X-Content-Type-Options","nosniff").send(d.buffer);}));
   r.use(authenticate);
+  r.post("/password",authLimit,handler(req=>S.changePassword(req.user,req.body)));
   r.get("/me",handler(async req=>({account:S.safeAccount(await S.account(req.user)),canPasswordReauthenticate:Boolean((await require("../models/User").findById(req.user._id).select("+password"))?.password)})));
   r.get("/overview",handler(req=>F.overview(req.user,req.query.supplier)));
   r.put("/profile",handler(req=>S.updateAccount(req.user,null,req.body)));
   r.post("/terms/accept",handler(req=>S.acceptTerms(req.user,req.body)));
   r.get("/listings",handler(req=>S.listListings(req.user,req.query)));
   r.post("/listings",handler(req=>S.saveDraft(req.user,null,req.body)));
-  r.get("/listings/:id",handler(async req=>{const{l}=await S.listingFor(req.user,req.params.id);return {listing:S.safeListing(l),imagePreviews:await Media.previews(req.user,[...(l.draft.images||[]),...(l.live?.images||[])])};}));
+  r.get("/listings/:id",handler(async req=>{const{l}=await S.listingFor(req.user,req.params.id);return {listing:await S.hydratedListing(l),imagePreviews:await Media.previews(req.user,[...(l.draft.images||[]),...(l.live?.images||[])])};}));
   r.put("/listings/:id",handler(req=>S.saveDraft(req.user,req.params.id,req.body)));
   r.post("/listings/:id/submit",handler(req=>S.submit(req.user,req.params.id,req.body)));
   r.put("/listings/:id/stock",handler(req=>S.updateStock(req.user,req.params.id,req.body)));
@@ -33,6 +34,9 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/media",handler(req=>Media.upload(req.user,req.body)));
   r.delete("/media/:id",handler(req=>Media.remove(req.user,req.params.id)));
   r.use("/admin",(req,res,next)=>{try{S.actorRequired(req.user,true);next();}catch(e){res.status(e.status).json({success:false,message:e.message});}});
+  r.get("/admin/reporting",handler(req=>F.reporting(req.user)));
+  r.post("/admin/expenses",handler(req=>F.addExpense(req.user,req.body)));
+  r.post("/admin/listings/:id/financial-preview",handler(req=>S.financialPreview(req.user,req.params.id,req.body)));
   r.get("/admin/suppliers",handler(req=>S.listAccounts(req.user,req.query)));
   r.post("/admin/suppliers",handler(req=>S.createAccount(req.user,req.body)));
   r.get("/admin/suppliers/:id",handler(async req=>({account:S.safeAccount(await S.M.Account.findById((await S.account(req.user,req.params.id))._id).select("+notes"),true)})));
