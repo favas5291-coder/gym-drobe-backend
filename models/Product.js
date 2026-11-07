@@ -767,6 +767,13 @@ const productSchema = new mongoose.Schema(
       default: [],
     },
 
+    // Public, admin-managed alternative names for catalogue discovery.
+    // Supplier cost, internal notes and commercial details stay private.
+    searchAliases: {
+      type: [String],
+      default: [],
+    },
+
     isFeatured: {
       type: Boolean,
       default: false,
@@ -1108,6 +1115,7 @@ productSchema.pre(
       length,
     ] of [
       ["tags", 50, 100],
+      ["searchAliases", 30, 80],
       ["highlights", 30, 500],
       ["careInstructions", 30, 500],
       ["sizes", 50, 50],
