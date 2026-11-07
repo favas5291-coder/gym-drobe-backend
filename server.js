@@ -297,6 +297,13 @@ async function initializeMarketing(attempt = 1) {
 }
 
 async function boot() {
+  // A dedicated staging service must pass offline isolation checks BEFORE
+  // any database connection, index creation, worker startup or HTTP listener.
+  // Unset/production/development/test settings retain existing behavior.
+  if (process.env.GYMDROBE_ENV) {
+    require("./utils/stagingReadiness").assertStagingIsolation(process.env);
+  }
+
   await connectDB();
 
   if (shuttingDown) {
