@@ -770,8 +770,19 @@ const productSchema = new mongoose.Schema(
     // Public, admin-managed alternative names for catalogue discovery.
     // Supplier cost, internal notes and commercial details stay private.
     searchAliases: {
-      type: [String],
+      type: [{
+        type: String,
+        trim: true,
+        maxlength: 80,
+      }],
       default: [],
+      validate: {
+        validator: (values) =>
+          Array.isArray(values) &&
+          values.length <= 30 &&
+          values.every((value) => typeof value === "string" && value.length <= 80),
+        message: "searchAliases allows up to 30 names of at most 80 characters.",
+      },
     },
 
     isFeatured: {
