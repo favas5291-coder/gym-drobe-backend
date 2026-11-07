@@ -873,6 +873,7 @@ function normalizePayload(body) {
 
   const lists = {
     tags: [50, 100],
+    searchAliases: [30, 80],
     highlights: [30, 500],
     careInstructions: [30, 500],
     sizes: [50, 50],
