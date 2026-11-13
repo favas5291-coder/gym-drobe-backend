@@ -4,6 +4,10 @@ const {
   createOrder,
   getOrders,
   getOrderById,
+  getOrderUpdates,
+  markOrderUpdatesRead,
+  stopWhatsAppOrderUpdates,
+  getWhatsAppDeliveries,
   cancelOrder,
   requestReturn,
 
@@ -60,7 +64,12 @@ router
   .get(getOrders)
   .post(createOrder);
 
+router.get("/updates", getOrderUpdates);
+router.put("/:id/updates/read", markOrderUpdatesRead);
+router.delete("/:id/whatsapp-updates", stopWhatsAppOrderUpdates);
+
 // Admin order management.
+router.get("/admin/orders/:id/whatsapp-deliveries", adminOnly, getWhatsAppDeliveries);
 router.get(
   "/admin/orders",
   adminOnly,

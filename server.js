@@ -94,6 +94,8 @@ app.use("/api", (_req, res, next) => {
 });
 
 // Razorpay signature verification requires the exact raw body.
+app.use("/api/whatsapp/order-status", require("./routes/whatsappOrderRoutes"));
+
 // Keep this before express.json().
 app.use(
   "/api/payment-webhooks",
@@ -314,6 +316,7 @@ async function boot() {
 
   await initializeIndexes([
     SupportTicket,
+    ...(require("./utils/whatsappOrderUpdates").enabled() ? [require("./models/WhatsAppOrderDelivery")] : []),
     Supplier,
     KitTemplate,
     PackingLocation,
@@ -382,6 +385,7 @@ async function boot() {
   // Serve shopping first.
   // Start marketing after its indexes are ready.
   void initializeMarketing();
+  require("./utils/whatsappOrderUpdates").startWorker();
 
   return server;
 }

@@ -277,6 +277,7 @@ const sourcingSchema = new mongoose.Schema(
 
 const orderItemSchema = new mongoose.Schema(
   {
+    publicFulfilmentName: { type: String, maxlength: 100, immutable: true },
     marketplace: { type: mongoose.Schema.Types.Mixed, default: undefined, immutable: true, select: false },
     sourcing: {
       type: sourcingSchema,
@@ -754,8 +755,10 @@ const paymentSchema = new mongoose.Schema(
 
 const orderSchema = new mongoose.Schema(
   {
-    marketplaceResolutions: { type:[new mongoose.Schema({key:String,itemIndex:Number,kind:String,quantity:Number,customerCreditPaise:Number,customerRefundPaise:Number,status:String,reference:String,refundedAt:Date},{_id:false,strict:"throw"})],default:undefined },
-    supplierShipments: { type: [new mongoose.Schema({ key: String, itemIndices: [Number], status: String, carrier: String, trackingNumber: String, trackingUrl: String, deliveredAt: Date }, { _id: false, strict: "throw" })], default: undefined },
+    marketplaceResolutions: { type:[new mongoose.Schema({key:String,itemIndex:Number,kind:String,quantity:Number,customerCreditPaise:Number,customerRefundPaise:Number,status:String,reference:String,refundedAt:Date,createdAt:Date},{_id:false,strict:"throw"})],default:undefined },
+    whatsappOrderUpdates: { type: new mongoose.Schema({ consentedAt: Date }, { _id: false }), default: undefined },
+    orderUpdatesReadAt: Date,
+    supplierShipments: { type: [new mongoose.Schema({ key: String, itemIndices: [Number], status: String, publicFulfilmentName: String, carrier: String, trackingNumber: String, trackingUrl: String, shippedAt: Date, outForDeliveryAt: Date, deliveredAt: Date, estimatedDeliveryAt: Date, estimateChanges: [{ _id: false, at: Date, estimatedDeliveryAt: Date }] }, { _id: false, strict: "throw" })], default: undefined },
     orderNumber: {
       type: String,
       required: true,
