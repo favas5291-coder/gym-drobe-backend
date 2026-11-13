@@ -385,6 +385,7 @@ function safeOrder(order) {
       slug: item.slug,
       sku: item.sku,
       name: item.name,
+      publicFulfilmentName: item.publicFulfilmentName || undefined,
       brand: item.brand,
       image: item.image,
       originalPrice: item.originalPrice,
@@ -411,6 +412,8 @@ function safeOrder(order) {
     delivery: value.delivery,
     deliveryMethod: value.deliveryMethod,
     tracking: value.tracking,
+    orderUpdates: require("../../utils/orderUpdates").orderUpdates(value),
+    whatsappOrderUpdates: Boolean(value.whatsappOrderUpdates?.consentedAt),
     cancellation: value.cancellation,
     returnRequest: value.returnRequest,
     refund: value.refund,
@@ -1108,6 +1111,44 @@ const getOrderById = handler(
     });
   },
 );
+
+const getOrderUpdates = handler(async (req, res) => {
+  if (!req.user?._id) throw problem(403, "Sign in to see your order inbox.", "ACCOUNT_REQUIRED");
+  const orders = await Order.find({ user: req.user._id, status: { $ne: "payment-pending" } })
+    .select("orderNumber status items.name tracking supplierShipments cancellation refund marketplaceResolutions orderUpdatesReadAt")
+    .sort({ updatedAt: -1 }).limit(50).lean();
+  const updates = orders.flatMap(order =>
+    require("../../utils/orderUpdates").orderUpdates(order).map(update => ({
+      ...update, orderNumber: order.orderNumber,
+      unread: +update.at > +(order.orderUpdatesReadAt || 0),
+    })));
+  updates.sort((a, b) => +b.at - +a.at);
+  return res.json({ success: true, updates: updates.slice(0, 50) });
+});
+
+const markOrderUpdatesRead = handler(async (req, res) => {
+  if (!req.user?._id) throw problem(403, "Sign in to update your order inbox.", "ACCOUNT_REQUIRED");
+  const order = await loadOrder(orderId(req), null, { user: req.user._id });
+  const event = require("../../utils/orderUpdates").orderUpdates(order).find(row => row.id === req.body?.eventId);
+  if (!event) throw problem(404, "Order update not found.", "UPDATE_NOT_FOUND");
+  await Order.updateOne({ _id: order._id, user: req.user._id }, { $max: { orderUpdatesReadAt: event.at } });
+  return res.json({ success: true });
+});
+
+const stopWhatsAppOrderUpdates = handler(async (req, res) => {
+  const filter = customerFilter(req);
+  const order = await loadOrder(orderId(req), null, filter);
+  await Order.updateOne({ ...filter, _id: order._id }, { $unset: { whatsappOrderUpdates: "" } });
+  return res.json({ success: true });
+});
+
+const getWhatsAppDeliveries = handler(async (req, res) => {
+  const order = await loadOrder(orderId(req));
+  const Delivery = require("../../models/WhatsAppOrderDelivery");
+  const deliveries = await Delivery.find({ order: order._id })
+    .select("state attempts code updatedAt").sort({ updatedAt: -1 }).limit(100).lean();
+  return res.json({ success: true, deliveries });
+}, true);
 
 // Gateway requests run after the cancellation transaction.
 // An uncertain submission is never automatically sent again.
@@ -2331,6 +2372,10 @@ const updateAdminOrderStatus = handler(
           order.tracking = {};
         }
 
+        if (own(tracking, "estimatedDelivery") && Number(tracking.estimatedDelivery || 0) !== Number(order.tracking.estimatedDelivery || 0)) {
+          event(order, "estimate-changed", "The recorded delivery estimate has changed.");
+        }
+
         Object.assign(
           order.tracking,
           tracking,
@@ -3133,6 +3178,10 @@ module.exports = {
   createOrder,
   getOrders,
   getOrderById,
+  getOrderUpdates,
+  markOrderUpdatesRead,
+  stopWhatsAppOrderUpdates,
+  getWhatsAppDeliveries,
   cancelOrder,
   requestReturn,
   getAdminOrders,

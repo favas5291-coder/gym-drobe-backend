@@ -43,6 +43,7 @@ function inspectStagingConfiguration(env) {
   check("jwt-secret", !placeholder(value(env, "JWT_SECRET")) && value(env, "JWT_SECRET").length >= 32, "Configure a dedicated staging JWT secret of at least 32 characters.");
   check("staging-frontend", stagingOrigin(value(env, "FRONTEND_URL")), "Use a staging HTTPS origin or loopback HTTP origin; known GymDrobe production origins are blocked.");
   check("push-disabled", ["PUSH_REGISTRATION_ENABLED", "PUSH_DELIVERY_ENABLED"].every(name => ["", "false"].includes(value(env, name).toLowerCase())), "Keep push registration and delivery disabled for payment staging.");
+  check("whatsapp-disabled", ["", "false"].includes(value(env, "WHATSAPP_ORDER_DELIVERY_ENABLED").toLowerCase()), "Keep WhatsApp delivery disabled for payment staging.");
   check("email-disabled", ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"].every(name => !value(env, name)), "Leave Gmail sender credentials empty during the payment test.");
   check("marketing-disabled", !value(env, "META_CAPI_ACCESS_TOKEN"), "Leave the Meta CAPI access token empty during the payment test.");
   return {

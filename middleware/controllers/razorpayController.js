@@ -516,6 +516,7 @@ function safeOrder(order) {
         slug: item.slug,
         sku: item.sku,
         name: item.name,
+        publicFulfilmentName: item.publicFulfilmentName || undefined,
         brand: item.brand,
         image: item.image,
         originalPrice: item.originalPrice,
@@ -544,6 +545,8 @@ function safeOrder(order) {
     delivery: value.delivery,
     deliveryMethod: value.deliveryMethod,
     tracking: value.tracking,
+    orderUpdates: require("../../utils/orderUpdates").orderUpdates(value),
+    whatsappOrderUpdates: Boolean(value.whatsappOrderUpdates?.consentedAt),
     cancellation: value.cancellation,
     returnRequest: value.returnRequest,
     refund: value.refund,
@@ -1382,6 +1385,7 @@ function quote(order) {
 
     orderNote:
       order.orderNote || "",
+    ...(order.whatsappOrderUpdates?.consentedAt && { whatsappOrderUpdates: true }),
   });
 }
 
@@ -2361,6 +2365,7 @@ async function createRazorpayOrder(
       shippingAddress,
       giftMessage,
       orderNote,
+      ...(body.whatsappOrderUpdates === true && { whatsappOrderUpdates: { consentedAt: true } }),
     };
 
     if (
@@ -2432,6 +2437,9 @@ async function createRazorpayOrder(
 
                 giftMessage,
                 orderNote,
+                ...(body.whatsappOrderUpdates === true && {
+                  whatsappOrderUpdates: { consentedAt: new Date() },
+                }),
                 shippingAddress,
 
                 customer: {

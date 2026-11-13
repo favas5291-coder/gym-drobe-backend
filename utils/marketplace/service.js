@@ -103,12 +103,13 @@ async function review(actor,lid,input) {
     const {l,a}=await listingFor(actor,lid,session);expect(l,input.revision);
     const before={live:l.live,approvedCandidate:l.approvedCandidate,status:l.status};
     if(["approved","published"].includes(input.decision)){
+      const publicFulfilmentName = D.text(input.content?.publicFulfilmentName ?? l.approvedCandidate?.publicFulfilmentName ?? l.live?.publicFulfilmentName ?? "", "public fulfilment name", 100);
       if(a.status!=="active"||a.acceptance?.digest!==a.termsDigest)D.fail("Activate supplier with accepted terms first.",409);
       if(!["submitted","approved","paused","published"].includes(l.status))D.fail("Submit content before approval or publication.",409);
       let draft=D.draft(l.draft,true);await validateMedia(draft,a.owner,session);
-      if(input.content){D.object(input.content,["name","description","specifications","careInstructions","returnConditions"],"Customer content edit");draft=D.draft({...draft,...input.content},true);}
+      if(input.content){D.object(input.content,["name","description","specifications","careInstructions","returnConditions","publicFulfilmentName"],"Customer content edit");const { publicFulfilmentName: _publicName, ...content } = input.content;draft=D.draft({...draft,...content},true);}
       const prices=D.reviewPrices(draft,input.prices);
-      const candidate={...draft,variants:prices,terms:a.terms,termsDigest:a.termsDigest,approvedBy:String(actor._id),approvedAt:new Date(),offerRevision:l.offerRevision+1};
+      const candidate={...draft,publicFulfilmentName,variants:prices,terms:a.terms,termsDigest:a.termsDigest,approvedBy:String(actor._id),approvedAt:new Date(),offerRevision:l.offerRevision+1};
       l.approvedCandidate=candidate;
       if(input.decision==="published"){
         const product=l.product?await Product.findById(l.product).select("+marketplaceCommercial +marketplaceAccount").session(session):new Product();
@@ -124,7 +125,7 @@ async function review(actor,lid,input) {
           brand:draft.brand,category:draft.category,description:draft.description,images:draft.images,image:draft.images[0],colorImages:draft.variantImages,
           material:draft.material,specifications:{...draft.specifications,"Size chart":draft.sizeChart,Manufacturer:draft.manufacturer,Origin:draft.origin,Warranty:draft.warranty,"Packaged weight (grams)":String(draft.weightGrams),"Package dimensions (cm)":`${draft.dimensionsCm.length} × ${draft.dimensionsCm.width} × ${draft.dimensionsCm.height}`,...(draft.batch?{Batch:draft.batch,Expiry:draft.expiryDate}:{})},
           careInstructions:draft.careInstructions,returnPolicy:draft.returnConditions,returnConditions:draft.returnConditions,returnsEligible:draft.returnsEligible,returnWindowDays:draft.returnWindowDays,returnRequestTypes:draft.returnRequestTypes,
-          ...shape,price:min/100,discount:0,isActive:true,supplier:a.supplier,marketplaceAccount:a._id,marketplaceListing:l._id,
+          ...shape,publicFulfilmentName,price:min/100,discount:0,isActive:true,supplier:a.supplier,marketplaceAccount:a._id,marketplaceListing:l._id,
           marketplaceCommercial:{...candidate,variants:rows,supplierId:String(a.supplier)},
           variantPrices:rows.map(row=>({size:row.size,color:row.color,customerUnitAmount:row.customerUnitAmount,mrpUnitAmount:row.mrpUnitAmount,taxInclusive:true})),
           variantSkus:rows.map(row=>({size:row.size||"",color:row.color||"",sku:`MS-${String(a._id).slice(-8)}-${String(l._id).slice(-8)}-${D.digest(row.supplierSku).slice(0,12)}`})),

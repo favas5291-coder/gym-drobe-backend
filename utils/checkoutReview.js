@@ -530,7 +530,10 @@ async function loadCheckoutReview(body) {
   // Internal result: API controllers must return only the
   // customer-safe quote, never these raw product records.
   try {
-    await require("./marketplace/settlement").snapshotItems(quote.items, products, quote.pricing);
+    const checked = await require("./marketplace/settlement").snapshotItems(quote.items, products, quote.pricing);
+    quote.items = quote.items.map((item, index) => checked[index].publicFulfilmentName
+      ? { ...item, publicFulfilmentName: checked[index].publicFulfilmentName }
+      : item);
   } catch (error) { error.gymdrobe = true; throw error; }
   return {
     quote,

@@ -649,6 +649,7 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
+    publicFulfilmentName: { type: String, trim: true, maxlength: 100, default: undefined },
     marketplaceAccount: { type: mongoose.Schema.Types.ObjectId, ref: "MarketplaceAccount", select: false, index: true },
     marketplaceListing: { type: mongoose.Schema.Types.ObjectId, ref: "MarketplaceListing", select: false },
     marketplaceCommercial: { type: mongoose.Schema.Types.Mixed, select: false },
