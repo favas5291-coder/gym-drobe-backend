@@ -8,6 +8,9 @@ dotenv.config();
 const connectDB = require("./config/db");
 const initializeIndexes = require("./utils/initializeIndexes");
 
+const Brand = require("./models/Brand");
+const { startBrandLogoWorker } = require("./utils/brandLogos");
+
 const productRoutes = require("./routes/productRoutes");
 const authRoutes = require("./routes/authRoutes");
 const addressRoutes = require("./routes/addressRoutes");
@@ -118,6 +121,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/products", productRoutes);
+app.use("/api/brands", require("./routes/brandRoutes")());
 app.use("/api/auth", authRoutes);
 app.use("/api/addresses", addressRoutes);
 app.use("/api/orders", orderRoutes);
@@ -296,6 +300,8 @@ async function initializeMarketing(attempt = 1) {
   }
 }
 
+let stopBrandLogoWorker;
+
 async function boot() {
   // A dedicated staging service must pass offline isolation checks BEFORE
   // any database connection, index creation, worker startup or HTTP listener.
@@ -313,6 +319,7 @@ async function boot() {
   }
 
   await initializeIndexes([
+    Brand,
     SupportTicket,
     Supplier,
     KitTemplate,
@@ -375,6 +382,8 @@ async function boot() {
     },
   );
 
+  if (!shuttingDown) stopBrandLogoWorker = startBrandLogoWorker();
+
   console.log(
     `GymDrobe server running on http://localhost:${PORT}`,
   );
@@ -418,6 +427,7 @@ function shutdown() {
   }
 
   stopMarketingWorker();
+  stopBrandLogoWorker?.();
 
   stopping = (async () => {
     const deadline = setTimeout(

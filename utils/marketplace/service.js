@@ -99,7 +99,7 @@ async function review(actor,lid,input) {
   D.object(input,["revision","decision","reason","prices","content"],"Listing review");
   if(!["approved","published","changes-requested","rejected","paused","archived"].includes(input.decision))D.fail("Choose review decision.");
   const reason=D.text(input.reason,"review reason",1000,3);
-  return transaction(async session=>{
+  const result = await transaction(async session=>{
     const {l,a}=await listingFor(actor,lid,session);expect(l,input.revision);
     const before={live:l.live,approvedCandidate:l.approvedCandidate,status:l.status};
     if(["approved","published"].includes(input.decision)){
@@ -138,6 +138,8 @@ async function review(actor,lid,input) {
     await audit(actor,a._id,l._id,"listing-review",before,{live:l.live,approvedCandidate:l.approvedCandidate,status:l.status},reason,session);
     return {listing:safeListing(l)};
   });
+  if (input.decision === "published") require("../brandLogos").registerSavedBrand(result.listing.live?.brand || result.listing.draft.brand, actor);
+  return result;
 }
 
 async function updateStock(actor,lid,input){D.object(input,["revision","variants","stockDigest"],"Stock update");return transaction(async s=>{const {l,a}=await listingFor(actor,lid,s,true);expect(l,input.revision);if(l.live&&(await hydratedListing(l,s)).stockDigest!==input.stockDigest)D.fail("Stock changed after the page loaded. Reload before updating live quantities.",409,"MARKETPLACE_STOCK_CHANGED");if(!Array.isArray(input.variants))D.fail("Provide stock rows.");const source=l.live?.variants||l.draft.variants;const rows=source.map(v=>{const n=input.variants.find(n=>D.key(n)===D.key(v));if(!n)D.fail("Update every existing stock variant.");D.object(n,["size","color","stock"],"Stock row");return {...v,stock:D.integer(n.stock,"Stock",0,1000000)};});if(input.variants.length!==rows.length)D.fail("Stock updates cannot introduce variants.");const shape=stockShape(rows);if(shape.stock>1000000)D.fail("Combined stock exceeds limit.");

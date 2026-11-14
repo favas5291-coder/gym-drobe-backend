@@ -1,3 +1,4 @@
+const { registerSavedBrand } = require("../../utils/brandLogos");
 const {
   normalizeColorImages,
 } = require("../../utils/productImages");
@@ -2338,6 +2339,7 @@ async function createProduct(
     );
 
     await product.save();
+    registerSavedBrand(product.brand, req.user);
 
     return res.status(201).json({
       success: true,
@@ -2436,6 +2438,7 @@ async function updateProduct(
     }
 
     await product.save();
+    if (Object.hasOwn(payload, "brand")) registerSavedBrand(product.brand, req.user);
 
     return res.json({
       success: true,
