@@ -3,6 +3,7 @@ const S = require("./service");
 const {M,D,transaction,actorRequired,account,lockAccount,audit,plain,expect}=S;
 const Product=require("../../models/Product");
 const Order=()=>require("../../models/Order");
+const {DEFAULT_RETURN_DAYS}=require("../returnPolicy");
 const {getVariantStock}=require("../orderInventory");
 
 // This helper returns new items. Customer quote objects are never mutated with
@@ -37,15 +38,18 @@ function supplierTarget(order,entitlement,group,now=new Date()){
   const validQuantity=Math.max(0,q-Math.min(q,cancelled+returned));
   const amount=Number(BigInt(s.supplierPayablePaise)*BigInt(validQuantity)/BigInt(q));
   const hasOpenReturn=Boolean(match&&!['not-requested','rejected','completed'].includes(r.status));
-  const delivered=group?.deliveredAt||order.delivery?.deliveredAt;
-  const hold=Math.max(s.terms.settlementHoldHours,(s.returnWindowDays||0)*24)*3600000;
+  // A split order can be marked delivered before this supplier's parcel arrives.
+  const shipmentExpected = Boolean(group || entitlement.supplier || s.accountId);
+  const delivered = shipmentExpected ? group?.deliveredAt : order.delivery?.deliveredAt;
+  const returnDays = s.returnWindowDays ?? DEFAULT_RETURN_DAYS;
+  const hold = Math.max(s.terms.settlementHoldHours, returnDays * 24) * 3600000;
   const deliveredTime=delivered?new Date(delivered).getTime():NaN;
   const refundPending=Boolean(entitlement.refundPending||order.refund&&!["not-requested","not-applicable","refunded"].includes(order.refund.status));
   const total=Math.max(0,Math.round(Number(order.pricing?.finalTotal||0)*100)-(order.marketplaceResolutions||[]).reduce((n,r)=>n+(r.customerCreditPaise||0),0));
   const collected=Math.round(Number(order.payment?.grossCollected??order.payment?.amountPaid??0)*100);
   const due=Math.round(Number(order.payment?.amountDue||0)*100);
   const completePayment=order.payment?.amountsReconciled===true&&collected>=total&&due===0&&["paid","partially-refunded","refunded"].includes(order.payment.status);
-  const deliveryComplete=group?.status==="delivered"||order.status==="delivered";
+  const deliveryComplete = shipmentExpected ? group?.status === "delivered" : order.status === "delivered";
   const eligible=amount>0&&completePayment&&deliveryComplete&&Number.isFinite(deliveredTime)&&deliveredTime<=now.getTime()&&now.getTime()>deliveredTime+hold&&!hasOpenReturn&&!refundPending;
   return {amount:eligible?amount:0,pending:eligible?0:amount,reversed:s.supplierPayablePaise-amount,reason:!validQuantity?"Cancelled or returned quantity":!completePayment?"Full collection must be reconciled":!deliveryComplete?"Delivery not confirmed":hasOpenReturn||refundPending?"Return/refund resolution pending":!eligible?"Purchased return window / settlement hold":"Eligible after confirmed delivery, collection and hold"};
 }
