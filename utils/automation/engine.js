@@ -3,6 +3,8 @@ const { randomUUID } = require("node:crypto");
 const Job = require("../../models/AutomationJob");
 const { Fulfilment, Entitlement } = require("../../models/Marketplace");
 
+const { POLL_MS, recordCompletedBatch } = require("./workerHealth");
+
 const TYPE = "order.fulfilment.check.v1";
 const STATES = ["queued", "running", "completed", "failed", "needs_review"];
 const MAX_ATTEMPTS = 5;
@@ -101,19 +103,25 @@ async function processOne({ check = inspect, now = () => new Date(), actor } = {
 }
 
 let draining = null;
-async function drain(actor) {
+async function runBatch(actor, scheduled) {
   if (draining) return 0;
   draining = (async () => {
     let count = 0;
     while (count < 10 && await processOne({ actor })) count += 1;
+    // Reaching here confirms that this caller accessed the queue, including when it was empty.
+    try { await recordCompletedBatch(scheduled); }
+    catch { console.error("Automation worker heartbeat could not be recorded."); }
     return count;
   })();
   try { return await draining; } finally { draining = null; }
 }
+const drain = actor => runBatch(actor, false);
 let timer;
 function startWorker() {
   if (timer || !workerEnabled()) return;
-  timer = setInterval(() => { drain().catch(() => console.error("Automation worker could not access the job queue.")); }, 30000);
+  timer = setInterval(() => {
+    if (workerEnabled()) runBatch(undefined, true).catch(() => console.error("Automation worker could not access the job queue."));
+  }, POLL_MS);
   timer.unref();
 }
 async function stopWorker() {

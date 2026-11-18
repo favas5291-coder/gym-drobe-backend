@@ -24,6 +24,7 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.put("/listings/:id",handler(req=>S.saveDraft(req.user,req.params.id,req.body)));
   r.post("/listings/:id/submit",handler(req=>S.submit(req.user,req.params.id,req.body)));
   r.put("/listings/:id/stock",handler(req=>S.updateStock(req.user,req.params.id,req.body)));
+  r.get("/dispatch-review",handler(req=>require("../utils/marketplace/dispatchReview").dispatchReview(req.user,{...req.query})));
   r.get("/orders",handler(req=>F.supplierOrders(req.user,req.query.supplier)));
   r.patch("/shipments/:id",handler(req=>F.updateFulfilment(req.user,req.params.id,req.body)));
   r.post("/earnings/reconcile",handler(req=>F.earnings(req.user,req.body.supplierId)));
