@@ -417,16 +417,22 @@ function getVariantSku(
     : "";
 }
 
+function stockStatus(total) {
+  return total <= 0 ? "out-of-stock" : total <= 10 ? "low-stock" : "in-stock";
+}
+
+function getInventorySnapshot(product) {
+  const { slots, total } = inventory(product);
+  return {
+    total,
+    status: stockStatus(total),
+    slots: slots.map(({ size, color, available }) => ({ size, color, available })),
+  };
+}
+
 function applyStockStatus(product, total) {
   product.stock = total;
-
-  product.stockStatus =
-    total <= 0
-      ? "out-of-stock"
-      : total <= 10
-        ? "low-stock"
-        : "in-stock";
-
+  product.stockStatus = stockStatus(total);
   return product;
 }
 
@@ -539,6 +545,7 @@ function restoreVariantStock(
 }
 
 module.exports = {
+  getInventorySnapshot,
   getTotalStock,
   getVariantStock,
   getVariantSku,
