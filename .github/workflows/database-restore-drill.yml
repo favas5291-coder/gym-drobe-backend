@@ -1,0 +1,25 @@
+name: Isolated database restore drill
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/restore-drill/**'
+      - '.github/workflows/database-restore-drill.yml'
+permissions:
+  contents: read
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and verify synthetic supplier order
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/restore-drill/run.sh | tee restore-result.txt
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: restore-drill-summary
+          path: restore-result.txt
