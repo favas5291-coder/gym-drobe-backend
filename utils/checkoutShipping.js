@@ -75,7 +75,7 @@ function priceCheckoutShipping({
 }) {
   if (
     !["standard", "express"].includes(deliveryMethod) ||
-    !["razorpay", "cod-partial"].includes(paymentMethod) ||
+    !["razorpay", "cod-partial", "cod"].includes(paymentMethod) ||
     !Array.isArray(items) ||
     !items.length ||
     !Array.isArray(products) ||
@@ -230,7 +230,7 @@ function priceCheckoutShipping({
   const now =
     paymentMethod === "cod-partial"
       ? Math.round(merchandise / 10)
-      : total;
+      : paymentMethod === "cod" ? 0 : total;
 
   if (
     !Number.isSafeInteger(total) ||
@@ -243,7 +243,7 @@ function priceCheckoutShipping({
     );
   }
 
-  if (now < 100) {
+  if (paymentMethod !== "cod" && now < 100) {
     fail(
       400,
       "PAYMENT_AMOUNT_TOO_LOW",

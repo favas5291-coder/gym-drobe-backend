@@ -1039,6 +1039,8 @@ const orderSchema = new mongoose.Schema(
       default: () => ({}),
     },
 
+    codRequestDigest: { type: String, immutable: true, select: false },
+
     metadata: {
       version: {
         type: String,
