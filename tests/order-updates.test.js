@@ -107,3 +107,28 @@ test("opt-out is rechecked before sending and explicit rate-limit retries stop a
   assert.equal(count, 4);
   assert.equal([...limited.state.values()][0].state, "failed");
 });
+
+test("return and exchange milestones stay private to the in-app channel", () => {
+  for (const type of ["return", "exchange"]) {
+    const request = { id: "example-request", type, status: "completed", requestedAt: new Date(now-5000),
+      approvedAt: new Date(now-4000), completedAt: new Date(now-3000), reason: "private photo note" };
+    const completed = { ...order, returnRequest: request };
+    const updates = orderUpdates(completed, { inbox: true });
+    assert.deepEqual(updates.filter(row => row.kind.startsWith(type+"-")).map(row=>row.kind),
+      [type+"-completed", type+"-approved", type+"-requested"]);
+    assert.ok(!JSON.stringify(updates).includes(request.reason));
+    assert.deepEqual(orderUpdates(completed), orderUpdates(order));
+    assert.deepEqual(orderUpdates(completed, {inbox:true}), updates);
+    const refused = orderUpdates({ ...order, returnRequest:{...request,status:"rejected",rejectedAt:time} }, {inbox:true});
+    assert.ok(refused.some(row=>row.kind===type+"-rejected"));
+    assert.ok(!refused.some(row=>row.kind===type+"-completed" || row.kind===type+"-approved"));
+  }
+});
+
+test("replayed tracking milestones keep their original read watermark", () => {
+  const confirmed = orderUpdates(order, {inbox:true})[0];
+  const events = [{ status:"confirmed", timestamp:new Date(+time+1000) }, ...order.tracking.events];
+  for (const replay of [events, [...events].reverse()]) {
+    assert.deepEqual(orderUpdates({ ...order, tracking:{events:replay} }, {inbox:true}), [confirmed]);
+  }
+});

@@ -3,7 +3,7 @@
 const { createHash } = require("node:crypto");
 const digest = value => createHash("sha256").update(value).digest("hex");
 
-function orderUpdates(order) {
+function orderUpdates(order, { inbox = false } = {}) {
   if (order.status === "payment-pending") return [];
   const updates = new Map();
   const number = order.orderNumber;
@@ -28,6 +28,8 @@ function orderUpdates(order) {
     const at = time && new Date(time);
     if (!at || !Number.isFinite(+at) || +at > Date.now() + 60000 || !message) return;
     const id = digest(JSON.stringify([number, kind, packageKey, identity]));
+    // Replaying an already-read milestone must not make it appear new.
+    if (inbox && updates.has(id) && updates.get(id).at <= at) return;
     updates.set(id, { id, kind, at, message, ...(packageKey ? { packageKey } : {}) });
   }
 
@@ -37,6 +39,26 @@ function orderUpdates(order) {
         assigned.size === order.items?.length) continue;
     const identity = event.status === "estimate-changed" ? event.timestamp : "";
     add(event.status, event.timestamp, messages[event.status], "", identity);
+  }
+  // These customer-facing milestones use committed facts and are in-app only.
+  const request = order.returnRequest;
+  if (inbox && ["return", "exchange"].includes(request?.type) &&
+      ["requested", "approved", "rejected", "completed"].includes(request.status)) {
+    const identity = request.id || request.requestedAt;
+    if (identity) {
+      const label = request.type === "return" ? "Return" : "Exchange";
+      const prefix = `${label} request for order #${number}`;
+      add(`${request.type}-requested`, request.requestedAt, `${prefix} was received.`, "", identity);
+      if (["approved", "completed"].includes(request.status)) {
+        add(`${request.type}-approved`, request.approvedAt, `${prefix} was approved.`, "", identity);
+      }
+      if (request.status === "rejected") {
+        add(`${request.type}-rejected`, request.rejectedAt, `${prefix} was declined. Open your order for details.`, "", identity);
+      }
+      if (request.status === "completed") {
+        add(`${request.type}-completed`, request.completedAt, `${prefix} was marked complete.`, "", identity);
+      }
+    }
   }
   add("cancelled", order.cancellation?.cancelledAt, messages.cancelled);
   if (order.refund?.status === "refunded") add("refunded", order.refund.refundedAt, messages.refunded);

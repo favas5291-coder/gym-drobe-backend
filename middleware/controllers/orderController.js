@@ -412,7 +412,7 @@ function safeOrder(order) {
     delivery: value.delivery,
     deliveryMethod: value.deliveryMethod,
     tracking: value.tracking,
-    orderUpdates: require("../../utils/orderUpdates").orderUpdates(value),
+    orderUpdates: require("../../utils/orderUpdates").orderUpdates(value, { inbox: true }),
     whatsappOrderUpdates: Boolean(value.whatsappOrderUpdates?.consentedAt),
     cancellation: value.cancellation,
     returnRequest: value.returnRequest,
@@ -1115,10 +1115,10 @@ const getOrderById = handler(
 const getOrderUpdates = handler(async (req, res) => {
   if (!req.user?._id) throw problem(403, "Sign in to see your order inbox.", "ACCOUNT_REQUIRED");
   const orders = await Order.find({ user: req.user._id, status: { $ne: "payment-pending" } })
-    .select("orderNumber status items.name tracking supplierShipments cancellation refund marketplaceResolutions orderUpdatesReadAt")
+    .select("orderNumber status items.name tracking supplierShipments cancellation refund marketplaceResolutions returnRequest.id returnRequest.type returnRequest.status returnRequest.requestedAt returnRequest.approvedAt returnRequest.rejectedAt returnRequest.completedAt orderUpdatesReadAt")
     .sort({ updatedAt: -1 }).limit(50).lean();
   const updates = orders.flatMap(order =>
-    require("../../utils/orderUpdates").orderUpdates(order).map(update => ({
+    require("../../utils/orderUpdates").orderUpdates(order, { inbox: true }).map(update => ({
       ...update, orderNumber: order.orderNumber,
       unread: +update.at > +(order.orderUpdatesReadAt || 0),
     })));
@@ -1129,9 +1129,9 @@ const getOrderUpdates = handler(async (req, res) => {
 const markOrderUpdatesRead = handler(async (req, res) => {
   if (!req.user?._id) throw problem(403, "Sign in to update your order inbox.", "ACCOUNT_REQUIRED");
   const order = await loadOrder(orderId(req), null, { user: req.user._id });
-  const event = require("../../utils/orderUpdates").orderUpdates(order).find(row => row.id === req.body?.eventId);
+  const event = require("../../utils/orderUpdates").orderUpdates(order, { inbox: true }).find(row => row.id === req.body?.eventId);
   if (!event) throw problem(404, "Order update not found.", "UPDATE_NOT_FOUND");
-  await Order.updateOne({ _id: order._id, user: req.user._id }, { $max: { orderUpdatesReadAt: event.at } });
+  await Order.updateOne({ _id: order._id, user: req.user._id }, { $max: { orderUpdatesReadAt: event.at } }, { timestamps: false });
   return res.json({ success: true });
 });
 
