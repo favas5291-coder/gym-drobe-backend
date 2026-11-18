@@ -1,3 +1,4 @@
+const { assertCodCoverage } = require("../../utils/standardCod");
 const { checkoutDelivery } = require("../../utils/checkoutDelivery");
 const { customerOwner, customerFilter } = require("../../utils/customerAccess");
 const { selectedProductImage } = require("../../utils/productImages");
@@ -680,13 +681,16 @@ function address(value) {
   };
 }
 
-async function findProduct(id) {
+async function findProduct(id, session) {
+  function select(query) {
+    const fields = "+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing";
+    return session ? query.select(fields).session(session) : query.select(fields);
+  }
   if (
     mongoose.isObjectIdOrHexString(id)
   ) {
     const product =
-      await Product.findById(id)
-        .select("+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing");
+      await select(Product.findById(id));
 
     if (product) {
       return product;
@@ -698,21 +702,17 @@ async function findProduct(id) {
     Number.isSafeInteger(Number(id))
   ) {
     const product =
-      await Product.findOne({
-        legacyId: Number(id),
-      }).select("+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing");
+      await select(Product.findOne({ legacyId: Number(id) }));
 
     if (product) {
       return product;
     }
   }
 
-  return Product.findOne({
-    slug: id.toLowerCase(),
-  }).select("+meeshoProductLink +marketplaceAccount +marketplaceCommercial +marketplaceListing");
+  return select(Product.findOne({ slug: id.toLowerCase() }));
 }
 
-async function snapshot(body) {
+async function snapshot(body, session) {
   const hasKit =
     Array.isArray(body.items) &&
     body.items.some(
@@ -873,7 +873,7 @@ async function snapshot(body) {
 
     if (!product) {
       product =
-        await findProduct(id);
+        await findProduct(id, session);
 
       if (
         !product ||
@@ -1100,7 +1100,7 @@ async function snapshot(body) {
     }
 
     // Check combined stock in memory during quoting.
-    // Inventory is saved only when captured payment is finalized.
+    // The caller persists these deductions only when confirming the order.
     reserveVariantStock(
       product,
       quantity,
@@ -1233,6 +1233,7 @@ async function snapshot(body) {
   }
 
   return {
+    ...(session ? { reservedProducts: [...products.values()] } : {}),
     items: await require("../../utils/marketplace/settlement").snapshotItems(items,[...products.values()],pricing),
     coupon,
     pricing,
@@ -2181,6 +2182,81 @@ async function createCheckoutOrder(data) {
   });
 }
 
+// A confirmed COD order has a receivable, never a synthetic gateway payment.
+async function createStandardCodOrder(req, res) {
+  res.set("Cache-Control", "no-store");
+  try {
+    const body = bodyOf(req);
+    const owner = customerOwner(req);
+    const checkoutToken = text(body.checkoutToken, "Checkout token", 200, 1);
+    if (body.paymentMethod !== "cod" || !Number.isFinite(body.expectedTotal) || body.expectedTotal <= 0) {
+      throw problem(400, "Choose cash on delivery and review the order total.", "INVALID_COD_CHECKOUT");
+    }
+    if (!Array.isArray(body.items) || !body.items.length || body.items.length > 50 ||
+        body.items.some(item => !item || typeof item !== "object" || item.kit || Object.hasOwn(item, "kitGroup")) ||
+        body.kits || body.kitGroups || body.kitSnapshots) {
+      throw problem(409, "Choose ordinary products for cash on delivery.", "COD_KIT_UNAVAILABLE");
+    }
+    const shippingAddress = address(body.shippingAddress);
+    const giftMessage = text(body.giftMessage, "Gift message", 250, 0, true);
+    const orderNote = text(body.orderNote, "Delivery instructions", 300, 0, true);
+    const source = ["cart", "selection", "buy-now"].includes(body.source) ? body.source : "cart";
+    const intent = [
+      source, body.deliveryMethod ?? "standard", shippingAddress, giftMessage, orderNote,
+      body.coupon?.code || body.coupon || "", cents(body.expectedTotal),
+      body.items.map(item => [String(item.id ?? item.productId ?? item.product), item.quantity,
+        item.selectedSize ?? item.size ?? null, item.selectedColor ?? item.color ?? null]),
+    ];
+    const digest = crypto.createHash("sha256").update(JSON.stringify(intent)).digest("hex");
+    const filter = { ...customerFilter(req), checkoutToken };
+    function replay(existing) {
+      if (existing.payment.method !== "cod" || existing.codRequestDigest !== digest) {
+        throw problem(409, "This checkout token belongs to a different order request.", "CHECKOUT_CHANGED");
+      }
+      return existing;
+    }
+    await Order.init();
+    let saved;
+    try {
+      saved = await transaction(async session => {
+        const previous = await Order.findOne(filter).select("+codRequestDigest").session(session);
+        if (previous) return replay(previous);
+        assertCodCoverage(body, shippingAddress.pincode, true);
+        const current = await snapshot(body, session);
+        if (!current.deliveryReview?.ready) {
+          throw problem(409, "Delivery is unavailable for this selection.", "DELIVERY_UNAVAILABLE");
+        }
+        const total = current.pricing.finalTotal;
+        const order = new Order({
+          ...owner, checkoutToken, codRequestDigest: digest, source, shippingAddress, giftMessage, orderNote,
+          orderNumber: "GD-" + crypto.randomUUID().toUpperCase(),
+          status: "confirmed", items: current.items, coupon: current.coupon || undefined,
+          customer: {name:shippingAddress.fullName, email:shippingAddress.email, phone:shippingAddress.phone},
+          pricing: {...current.pricing, currency:"INR"}, paymentMethod:"cod", deliveryMethod:current.method,
+          delivery: {method:current.method, status:"pending"},
+          payment: {method:"cod", gateway:"cod", status:"pending", totalAmount:total,
+            amountPaid:0, grossCollected:0, refundedAmount:0, amountDue:total,
+            amountsReconciled:true, advanceAmount:0, advancePercentage:0, balanceStatus:"pending"},
+          metadata: {version:"cod-1", demo:false, inventoryReserved:true},
+        });
+        audit(order, "confirmed", "Cash on delivery confirmed. The full order total is due on delivery.");
+        // Saving first lets the supplier order hook validate pre-deduction inventory.
+        await order.save({session});
+        for (const product of current.reservedProducts) await product.save({session});
+        return order;
+      });
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      const previous = await Order.findOne(filter).select("+codRequestDigest");
+      if (!previous) throw error;
+      saved = replay(previous);
+    }
+    return res.json({success:true, order:safeOrder(saved)});
+  } catch (error) {
+    return fail(res, error, false, "cod-order-create");
+  }
+}
+
 async function createRazorpayOrder(
   req,
   res,
@@ -2243,6 +2319,10 @@ async function createRazorpayOrder(
           });
         },
       );
+
+    if (!order && body.paymentMethod === "cod-partial" && process.env.STANDARD_COD_ENABLED === "true") {
+      throw problem(409, "Refresh checkout to use standard cash on delivery.", "COD_ADVANCE_RETIRED");
+    }
 
     if (order) {
       if (
@@ -3630,6 +3710,7 @@ async function verifyRazorpayPayment(
 
 module.exports = {
   createRazorpayOrder,
+  createStandardCodOrder,
   verifyRazorpayPayment,
   finalizeCapturedPayment,
 };

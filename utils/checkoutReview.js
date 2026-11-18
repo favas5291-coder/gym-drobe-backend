@@ -3,6 +3,7 @@
 // Backend-only loader.
 // Raw product records must never be returned to customers.
 
+const { assertCodCoverage } = require("./standardCod");
 const mongoose = require("mongoose");
 
 const Product = require("../models/Product");
@@ -69,14 +70,19 @@ async function loadCheckoutReview(body) {
   const method =
     body.paymentMethod ?? "razorpay";
 
+  const ordinaryPincode = body.pincode ?? body.shippingAddress?.pincode;
+  if (method === "cod") {
+    assertCodCoverage(body, ordinaryPincode);
+  }
+
   const deliveryMethod =
     body.deliveryMethod ?? "standard";
 
   if (
-    !["razorpay", "cod-partial"].includes(method)
+    !["razorpay", "cod-partial", "cod"].includes(method)
   ) {
     invalid(
-      "Choose online payment or COD with a 10% advance.",
+      "Choose an available payment method.",
     );
   }
 
@@ -492,7 +498,7 @@ async function loadCheckoutReview(body) {
         products,
         deliveryMethod,
         paymentMethod: method,
-        pincode: body.pincode,
+        pincode: ordinaryPincode,
       });
 
     quote.pricing =
@@ -508,7 +514,7 @@ async function loadCheckoutReview(body) {
       checkoutDelivery(
         products,
         quote.items,
-        body.pincode,
+        ordinaryPincode,
       );
 
     if (

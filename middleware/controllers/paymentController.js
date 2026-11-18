@@ -102,6 +102,7 @@ async function getCheckoutQuote(req, res) {
 }
 
 module.exports = {
+  createStandardCodOrder: razorpay.createStandardCodOrder,
   getCheckoutQuote,
   createRazorpayOrder,
 

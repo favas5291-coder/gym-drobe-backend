@@ -33,6 +33,10 @@ jobs:
         env:
           GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_marketplace_ci?replicaSet=rs0&directConnection=true
         run: node tests/integration/marketplace-mongo.cjs
+      - name: Read-only daily operations report
+        env:
+          GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_reports?replicaSet=rs0&directConnection=true
+        run: node tests/integration/daily-operations.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

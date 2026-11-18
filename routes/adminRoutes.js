@@ -21,9 +21,11 @@ router.use((req, res, next) => {
 
 // Every route below requires an active admin account.
 router.use(protect, adminOnly);
+router.use("/automation", require("./adminAutomationRoutes"));
 
 // Dashboard statistics.
 router.get("/dashboard", getDashboard);
+router.get("/reports/daily-operations", require("../middleware/controllers/dailyOperationsController"));
 
 // Customer list.
 router.get("/customers", getCustomers);

@@ -34,12 +34,14 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/media",handler(req=>Media.upload(req.user,req.body)));
   r.delete("/media/:id",handler(req=>Media.remove(req.user,req.params.id)));
   r.use("/admin",(req,res,next)=>{try{S.actorRequired(req.user,true);next();}catch(e){res.status(e.status).json({success:false,message:e.message});}});
+  r.get("/admin/orders/:id/settlement-review",handler(req=>require("../utils/marketplace/settlementReview").reviewOrder(req.user,req.params.id)));
   r.get("/admin/orders/:id/resolutions",handler(req=>require("../utils/marketplace/resolution").inspectLegacy(req.user,req.params.id)));
   r.post("/admin/orders/:id/items/:index/resolutions",handler(req=>require("../utils/marketplace/resolution").createLegacy(req.user,req.params.id,req.params.index,req.body)));
   r.post("/admin/orders/:id/collection",handler(req=>require("../utils/marketplace/resolution").recordCollection(req.user,req.params.id,req.body)));
   r.post("/admin/earnings/:id/resolutions",handler(req=>require("../utils/marketplace/resolution").create(req.user,req.params.id,req.body)));
   r.post("/admin/resolutions/:id/refund",handler(req=>require("../utils/marketplace/resolution").recordRefund(req.user,req.params.id,req.body)));
   r.get("/admin/reporting",handler(req=>F.reporting(req.user)));
+  r.post("/admin/remittances/preview",handler(req=>require("../utils/marketplace/remittancePreview").preview(req.user,req.body)));
   r.post("/admin/expenses",handler(req=>F.addExpense(req.user,req.body)));
   r.post("/admin/listings/:id/financial-preview",handler(req=>S.financialPreview(req.user,req.params.id,req.body)));
   r.get("/admin/suppliers",handler(req=>S.listAccounts(req.user,req.query)));
