@@ -29,6 +29,10 @@ jobs:
           done
           docker exec gymdrobe-marketplace-fixture mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
           docker exec gymdrobe-marketplace-fixture mongosh --quiet --eval 'for(let i=0;i<60;i++){if(db.hello().isWritablePrimary)quit(0);sleep(500)}quit(1)'
+      - name: Supplier-scoped dispatch SLA read-only fixture
+        env:
+          GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_dispatch_ci?replicaSet=rs0&directConnection=true
+        run: node tests/integration/dispatch-review.cjs
       - name: Actual supplier API, database transactions and payout concurrency
         env:
           GYMDROBE_TEST_MONGO_URI: mongodb://127.0.0.1:27018/gymdrobe_fixture_marketplace_ci?replicaSet=rs0&directConnection=true
