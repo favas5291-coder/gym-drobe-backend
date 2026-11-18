@@ -4,6 +4,8 @@ const mongoose = require("mongoose");
 const Job = require("../models/AutomationJob");
 const engine = require("../utils/automation/engine");
 
+const { readWorkerHealth } = require("../utils/automation/workerHealth");
+
 const router = express.Router();
 const reject = (res, status, message) => res.status(status).json({ success: false, message });
 const validId = value => typeof value === "string" && /^[0-9a-f]{24}$/i.test(value);
@@ -27,15 +29,21 @@ router.get("/", async (req, res) => {
     success: true, enabled: engine.enabled(), workerEnabled: engine.workerEnabled(),
     lastSuccessAt: null, counts, jobs: [], nextCursor: null,
   };
-  if (!summary.enabled) return res.json(summary);
+  const healthOptions = { enabled: summary.enabled, workerEnabled: summary.workerEnabled, type: engine.TYPE };
+  if (!summary.enabled) {
+    summary.workerHealth = await readWorkerHealth(healthOptions);
+    return res.json(summary);
+  }
   const filter = {};
   if (status) filter.status = status;
   if (before) filter._id = { $lt: new mongoose.Types.ObjectId(before) };
-  const [page, success, totals] = await Promise.all([
+  const [page, success, totals, workerHealth] = await Promise.all([
     Job.find(filter).sort({ _id: -1 }).limit(26).lean().maxTimeMS(5000),
     Job.findOne({ lastSuccessAt: { $exists: true } }).sort({ lastSuccessAt: -1 }).select("lastSuccessAt").lean().maxTimeMS(5000),
     Promise.all(engine.STATES.map(state => Job.countDocuments({ status: state }).maxTimeMS(5000))),
+    readWorkerHealth(healthOptions),
   ]);
+  summary.workerHealth = workerHealth;
   engine.STATES.forEach((state, index) => { counts[state] = totals[index]; });
   summary.lastSuccessAt = success?.lastSuccessAt || null;
   summary.jobs = page.slice(0, 25).map(publicJob);
