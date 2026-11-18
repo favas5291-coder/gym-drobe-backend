@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 
+const { supportReviewFilter } = require("../../utils/supportReview");
 const Ticket = require("../../models/SupportTicket");
 const Order = require("../../models/Order");
 
@@ -267,6 +268,15 @@ exports.listTickets = handle(
       filter.status = req.query.status;
     }
 
+    const review = req.query.review;
+    const checkedAt = new Date();
+    if (review !== undefined) {
+      if (!admin) bad("Admin access is required for support review queues.", 403);
+      if (!["first-reply", "unresolved-month"].includes(review)) bad("Invalid support review queue.");
+      if (req.query.status) bad("Select a status or a review queue.");
+      Object.assign(filter, supportReviewFilter(review, checkedAt));
+    }
+
     const raw = Number(
       req.query.page || 1,
     );
@@ -282,10 +292,7 @@ exports.listTickets = handle(
     const [tickets, total] =
       await Promise.all([
         Ticket.find(filter)
-          .sort({
-            updatedAt: -1,
-            _id: -1,
-          })
+          .sort(review ? { createdAt: 1, _id: 1 } : { updatedAt: -1, _id: -1 })
           .skip((page - 1) * limit)
           .limit(limit)
           .select("-messages"),
@@ -296,6 +303,7 @@ exports.listTickets = handle(
     res.json({
       success: true,
       tickets: tickets.map(serialize),
+      ...(review ? { review, checkedAt } : {}),
       page,
       pages: Math.max(
         1,
