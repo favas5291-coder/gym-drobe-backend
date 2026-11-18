@@ -46,3 +46,16 @@ test("partial and completed line cancellations and mixed coverage do not generat
   assert.equal(reviewGroup(two,mixed,new Date(+due+1)).timing,"overdue");
   assert.equal(reviewGroup(two,mixed,new Date(+due+1)).unknownItems,1);
 });
+
+test("confirmed reserved full COD awaits payment without starting its dispatch clock",()=>{
+  const cod={...order,metadata:{version:"cod-1",inventoryReserved:true},payment:{method:"cod",status:"pending",verifiedAt}};
+  const row=reviewGroup(group,cod,due);
+  assert.equal(row.timing,"unknown");
+  assert.equal(row.dueAt,null);
+  assert.equal(row.unknownItems,1);
+  for(const unsupported of [
+    {...cod,payment:{method:"razorpay",status:"pending"}}, {...cod,metadata:{version:"cod-1",inventoryReserved:false}},
+    {...cod,metadata:{version:"older",inventoryReserved:true}}, {...cod,items:[{quantity:1}]},
+    {...cod,status:"payment-pending"}, {...cod,payment:{method:"cod-partial",status:"pending"}},
+  ]) assert.equal(reviewGroup(group,unsupported,due),null);
+});

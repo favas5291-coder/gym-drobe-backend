@@ -18,11 +18,15 @@ function itemDueAt(item, accountId, verifiedAt) {
 }
 
 function reviewGroup(group, order, now) {
-  if (!["confirmed","processing"].includes(order.status) ||
-      !["paid","partially-paid","partially-refunded"].includes(order.payment?.status)) return null;
+  if (!["confirmed","processing"].includes(order.status)) return null;
+  const codPending = order.payment?.method === "cod" && order.payment.status === "pending" &&
+    order.metadata?.version === "cod-1" && order.metadata.inventoryReserved === true;
+  if (!codPending && !["paid","partially-paid","partially-refunded"].includes(order.payment?.status)) return null;
   const result = { fulfilmentId: String(group._id), orderId: String(group.order),
     status: group.status, timing: "unknown", dueAt: null, unknownItems: 0 };
   const indices = group.itemIndices;
+  if (codPending && (!Array.isArray(indices) || !indices.some(index =>
+    Number.isSafeInteger(index) && index >= 0 && order.items?.[index]?.marketplace?.accountId === String(group.supplier)))) return null;
   if (!Array.isArray(indices) || !indices.length || new Set(indices).size !== indices.length) return result;
   let actionable = 0, earliest = Infinity;
   for (const index of indices) {
@@ -41,7 +45,7 @@ function reviewGroup(group, order, now) {
     if (cancelled > item.quantity) { result.unknownItems++; continue; }
     if (cancelled === item.quantity) continue;
     actionable++;
-    const due = itemDueAt(item, String(group.supplier), order.payment.verifiedAt);
+    const due = codPending ? null : itemDueAt(item, String(group.supplier), order.payment.verifiedAt);
     if (due === null || !(order.payment.verifiedAt <= now)) result.unknownItems++;
     else earliest = Math.min(earliest,due);
   }
@@ -71,7 +75,8 @@ async function dispatchReview(actor, query, now = new Date()) {
       { $project: { order:1, supplier:1, status:1, itemIndices:1 } },
       { $lookup: { from: "orders", localField: "order", foreignField: "_id", let: { accountId: { $toString: "$supplier" } }, as: "purchase", pipeline: [
         { $match: { "metadata.demo": source === "test" } },
-        { $project: { _id:0, status:1, "payment.verifiedAt":1, "payment.status":1,
+        { $project: { _id:0, status:1, "payment.verifiedAt":1, "payment.status":1, "payment.method":1,
+          "metadata.version":1, "metadata.inventoryReserved":1,
           items: { $map: { input: { $ifNull:["$items",[]] }, as:"item", in:{ $cond:[
             { $eq:["$$item.marketplace.accountId","$$accountId"] },
             { quantity:"$$item.quantity", marketplace:{ accountId:"$$item.marketplace.accountId",

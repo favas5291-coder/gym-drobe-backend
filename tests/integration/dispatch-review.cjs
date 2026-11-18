@@ -26,8 +26,10 @@ async function main() {
     const real = (await Order.collection.insertOne({...sample})).insertedId;
     const demo = (await Order.collection.insertOne({...sample,metadata:{demo:true}})).insertedId;
     const unknown = (await Order.collection.insertOne({...sample,items:[{quantity:1}]})).insertedId;
+    const cod = (await Order.collection.insertOne({...sample,metadata:{demo:false,version:"cod-1",inventoryReserved:true},payment:{method:"cod",status:"pending"}})).insertedId;
+    const online = (await Order.collection.insertOne({...sample,payment:{method:"razorpay",status:"pending"}})).insertedId;
     const g = (order,supplier,itemIndices,status="pending") => ({_id:id(),order,supplier,itemIndices,status});
-    const groups = [g(real,a,[0]),g(real,b,[1]),g(demo,a,[0]),g(unknown,a,[0]),g(real,a,[0],"delivered")];
+    const groups = [g(real,a,[0]),g(real,b,[1]),g(demo,a,[0]),g(unknown,a,[0]),g(real,a,[0],"delivered"),g(cod,a,[0]),g(online,a,[0])];
     await M.Fulfilment.collection.insertMany(groups);
     const app = express();
     app.use("/api/marketplace",createMarketplaceRouter({enabled:()=>true,authenticate:(req,res,next)=>{
@@ -46,7 +48,9 @@ async function main() {
     const first = await get("a");
     assert.equal(first.headers.get("cache-control"),"no-store");
     const report = await first.json();
-    assert.deepEqual(report.rows.map(r=>r.timing),["overdue","unknown"]);
+    assert.deepEqual(report.rows.map(r=>r.timing),["overdue","unknown","unknown"]);
+    assert.equal(report.rows[2].orderId,String(cod));
+    assert.equal(report.rows[2].dueAt,null);
     assert.equal(report.rows[0].dueAt,"2020-04-03T00:00:00.000Z");
     assert.equal(report.nextCursor,null);
     assert.ok(!JSON.stringify(report).includes("PRIVATE_STREET"));
@@ -55,7 +59,7 @@ async function main() {
     assert.equal((await (await get("a","?source=test")).json()).rows[0].orderId,String(demo));
     assert.equal((await (await get("admin","?supplier="+b)).json()).rows[0].fulfilmentId,String(groups[1]._id));
     assert.equal((await M.Fulfilment.collection.countDocuments()),groups.length);
-    assert.equal((await Order.collection.countDocuments()),3);
+    assert.equal((await Order.collection.countDocuments()),5);
     const more = Array.from({length:49},()=>g(real,a,[0],"preparing"));
     await M.Fulfilment.collection.insertMany(more);
     const pageOne=await (await get("a")).json();
@@ -63,8 +67,8 @@ async function main() {
     const pageTwo=await (await get("a","?after="+pageOne.nextCursor)).json();
     assert.equal(pageTwo.nextCursor,null);
     const all=[...pageOne.rows,...pageTwo.rows];
-    assert.equal(all.length,51);
-    assert.equal(new Set(all.map(r=>r.fulfilmentId)).size,51);
+    assert.equal(all.length,52);
+    assert.equal(new Set(all.map(r=>r.fulfilmentId)).size,52);
     console.log("PASS dispatch clock, actual MongoDB projection, source/owner isolation, stable cursor, read-only endpoint, protected access and missing-index failure");
   } finally {
     if (server) await new Promise(resolve=>server.close(resolve));
