@@ -30,13 +30,13 @@ The corrected combined fixture also passed in hosted CI on MongoDB 8. Both the c
 
 ## Mobile storefront measurements
 
-Three cold navigations per route and revision, 390 × 844 touch viewport, Chromium 153, 4× CPU slowdown, 150 ms latency and 1.6 Mbps download. Assets came from production builds and API data came from local fixtures. Each Cart test asserted one item. The comparison covers storefront PRs #74–82, including the adjacent settlement and dispatch UI merge, at integrated tree `d7341717db0de4fdd3d17413b220fb7f85f85c58`. All 289 unit tests, a production build and the nine feature fixtures passed on the candidate. [Storefront integration PR #83](https://github.com/favas5291-coder/gym-store/pull/83)
+Matched feature-on builds, three cold navigations per route and revision, 390 × 844 touch viewport, Chromium 153, 4× CPU slowdown, 150 ms latency and 1.6 Mbps download. Assets came from production builds and API data came from local fixtures. Each Cart test asserted one item. The comparison covers storefront PRs #74–82, including the adjacent settlement and dispatch UI merge, at integrated tree `d7341717db0de4fdd3d17413b220fb7f85f85c58`. All 289 unit tests, a production build and the nine feature fixtures passed on the candidate. [Storefront integration PR #83](https://github.com/favas5291-coder/gym-store/pull/83)
 
 | Route | Median LCP on main | Median LCP on draft | Median CLS on draft | Loaded route JS and CSS gzip change |
 | --- | --- | --- | --- | --- |
-| Home | 2.176 s | 2.068 s | 0 | +259 bytes |
-| Shop | 2.748 s | 2.780 s | 0 | +260 bytes |
-| Populated Cart | 2.236 s | 2.604 s | 0 | +379 bytes |
+| Home | 2.008 s | 2.068 s | 0 | +250 bytes |
+| Shop | 2.844 s | 2.780 s | 0 | +251 bytes |
+| Populated Cart | 1.996 s | 2.604 s | 0 | +363 bytes |
 
 The Cart change stabilised the coupon while the catalogue loaded. The final largest paint on Cart was the item thumbnail, while the baseline often measured recommendation text. Both Shop and the populated Cart exceeded 2.5 seconds in this release sample. Three runs can vary with host load. Production speed and low-end device performance remain unverified.
 
