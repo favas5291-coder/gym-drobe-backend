@@ -81,6 +81,16 @@ async function createLegacy(actor,orderId,index,input){
     return {resolution:safe(r),message:"Unassigned purchased item resolved. No supplier ownership was assigned and no refund was executed."};
   });
 }
+function checkShipmentResolution(kind, shipment) {
+  if (kind === "return") {
+    if (shipment.status !== "delivered") {
+      D.fail("Confirm this supplier parcel's delivery and receipt/inspection before recording its return.", 409);
+    }
+  } else if (!["pending", "accepted", "preparing"].includes(shipment.status) || shipment.shippedAt || shipment.deliveredAt) {
+    D.fail("Dispatched items require a completed return, not cancellation.", 409);
+  }
+}
+
 async function create(actor,earningId,input){
  S.actorRequired(actor,true);D.object(input,["requestKey","kind","quantity","reason","restockQuantity"],"Item resolution");const requestKey=D.text(input.requestKey,"request key",100,16),reason=D.text(input.reason,"resolution evidence",2000,10),quantity=D.integer(input.quantity,"Affected quantity",1,99),restockQuantity=D.integer(input.restockQuantity??0,"Restock quantity",0,quantity);if(!['cancellation','return'].includes(input.kind))D.fail("Choose cancellation or completed return.");
  return S.transaction(async session=>{
@@ -88,13 +98,26 @@ async function create(actor,earningId,input){
   const prior=await M.Resolution.findOne({order:order._id,requestKey}).session(session);if(prior){if(String(prior.entitlement)!==String(e._id)||prior.kind!==input.kind||prior.quantity!==quantity||prior.reason!==reason||prior.restockedQuantity!==restockQuantity)D.fail("Resolution key already used with different details.",409);return {resolution:safe(prior),replayed:true};}
   collection(order,input.kind==="return");if(order.status==="cancelled"||!['not-requested','rejected'].includes(order.returnRequest?.status||'not-requested')||!['not-requested','not-applicable','refunded'].includes(order.refund?.status||'not-requested'))D.fail("Resolve the existing whole-order cancellation/return/refund first; do not overlap resolution paths.",409);
   const q=e.snapshot.quantity,before=e.resolvedQuantity||0;if(before+quantity>q)D.fail("Affected quantities exceed the remaining purchased units.",409);
-  if(input.kind==='cancellation'&&['shipped','delivered','cancelled'].includes(g.status))D.fail("Dispatched items require a completed return, not cancellation.",409);
-  if(input.kind==='return'&&g.status!=='delivered'&&order.status!=='delivered')D.fail("Confirm actual delivery and receipt/inspection before a returned-item resolution.",409);
+  checkShipmentResolution(input.kind, g);
+  if (input.kind === "cancellation" && await M.Resolution.exists({ order: order._id, supplier: a._id, kind: "return" }).session(session)) {
+    D.fail("A previous return records delivery of this parcel. Reconcile its shipment history before cancellation.", 409);
+  }
   const {customerCreditPaise,customerRefundPaise}=await applyItemCredit(order,e.itemIndex,quantity,input.kind,before,session);
   const oldReversed=e.snapshot.supplierPayablePaise-Number(BigInt(e.snapshot.supplierPayablePaise)*BigInt(q-before)/BigInt(q)),newReversed=e.snapshot.supplierPayablePaise-Number(BigInt(e.snapshot.supplierPayablePaise)*BigInt(q-before-quantity)/BigInt(q));
   if(restockQuantity){if(order.metadata?.inventoryReserved!==true)D.fail("No stock reservation is recorded; manual stock review is required before restoration.",409);const p=await Product.findById(order.items[e.itemIndex].product).select('+marketplaceAccount').session(session);if(!p)D.fail("Historical product missing; do not invent replacement stock.",409);const item=order.items[e.itemIndex];restoreVariantStock(p,restockQuantity,item.selectedSize,item.selectedColor);p.$locals.marketplaceWrite=true;await p.save({session});}
   const [r]=await M.Resolution.create([{scope:"supplier",supplier:a._id,order:order._id,entitlement:e._id,itemIndex:e.itemIndex,requestKey,kind:input.kind,quantity,customerCreditPaise,customerRefundPaise,supplierReversalPaise:newReversed-oldReversed,reason,restockedQuantity:restockQuantity,status:customerRefundPaise?'refund-pending':'refunded',actor:actor._id}],{session});
-  e.resolvedQuantity+=quantity;e.refundPending=customerRefundPaise>0||e.refundPending;await e.save({session});const groupEntries=await M.Entitlement.find({order:order._id,supplier:a._id}).session(session);if(groupEntries.every(row=>row.resolvedQuantity>=row.snapshot.quantity)){g.status="cancelled";g.history.push({status:"cancelled",at:new Date(),actor:String(actor._id),reason:"All supplier quantities resolved."});await g.save({session});}await mirror(order,session);await order.save({session});await F.refreshSupplier(a,session,actor);await S.audit(actor,a._id,r._id,"item-resolution-created",{resolvedQuantity:before},{resolvedQuantity:e.resolvedQuantity,customerRefundPaise,supplierReversalPaise:r.supplierReversalPaise},reason,session);return {resolution:safe(r),message:"Item resolution recorded. No refund or bank transfer was executed."};
+  e.resolvedQuantity += quantity;
+  e.refundPending = customerRefundPaise > 0 || e.refundPending;
+  await e.save({ session });
+  if (input.kind === "cancellation") {
+    const groupEntries = await M.Entitlement.find({ order: order._id, supplier: a._id }).session(session);
+    if (groupEntries.every(row => row.resolvedQuantity === row.snapshot.quantity)) {
+      g.status = "cancelled";
+      g.history.push({ status: "cancelled", at: new Date(), actor: String(actor._id), reason: "All supplier units cancelled before dispatch." });
+      await g.save({ session });
+    }
+  }
+  await mirror(order,session);await order.save({session});await F.refreshSupplier(a,session,actor);await S.audit(actor,a._id,r._id,"item-resolution-created",{resolvedQuantity:before},{resolvedQuantity:e.resolvedQuantity,customerRefundPaise,supplierReversalPaise:r.supplierReversalPaise},reason,session);return {resolution:safe(r),message:"Item resolution recorded. No refund or bank transfer was executed."};
  });
 }
 async function recordRefund(actor,rid,input){
@@ -112,4 +135,4 @@ async function recordCollection(actor,orderId,input){
   const expected=effectiveTotal(order);if(money.retained+amount!==expected)D.fail("Collected amount does not reconcile with purchased cancellation credits.",409);const [entry]=await M.Collection.create([{order:order._id,requestKey,amount,reference,collectedAt:date,reason,actor:actor._id}],{session});order.payment.grossCollected=(money.gross+amount)/100;order.payment.amountPaid=(money.retained+amount)/100;order.payment.amountDue=0;order.payment.status=money.refund?"partially-refunded":"paid";order.payment.balanceStatus="collected";order.payment.balanceCollectedAt=date;await order.save({session});for(const group of groups){const a=await M.Account.findById(group.supplier).session(session);await F.refreshSupplier(a,session,actor);}await S.audit(actor,null,entry._id,"external-cod-collection-recorded",null,{orderId:String(order._id),amount,reference,collectedAt:date},reason,session);return {collectionId:String(entry._id),message:"Actual external COD collection recorded. No money was collected by this dashboard."};
  });
 }
-module.exports={create,createLegacy,inspectLegacy,recordRefund,recordCollection,collection,effectiveTotal};
+module.exports={checkShipmentResolution,create,createLegacy,inspectLegacy,recordRefund,recordCollection,collection,effectiveTotal};
