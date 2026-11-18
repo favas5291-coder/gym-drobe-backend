@@ -88,6 +88,38 @@ async function run(){
   assert.equal((await Order.findById(checkoutOrder._id)).whatsappOrderUpdates,undefined);
   assert.equal((await call(alice,`/admin/orders/${checkoutOrder.orderNumber}/whatsapp-deliveries`))[0],403);
  });
+ await pass("after-sale notifications preserve ownership, stable replay and the order's update time", async () => {
+  const orderId = checkoutOrder._id;
+  const before = await Order.findById(orderId).lean();
+  const endpoint = base.replace("/marketplace", "/orders");
+  const inbox = async actor => {
+   const response = await fetch(endpoint + "/updates", { headers: { Authorization: "Bearer " + token(actor) } });
+   assert.equal(response.status, 200);
+   return (await response.json()).updates;
+  };
+  const requestedAt = new Date();
+  const request = { id: "fixture-inbox-return", type: "return", status: "requested", requestedAt, reason: "private fixture detail" };
+  await Order.collection.updateOne({ _id: orderId }, { $set: { returnRequest: request } });
+  try {
+   const events = (await inbox(alice)).filter(row => row.orderNumber === before.orderNumber && row.kind === "return-requested");
+   assert.equal(events.length, 1);
+   assert.equal(events[0].unread, true);
+   assert.ok(!JSON.stringify(events).includes(request.reason));
+   assert.ok(!(await inbox(bob)).some(row => row.id === events[0].id));
+   const read = await fetch(endpoint + "/" + before.orderNumber + "/updates/read", {
+    method: "PUT", headers: { Authorization: "Bearer " + token(alice), "Content-Type": "application/json" },
+    body: JSON.stringify({ eventId: events[0].id })
+   });
+   assert.equal(read.status, 200);
+   const replay = (await inbox(alice)).filter(row => row.id === events[0].id);
+   assert.equal(replay.length, 1);
+   assert.equal(replay[0].unread, false);
+   assert.equal(+(await Order.findById(orderId)).updatedAt, +before.updatedAt);
+  } finally {
+   const restore = before.returnRequest ? { $set: { returnRequest: before.returnRequest } } : { $unset: { returnRequest: "" } };
+   await Order.collection.updateOne({ _id: orderId }, restore);
+  }
+ });
  await pass("simultaneous captured checkouts cannot oversell the last supplier unit",async()=>{
   const l=await publish(bob,"Fixture last-unit concurrency shirt"),live=await S.hydratedListing(await M.Listing.findById(l.id));await S.updateStock(bob,l.id,{revision:l.revision,stockDigest:live.stockDigest,variants:[{size:"M",color:"Black",stock:1}]});
   const post=async(route,body)=>{const res=await fetch(base.replace("/marketplace","/payments")+route,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token(bob)},body:JSON.stringify(body)});return {status:res.status,data:await res.json()};};const bodies=[1,2].map(()=>({checkoutToken:crypto.randomUUID(),paymentMethod:"razorpay",deliveryMethod:"standard",shippingAddress:fixture.shippingAddress,items:[{id:l.productId,quantity:1,selectedSize:"M",selectedColor:"Black"}]}));const proofs=[];
