@@ -24,6 +24,7 @@ router.use(protect, adminOnly);
 
 // Dashboard statistics.
 router.get("/dashboard", getDashboard);
+router.get("/reports/daily-operations", require("../middleware/controllers/dailyOperationsController"));
 
 // Customer list.
 router.get("/customers", getCustomers);
