@@ -2,7 +2,7 @@
 
 19 November 2026. All changes described here are in review. No staged or production rollout, carrier booking, real payment, message or payout was performed as part of this pilot.
 
-[Reproducible two-supplier test and review snapshot in backend PR #35](https://github.com/favas5291-coder/gym-drobe-backend/pull/35). The local backend check with the additional fixture-shipping, worker health, staged metadata, catalogue quality and dispatch branches passed 184 tests. The after-sales inbox is a separate stack on backend #16.
+[Reproducible two-supplier test and review snapshot in backend PR #35](https://github.com/favas5291-coder/gym-drobe-backend/pull/35). The local backend check with the additional fixture-shipping, worker health, staged metadata, catalogue quality, dispatch and CRM branches passed all 184 tests. The tested [extended backend snapshot](https://github.com/favas5291-coder/gym-drobe-backend/commit/d32a6084d879910752ceacdc372d64c507a5cf38) preserves the resolutions that keep each database test in CI. The after-sales inbox is a separate stack on backend #16.
 
 ## Two-supplier order
 
@@ -30,15 +30,17 @@ The corrected combined fixture also passed in hosted CI on MongoDB 8. Both the c
 
 ## Mobile storefront measurements
 
-Three cold navigations per route and revision, 390 × 844 touch viewport, Chromium 153, 4× CPU slowdown, 150 ms latency and 1.6 Mbps download. Assets came from production builds and API data came from local fixtures. Each Cart test asserted one item. The comparison covers storefront PRs #74–80 at integrated tree `02a2d388ef88567767bf4af1c32135a0959c4888`.
+Three cold navigations per route and revision, 390 × 844 touch viewport, Chromium 153, 4× CPU slowdown, 150 ms latency and 1.6 Mbps download. Assets came from production builds and API data came from local fixtures. Each Cart test asserted one item. The comparison covers storefront PRs #74–82, including the adjacent settlement and dispatch UI merge, at integrated tree `d7341717db0de4fdd3d17413b220fb7f85f85c58`. All 289 unit tests, a production build and the nine feature fixtures passed on the candidate. [Storefront integration PR #83](https://github.com/favas5291-coder/gym-store/pull/83)
 
 | Route | Median LCP on main | Median LCP on draft | Median CLS on draft | Loaded route JS and CSS gzip change |
 | --- | --- | --- | --- | --- |
-| Home | 2.176 s | 2.108 s | 0 | +87 bytes |
-| Shop | 2.748 s | 2.836 s | 0 | +86 bytes |
-| Populated Cart | 2.236 s | 2.808 s | 0 | +200 bytes |
+| Home | 2.176 s | 2.068 s | 0 | +259 bytes |
+| Shop | 2.748 s | 2.780 s | 0 | +260 bytes |
+| Populated Cart | 2.236 s | 2.604 s | 0 | +379 bytes |
 
 The Cart change stabilised the coupon while the catalogue loaded. The final largest paint on Cart was the item thumbnail, while the baseline often measured recommendation text. Both Shop and the populated Cart exceeded 2.5 seconds in this release sample. Three runs can vary with host load. Production speed and low-end device performance remain unverified.
+
+After the nine-branch snapshot, [storefront #85](https://github.com/favas5291-coder/gym-store/pull/85) tested early loading of the actual first product photo. Five alternating cold pairs measured median Shop LCP of 2.852 s on its control and 2.656 s on the draft, with identical photo bytes and zero CLS; this is a separate experiment, still above 2.5 s. [Storefront #84](https://github.com/favas5291-coder/gym-store/pull/84) deferred 38,409 bytes of install-dialog media until visible; the LCP experiment for this separate change was inconclusive.
 
 ## What still needs work
 
