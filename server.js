@@ -7,6 +7,7 @@ dotenv.config();
 
 const connectDB = require("./config/db");
 const initializeIndexes = require("./utils/initializeIndexes");
+const automation = require("./utils/automation/engine");
 
 const productRoutes = require("./routes/productRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -313,6 +314,7 @@ async function boot() {
   }
 
   await initializeIndexes([
+    ...(automation.enabled() ? [require("./models/AutomationJob")] : []),
     SupportTicket,
     Supplier,
     KitTemplate,
@@ -382,6 +384,7 @@ async function boot() {
   // Serve shopping first.
   // Start marketing after its indexes are ready.
   void initializeMarketing();
+  automation.startWorker();
 
   return server;
 }
@@ -453,6 +456,7 @@ function shutdown() {
       }
     } finally {
       try {
+        await automation.stopWorker();
         await mongoose.disconnect();
       } finally {
         clearTimeout(
