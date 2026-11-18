@@ -40,6 +40,7 @@ function createMarketplaceRouter({enabled=S.enabled,authenticate=protect}={}){
   r.post("/admin/earnings/:id/resolutions",handler(req=>require("../utils/marketplace/resolution").create(req.user,req.params.id,req.body)));
   r.post("/admin/resolutions/:id/refund",handler(req=>require("../utils/marketplace/resolution").recordRefund(req.user,req.params.id,req.body)));
   r.get("/admin/reporting",handler(req=>F.reporting(req.user)));
+  r.post("/admin/remittances/preview",handler(req=>require("../utils/marketplace/remittancePreview").preview(req.user,req.body)));
   r.post("/admin/expenses",handler(req=>F.addExpense(req.user,req.body)));
   r.post("/admin/listings/:id/financial-preview",handler(req=>S.financialPreview(req.user,req.params.id,req.body)));
   r.get("/admin/suppliers",handler(req=>S.listAccounts(req.user,req.query)));
