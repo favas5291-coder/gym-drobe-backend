@@ -36,3 +36,18 @@ test("legacy item resolutions cannot manufacture supplier ownership or supplier 
  await assert.rejects(new M.Resolution({...row,scope:"supplier"}).validate(),/supplier.*required|entitlement.*required/);
  const fields={...row,supplier:id(),entitlement:id()};delete fields.scope;const old=M.Resolution.hydrate(fields);assert.equal(old.scope,undefined);assert.equal(old.isModified("scope"),false);await old.validate();
 });
+
+test("item resolutions follow the supplier parcel's own physical status", () => {
+  const { checkShipmentResolution } = require("../utils/marketplace/resolution");
+  const at = new Date();
+  for (const status of ["pending", "accepted", "preparing"]) {
+    assert.doesNotThrow(() => checkShipmentResolution("cancellation", { status }));
+    assert.throws(() => checkShipmentResolution("return", { status }), /parcel's delivery/);
+  }
+  for (const shipment of [{ status: "shipped" }, { status: "delivered" }, { status: "cancelled" },
+    { status: "pending", shippedAt: at }, { status: "preparing", deliveredAt: at }]) {
+    assert.throws(() => checkShipmentResolution("cancellation", shipment), /Dispatched/);
+  }
+  assert.doesNotThrow(() => checkShipmentResolution("return", { status: "delivered", deliveredAt: at }));
+  assert.throws(() => checkShipmentResolution("return", { status: "shipped" }), /parcel's delivery/);
+});
