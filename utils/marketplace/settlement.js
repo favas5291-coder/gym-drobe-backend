@@ -2,6 +2,7 @@
 const S = require("./service");
 const {M,D,transaction,actorRequired,account,lockAccount,audit,plain,expect}=S;
 const Product=require("../../models/Product");
+const automation = require("../automation/engine");
 const Order=()=>require("../../models/Order");
 const {getVariantStock}=require("../orderInventory");
 
@@ -63,6 +64,7 @@ async function initializeOrder(order,session){
     await ledgerRow({supplier:e.supplier,order:order._id,entitlement:e._id,key:`order:${order._id}:${index}:pending`,kind:"pending",amount:s.supplierPayablePaise,reason:"Immutable supplier amount captured; collection/delivery/return eligibility not yet satisfied."},session);
   }
   for(const aid of accounts){await M.Fulfilment.create([{order:order._id,supplier:aid,itemIndices:rows.filter(r=>r.item.marketplace.accountId===aid).map(r=>r.index)}],{session});}
+  if (automation.enabled()) await automation.enqueue(order._id, session);
 }
 async function refreshSupplier(a,session,actor,now=new Date()){
   const entries=await M.Entitlement.find({supplier:a._id}).session(session);
