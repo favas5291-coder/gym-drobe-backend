@@ -7,6 +7,11 @@ const {
 } = require("../middleware/controllers/adminController");
 
 const {
+  getCustomer,
+  getCustomers: getFilteredCustomers,
+} = require("../middleware/controllers/customerAdminController");
+
+const {
   protect,
   adminOnly,
 } = require("../middleware/authMiddleware");
@@ -26,7 +31,14 @@ router.use(protect, adminOnly);
 router.get("/dashboard", getDashboard);
 
 // Customer list.
-router.get("/customers", getCustomers);
+router.get("/customers", (req, res) => {
+  // The current directory requests these controls. Legacy callers keep their original list.
+  if (["activity", "sort", "from", "to"].some(key => Object.hasOwn(req.query, key))) {
+    return getFilteredCustomers(req, res);
+  }
+  return getCustomers(req, res);
+});
+router.get("/customers/:id", getCustomer);
 
 // Block or unblock a customer.
 router.patch(
