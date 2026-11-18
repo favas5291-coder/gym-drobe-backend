@@ -30,7 +30,7 @@ The corrected combined fixture also passed in hosted CI on MongoDB 8. Both the c
 
 ## Mobile storefront measurements
 
-Matched feature-on builds, three cold navigations per route and revision, 390 × 844 touch viewport, Chromium 153, 4× CPU slowdown, 150 ms latency and 1.6 Mbps download. Assets came from production builds and API data came from local fixtures. Each Cart test asserted one item. The comparison covers storefront PRs #74–82, including the adjacent settlement and dispatch UI merge, at integrated tree `d7341717db0de4fdd3d17413b220fb7f85f85c58`. All 289 unit tests, a production build and the nine feature fixtures passed on the candidate. [Storefront integration PR #83](https://github.com/favas5291-coder/gym-store/pull/83)
+Matched feature-on builds, three cold navigations per route and revision, 390 × 844 touch viewport, Chromium 153, 4× CPU slowdown, 150 ms latency and 1.6 Mbps download. Assets came from production builds and API data came from local fixtures. Each Cart test asserted one item. The comparison covers storefront PRs #74–82, including the adjacent settlement and dispatch UI merge, at integrated tree `d7341717db0de4fdd3d17413b220fb7f85f85c58`. All 289 unit tests, a production build and the nine feature fixtures passed on the candidate. [Storefront integration PR #83](https://github.com/favas5291-coder/gym-store/pull/83) · [Reproduction, raw samples, screenshot and feature test runs](https://github.com/favas5291-coder/gym-store/blob/01cc2828e97d5fb78c3999ea61a03700fd780b8b/docs/verification/storefront-automation/README.md)
 
 | Route | Median LCP on main | Median LCP on draft | Median CLS on draft | Loaded route JS and CSS gzip change |
 | --- | --- | --- | --- | --- |
