@@ -1,0 +1,24 @@
+{
+  "products": [
+    {
+      "id": "000000000000000000000001",
+      "brand": "Fixture Athletics",
+      "specifications": { "Brand": "Fixture Athletics" },
+      "price": 299, "discount": 0,
+      "stock": 5, "stockStatus": "low-stock",
+      "colors": ["Blue", "Green"], "sizes": [],
+      "variants": { "Blue": 5, "Green": 0 },
+      "image": "/fixtures/bottle-blue.webp"
+    },
+    {
+      "id": "000000000000000000000002",
+      "brand": "Fixture Athletics",
+      "specifications": { "Brand": "Second Fixture Brand" },
+      "price": 0, "discount": 0,
+      "stock": 4, "stockStatus": "in-stock",
+      "sizes": ["M", "L"], "colors": [],
+      "variants": { "M": 2 },
+      "images": []
+    }
+  ]
+}
