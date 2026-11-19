@@ -25,6 +25,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.10.2",
     "razorpay": "^2.9.8",
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "ipaddr.js": "1.9.1"
   }
 }

@@ -17,7 +17,7 @@ profile.index({status:1,updatedAt:-1});
 const listing = new Schema({
   supplier:{...ref("MarketplaceAccount"),required:true,immutable:true}, product:ref("Product"),
   status:{type:String,enum:["draft","submitted","changes-requested","approved","published","paused","archived","rejected"],default:"draft"},
-  draft:{type:Schema.Types.Mixed,required:true}, live:{type:Schema.Types.Mixed,default:null}, approvedCandidate:{type:Schema.Types.Mixed,default:null},
+  sourceUrl:{type:String,default:""}, draft:{type:Schema.Types.Mixed,required:true}, live:{type:Schema.Types.Mixed,default:null}, approvedCandidate:{type:Schema.Types.Mixed,default:null},
   offerRevision:{type:Number,default:0}, feedback:{type:String,default:""}, submittedAt:Date, reviewedAt:Date,reviewedBy:ref("User"),
 },options);
 listing.index({supplier:1,updatedAt:-1});listing.index({status:1,submittedAt:1});listing.index({product:1},{unique:true,partialFilterExpression:{product:{$type:"objectId"}}});
