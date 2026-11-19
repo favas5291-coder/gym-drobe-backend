@@ -50,8 +50,9 @@ function image(value) {
   return s;
 }
 function draft(value, submit = false) {
+  const publishing = submit === true;
   object(value, ["name", "brand", "category", "description", "images", "variantImages", "specifications", "material", "careInstructions", "sizeChart", "manufacturer", "origin", "warranty", "shippingLeadDays", "returnsEligible", "returnWindowDays", "returnRequestTypes", "returnConditions", "weightGrams", "dimensionsCm", "expiryDate", "batch", "variants"], "Product draft");
-  const out = { name: text(value.name || "Untitled product", "name", 200, 2), brand: text(value.brand || "", "brand", 100, submit ? 1 : 0), category: text(value.category || "", "category", 100, submit ? 1 : 0), description: text(value.description || "", "description", 5000, submit ? 10 : 0) };
+  const out = { name: text(value.name || "Untitled product", "name", 200, 2), brand: text(value.brand || "", "brand", 100, submit ? 1 : 0), category: text(value.category || "", "category", 100, submit ? 1 : 0), description: text(value.description || "", "description", 5000, 0) };
   if (!Array.isArray(value.images) || value.images.length > 12 || (submit && !value.images.length)) fail("Provide up to twelve product images.");
   out.images = [...new Set(value.images.map(image))];
   if(value.variantImages!==undefined&&(!Array.isArray(value.variantImages)||value.variantImages.length>30))fail("Provide up to thirty variant image groups.");
@@ -65,17 +66,17 @@ function draft(value, submit = false) {
   if (Object.getPrototypeOf(out.specifications) !== Object.prototype || Object.keys(out.specifications).length > 30) fail("Check specifications.");
   out.specifications = Object.fromEntries(Object.entries(out.specifications).map(([k,v]) => [text(k, "specification", 80, 1), text(v, "specification value", 1000)]));
   out.shippingLeadDays = integer(value.shippingLeadDays ?? 0, "Shipping lead days", 0, 365);
-  out.weightGrams = integer(value.weightGrams ?? 0, "Weight in grams", submit ? 1 : 0, 1000000);
+  out.weightGrams = integer(value.weightGrams ?? 0, "Weight in grams", publishing ? 1 : 0, 1000000);
   out.dimensionsCm = value.dimensionsCm || { length: 0, width: 0, height: 0 };
   object(out.dimensionsCm, ["length", "width", "height"], "Package dimensions");
-  for (const n of ["length", "width", "height"]) integer(out.dimensionsCm[n], "Dimension in cm", submit ? 1 : 0, 1000);
+  for (const n of ["length", "width", "height"]) integer(out.dimensionsCm[n], "Dimension in cm", publishing ? 1 : 0, 1000);
   if (!["yes", "no", "unconfirmed"].includes(value.returnsEligible || "unconfirmed")) fail("Check returns eligibility.");
   out.returnsEligible = value.returnsEligible || "unconfirmed";
   out.returnWindowDays = integer(value.returnWindowDays ?? 7, "Purchased return window days", 1, 7);
   out.returnRequestTypes = value.returnRequestTypes || ["return", "exchange"];
   if (!Array.isArray(out.returnRequestTypes) || !out.returnRequestTypes.length || out.returnRequestTypes.length > 2 || out.returnRequestTypes.some(v => !["return", "exchange"].includes(v))) fail("Check return or exchange options.");
-  out.returnConditions = text(value.returnConditions || "", "return conditions", 2000, submit ? 2 : 0);
-  if (submit && out.returnsEligible === "unconfirmed") fail("Confirm the purchased returns policy before submission.");
+  out.returnConditions = text(value.returnConditions || "", "return conditions", 2000, publishing ? 2 : 0);
+  if (publishing && out.returnsEligible === "unconfirmed") fail("Confirm the purchased returns policy before publication.");
   if (/protein|supplement|creatine|nutrition|fish oil|pre.?workout/i.test(out.category) && submit) {
     if (!out.batch || !/^\d{4}-\d{2}-\d{2}$/.test(out.expiryDate) || !Number.isFinite(new Date(out.expiryDate).getTime()) || new Date(out.expiryDate).toISOString().slice(0,10)!==out.expiryDate || new Date(out.expiryDate).getTime() <= Date.now()) fail("Supplements require batch and future expiry date.");
     if (!out.manufacturer || !out.origin) fail("Supplements require manufacturer and origin.");
