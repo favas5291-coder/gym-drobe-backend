@@ -1,8 +1,7 @@
 "use strict";
 
 const {
-  getOriginalPrice,
-  getDiscountedPrice,
+  getProductPrices,
   resolveCoupon,
   calculateCouponDiscount,
   calculateShipping,
@@ -402,7 +401,9 @@ function calculateKitQuote({
       );
     }
 
-    const unitPrice = getDiscountedPrice(product, row.selectedSize, row.selectedColor);
+    const { price: unitPrice, originalPrice } = getProductPrices(
+      product, row.selectedSize, row.selectedColor,
+    );
 
     const lineSubtotalPaise =
       paise(unitPrice) * row.quantity;
@@ -427,7 +428,7 @@ function calculateKitQuote({
       selectedColor: row.selectedColor,
       quantity: row.quantity,
       unitPrice,
-      originalUnitPrice: getOriginalPrice(product, row.selectedSize, row.selectedColor),
+      originalUnitPrice: originalPrice,
       availableStock: available,
       lineSubtotalPaise,
     };

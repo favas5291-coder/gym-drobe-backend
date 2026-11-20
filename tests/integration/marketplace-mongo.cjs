@@ -13,7 +13,17 @@ const results=[];let server,base,admin,alice,bob,aid,bid,listing,product,order,p
 const pass=async(name,fn)=>{await fn();results.push({name,passed:true});console.log("PASS",name);};
 const token=user=>jwt.sign({userId:String(user._id),authVersion:user.authVersion||0},process.env.JWT_SECRET,{expiresIn:"1h"});
 async function request(route,{actor,method="GET",body}={}){const r=await fetch(base+route,{method,headers:{...(actor?{Authorization:"Bearer "+token(actor)}:{}),...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined});assert.equal(r.headers.get("cache-control"),"no-store");const data=await r.json();return {status:r.status,...data};}
-async function publish(actor,name){const made=await S.saveDraft(actor,null,{draft:{...fixture.draft,name}});let l=made.listing;l=(await S.submit(actor,l.id,{revision:l.revision})).listing;l=(await S.review(admin,l.id,{revision:l.revision,decision:"published",reason:"Synthetic content, pricing and rights reviewed for test only.",prices:fixture.prices})).listing;return l;}
+async function publish(actor, name, draft = fixture.draft, prices = fixture.prices) {
+  const created = await S.saveDraft(actor, null, { draft: { ...draft, name } });
+  const { listing } = await S.submit(actor, created.listing.id, { revision: created.listing.revision });
+  const reviewed = await S.review(admin, listing.id, {
+    revision: listing.revision,
+    decision: "published",
+    reason: "Synthetic content, pricing and rights reviewed for test only.",
+    prices,
+  });
+  return reviewed.listing;
+}
 async function createOrder(items,method="razorpay",collected=true,priceOverrides={}){const products=[];for(const row of items)products.push(await Product.findById(row.product).select("+marketplaceCommercial +marketplaceAccount +marketplaceListing"));const subtotal=items.reduce((sum,r)=>sum+r.price*r.quantity,0),pricing={subtotal,kitDiscount:0,couponDiscount:0,totalAfterCoupon:subtotal,shipping:0,finalTotal:subtotal,currency:"INR",...priceOverrides};const snapshots=await F.snapshotItems(items,products,pricing);
  return S.transaction(async session=>{const[o]=await Order.create([{orderNumber:"GD-MARKET-FIX-"+crypto.randomBytes(5).toString("hex"),user:alice._id,checkoutToken:crypto.randomUUID(),items:snapshots,pricing,customer:{name:"Fixture Customer",email:"customer@example.test",phone:"9876543210"},shippingAddress:fixture.shippingAddress,status:"confirmed",paymentMethod:method,payment:{method,gateway:"razorpay",status:collected?"paid":"partially-paid",totalAmount:pricing.finalTotal,amountPaid:collected?pricing.finalTotal:pricing.finalTotal/10,grossCollected:collected?pricing.finalTotal:pricing.finalTotal/10,amountDue:collected?0:pricing.finalTotal*.9,amountsReconciled:true,balanceStatus:collected?"not-applicable":"pending"}}],{session});return o;});
 }
@@ -47,6 +57,42 @@ async function run(){
   const post=async(route,body)=>{const res=await fetch(base.replace("/marketplace","/payments")+route,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token(alice)},body:JSON.stringify(body)});return {status:res.status,data:await res.json()};};
   const quote=await post("/checkout/quote",checkout);assert.equal(quote.status,200,JSON.stringify(quote));assert.equal(quote.data.quote.items[0].price,550);checkout.expectedTotal=quote.data.quote.pricing.finalTotal;
   const started=await post("/razorpay/order",checkout);assert.equal(started.status,200,JSON.stringify(started));const gatewayId=started.data.razorpayOrder?.id||started.data.razorpay?.orderId||started.data.razorpayOrderId||started.data.order_id;assert.ok(gatewayId,JSON.stringify(started.data));checkoutOrder=await Order.findOne({checkoutToken:checkout.checkoutToken});assert.ok(!(await F.supplierOrders(alice)).orders.some(row=>row.orderId===String(checkoutOrder._id)));const proof={...gateway.capture(gatewayId),checkoutToken:checkout.checkoutToken};const verified=await post("/razorpay/verify",proof);assert.equal(verified.status,200,JSON.stringify(verified));const count=await M.Entitlement.countDocuments();const again=await post("/razorpay/verify",proof);assert.equal(again.status,200,JSON.stringify(again));assert.equal(await M.Entitlement.countDocuments(),count);assert.equal((await Product.findById(product._id)).variants.Black.M,6);
+ });
+ await pass("selecting a higher-priced size carries its own MRP, price and quantity through quote and payment retry", async () => {
+   const large = { ...fixture.draft.variants[0], size: "L", supplierSku: "FIX-L-BLACK", mrpUnitAmount: 80000 };
+   const draft = { ...fixture.draft, variants: [...fixture.draft.variants, large] };
+   const prices = [...fixture.prices, { ...fixture.prices[0], size: "L", customerUnitAmount: 72550 }];
+   const listing = await publish(alice, "Fixture multi-price shirt", draft, prices);
+   const body = {
+     checkoutToken: crypto.randomUUID(),
+     paymentMethod: "razorpay",
+     deliveryMethod: "standard",
+     shippingAddress: fixture.shippingAddress,
+     items: [{ id: String(listing.productId), selectedSize: "L", selectedColor: "Black", quantity: 2 }],
+   };
+   const post = async (route) => {
+     const response = await fetch(base.replace("/marketplace", "/payments") + route, {
+       method: "POST",
+       headers: { "Content-Type": "application/json", Authorization: "Bearer " + token(alice) },
+       body: JSON.stringify(body),
+     });
+     const data = await response.json();
+     assert.equal(response.status, 200, JSON.stringify(data));
+     return data;
+   };
+   const { quote } = await post("/checkout/quote");
+   assert.equal(quote.items[0].price, 725.50);
+   assert.equal(quote.items[0].originalPrice, 800);
+   assert.equal(quote.pricing.subtotal, 1451);
+   body.expectedTotal = quote.pricing.finalTotal;
+   const first = await post("/razorpay/order");
+   const retry = await post("/razorpay/order");
+   assert.equal(first.amount, 145100);
+   assert.equal(retry.razorpayOrderId, first.razorpayOrderId);
+   const orders = await Order.find({ checkoutToken: body.checkoutToken }).lean();
+   assert.equal(orders.length, 1);
+   assert.equal(orders[0].items[0].price, 725.50);
+   assert.equal(orders[0].items[0].selectedSize, "L");
  });
  await pass("actual supplier shipment API accepts preparation/tracking and reserves delivery confirmation for admin",async()=>{
   let g=await M.Fulfilment.findOne({order:checkoutOrder._id});for(const status of ["accepted","preparing","shipped"]){const r=await request(`/shipments/${g._id}`,{actor:alice,method:"PATCH",body:{revision:g.__v,status,...(status==='shipped'?{carrier:"Fixture Courier",trackingNumber:"FIX-API-TRACK-001",trackingUrl:"https://tracking.example.test/FIX-API-TRACK-001"}:{}),reason:"Synthetic fulfilment transition, no shipment booked."}});assert.equal(r.status,200,JSON.stringify(r));g=await M.Fulfilment.findById(g._id);}const denied=await request(`/shipments/${g._id}`,{actor:alice,method:"PATCH",body:{revision:g.__v,status:"delivered",reason:"Not authorized to confirm delivery."}});assert.equal(denied.status,409);assert.match(denied.message,/transition is not permitted/);const delivered=await request(`/shipments/${g._id}`,{actor:admin,method:"PATCH",body:{revision:g.__v,status:"delivered",reason:"Synthetic delivered receipt verified by admin."}});assert.equal(delivered.status,200,JSON.stringify(delivered));const o=await Order.findById(checkoutOrder._id);assert.equal(o.status,"delivered");assert.equal(o.supplierShipments[0].trackingNumber,"FIX-API-TRACK-001");const supplierView=(await F.supplierOrders(alice)).orders.find(row=>row.orderId===String(checkoutOrder._id));assert.equal(supplierView.shippingAddress,null);assert.ok(!Object.hasOwn(supplierView,"balanceDuePaise"));const adminView=(await F.supplierOrders(admin,aid)).orders.find(row=>row.orderId===String(checkoutOrder._id));assert.ok(adminView.shippingAddress.fullName);assert.equal(adminView.balanceDuePaise,0);

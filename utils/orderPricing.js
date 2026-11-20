@@ -43,51 +43,51 @@ function roundMoney(value) {
   );
 }
 
-// Product prices use whole rupees, matching the frontend.
-function marketplaceVariant(product, size, color) {
+// A chosen size/colour must match exactly, including an absent axis. Only
+// unselected catalogue displays can use the starting (lowest) price.
+function getProductPrices(product = {}, size = product?.selectedSize, color = product?.selectedColor) {
   const rows = product?.variantPrices;
-  if (!Array.isArray(rows) || !rows.length) return null;
-  size = size === undefined ? product.selectedSize : size;
-  color = color === undefined ? product.selectedColor : color;
-  if (size === undefined && color === undefined) return [...rows].sort((a,b)=>a.customerUnitAmount-b.customerUnitAmount)[0];
-  const row = rows.find(row=>(row.size||null)===(size||null)&&(row.color||null)===(color||null));
-  if (!row || !Number.isSafeInteger(row.customerUnitAmount) || row.customerUnitAmount < 1) throw new Error("Marketplace variant price requires review.");
-  return row;
-}
-function getOriginalPrice(product = {}, size, color) {
-  const row = marketplaceVariant(product,size,color);
-  if (row) return (row.mrpUnitAmount ?? row.customerUnitAmount)/100;
-  return Math.max(
-    0,
-    Math.round(number(product?.price)),
-  );
+  if (Array.isArray(rows) && rows.length) {
+    const row = size === undefined && color === undefined
+      ? rows.reduce((lowest, candidate) =>
+          candidate.customerUnitAmount < lowest.customerUnitAmount ? candidate : lowest)
+      : rows.find((candidate) =>
+          (candidate.size || null) === (size || null) &&
+          (candidate.color || null) === (color || null));
+
+    const amount = row?.customerUnitAmount;
+    const mrp = row?.mrpUnitAmount ?? amount;
+    if (!Number.isSafeInteger(amount) || amount < 1 || !Number.isSafeInteger(mrp) || mrp < amount) {
+      throw Object.assign(new Error("This selection needs a price correction before purchase."), {
+        status: 409,
+        code: "PRODUCT_PRICE_INVALID",
+        gymdrobe: true,
+      });
+    }
+
+    return {
+      originalPrice: mrp / 100,
+      price: amount / 100,
+      discount: Math.round((mrp - amount) * 10000 / mrp) / 100,
+    };
+  }
+
+  // The existing catalogue applies its percentage discount in whole rupees.
+  const originalPrice = Math.max(0, Math.round(number(product?.price)));
+  const discount = Math.min(100, Math.max(0, number(product?.discount)));
+  return { originalPrice, price: Math.round(originalPrice * (1 - discount / 100)), discount };
 }
 
-function getDiscountPercentage(product = {}) {
-  return Math.min(
-    100,
-    Math.max(
-      0,
-      number(product?.discount),
-    ),
-  );
+function getOriginalPrice(product, size, color) {
+  return getProductPrices(product, size, color).originalPrice;
 }
 
-// Preserve compatibility with existing backend imports.
-function getDiscountPercent(product = {}) {
-  return getDiscountPercentage(product);
+function getDiscountPercentage(product, size, color) {
+  return getProductPrices(product, size, color).discount;
 }
 
-function getDiscountedPrice(product = {}, size, color) {
-  const row = marketplaceVariant(product,size,color);
-  if (row) return row.customerUnitAmount/100;
-  return Math.round(
-    getOriginalPrice(product) *
-      (
-        1 -
-        getDiscountPercentage(product) / 100
-      ),
-  );
+function getDiscountedPrice(product, size, color) {
+  return getProductPrices(product, size, color).price;
 }
 
 // Accept only coupon codes defined by the server.
@@ -235,9 +235,10 @@ module.exports = {
   COUPONS,
   number,
   roundMoney,
+  getProductPrices,
   getOriginalPrice,
   getDiscountPercentage,
-  getDiscountPercent,
+  getDiscountPercent: getDiscountPercentage,
   getDiscountedPrice,
   resolveCoupon,
   calculateSubtotal,

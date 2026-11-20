@@ -482,6 +482,46 @@ function application({
   };
 }
 
+test("the quote, payment request and saved order agree on the selected variant's price", async () => {
+  const { buildKitCheckoutPricing } = require("../utils/kitCheckoutPricing");
+  const app = application();
+  app.product.sizes.push("L");
+  app.product.variants.Black.L = 1;
+  app.product.variantPrices = [
+    { size: "M", color: "Black", customerUnitAmount: 100000, mrpUnitAmount: 110000 },
+    { size: "L", color: "Black", customerUnitAmount: 124950, mrpUnitAmount: 150000 },
+  ];
+  const body = checkout();
+  body.items[0].selectedSize = "L";
+
+  const quote = buildKitCheckoutPricing({ items: body.items, products: [app.product], kits: [] });
+  assert.equal(quote.items[0].originalPrice, 1500);
+  assert.equal(quote.items[0].price, 1249.50);
+  assert.equal(quote.items[0].discount, 16.7);
+  body.expectedTotal = quote.pricing.finalTotal;
+  const result = await app.create(body);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.data.amount, 124950);
+  const [order] = app.orders.values();
+  assert.equal(order.items[0].selectedSize, "L");
+  assert.equal(order.items[0].price, quote.items[0].price);
+  assert.equal(order.items[0].discount, quote.items[0].discount);
+});
+
+test("payment stops when the selected size or colour was removed from the catalogue", async () => {
+  for (const dimension of ["sizes", "colors"]) {
+    const app = application();
+    app.product[dimension] = [];
+    app.product.variants = dimension === "sizes" ? { Black: 5 } : { M: 5 };
+
+    const result = await app.create(checkout());
+    assert.equal(result.statusCode, 400);
+    assert.equal(result.data.code, "INVALID_VARIANT");
+    assert.equal(app.orders.size, 0);
+    assert.deepEqual(app.calls, []);
+  }
+});
+
 test(
   "a new guest order needs one provider request while retaining exact full and COD advance amounts",
   async () => {
@@ -783,6 +823,16 @@ test(
 
       (app) => {
         app.product.variants.Black.M = 0;
+      },
+
+      (app) => {
+        app.product.variantPrices = [{ size: "L", color: "Black", customerUnitAmount: 100000 }];
+      },
+
+      (app) => {
+        app.product.variantPrices = [
+          { size: "M", color: "Black", customerUnitAmount: 100000, mrpUnitAmount: 90000 },
+        ];
       },
     ]) {
       const app = application();
