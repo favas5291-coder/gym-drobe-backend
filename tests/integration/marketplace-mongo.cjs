@@ -133,6 +133,39 @@ async function run(){
   const mixed=await createOrder([purchased(product),legacyPurchase()]),e=await M.Entitlement.findOne({order:mixed._id});
   await R.create(admin,String(e._id),legacyBody());const current=await Order.findById(mixed._id);assert.equal(current.supplierShipments.length,1);assert.equal(current.supplierShipments[0].status,"cancelled");assert.deepEqual([...current.supplierShipments[0].itemIndices],[0]);assert.notEqual(current.status,"cancelled");assert.equal(current.items[1].quantity,1);assert.equal(current.marketplaceResolutions.length,1);assert.equal(current.marketplaceResolutions[0].itemIndex,0);
  });
+ await pass("returning all remaining delivered units retains the parcel's original delivery evidence", async () => {
+  const mixed = await createOrder([purchased(product, 2), legacyPurchase()]);
+  const filter = {order: mixed._id, supplier: aid};
+  const earning = await M.Entitlement.findOne(filter);
+  await R.create(admin, String(earning._id), legacyBody());
+  assert.equal((await M.Fulfilment.findOne(filter)).status, "pending");
+  const body = {...legacyBody(), kind: "return", reason: "Synthetic delivered unit received and inspected."};
+  await Order.collection.updateOne({_id: mixed._id}, {$set: {status: "delivered"}});
+  await assert.rejects(R.create(admin, String(earning._id), body), /parcel's delivery/);
+  await deliver(mixed);
+  const before = await M.Fulfilment.findOne(filter).lean();
+  const returned = await R.create(admin, String(earning._id), body);
+  assert.equal(returned.resolution.kind, "return");
+  assert.equal((await R.create(admin, String(earning._id), body)).replayed, true);
+  const after = await M.Fulfilment.findOne(filter).lean();
+  assert.equal(after.status, "delivered");
+  assert.deepEqual(after.deliveredAt, before.deliveredAt);
+  assert.deepEqual(after.history, before.history);
+  const current = await Order.findById(mixed._id);
+  assert.equal(current.supplierShipments[0].status, "delivered");
+  assert.deepEqual(current.supplierShipments[0].deliveredAt, before.deliveredAt);
+  assert.deepEqual(current.marketplaceResolutions.map(row => row.kind), ["cancellation", "return"]);
+  assert.equal(current.items[1].quantity, 1);
+
+  const historical = await createOrder([purchased(product, 2)]);
+  const older = await M.Entitlement.findOne({order: historical._id});
+  await deliver(historical);
+  await R.create(admin, String(older._id), {...body, requestKey: crypto.randomUUID()});
+  // Represents an older partial return accepted while the shipment still displayed pending.
+  await M.Fulfilment.updateOne({order: historical._id}, {$set: {status: "pending"}, $unset: {deliveredAt: 1}});
+  await assert.rejects(R.create(admin, String(older._id), legacyBody()), /previous return/);
+  assert.equal(await M.Resolution.countDocuments({order: historical._id}), 1);
+ });
  await pass("ordinary orders and damaged supplier ownership cannot use legacy item controls",async()=>{
   const ordinary=await createOrder([legacyPurchase()]);await assert.rejects(R.inspectLegacy(admin,String(ordinary._id)),/ordinary-order/);await assert.rejects(R.createLegacy(admin,String(ordinary._id),0,legacyBody()),/ordinary-order/);
   const damaged=await createOrder([purchased(product),legacyPurchase()]);await Order.collection.updateOne({_id:damaged._id},{$unset:{"items.0.marketplace":""}});
