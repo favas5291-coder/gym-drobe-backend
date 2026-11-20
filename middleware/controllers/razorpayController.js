@@ -20,8 +20,7 @@ const PaymentAttempt = require("../../models/PaymentAttempt");
 const { getRazorpayClient, getRazorpayKeyId } = require("../../config/razorpay");
 
 const {
-  getDiscountedPrice,
-  getOriginalPrice,
+  getProductPrices,
   resolveCoupon,
   calculateOrderPricing,
 } = require("../../utils/orderPricing");
@@ -913,40 +912,12 @@ async function snapshot(body) {
       );
     }
 
-    const size =
-      product.sizes?.length
-        ? text(
-            raw.selectedSize,
-            "Product size",
-            50,
-            1,
-          )
-        : null;
-
-    const color =
-      product.colors?.length
-        ? text(
-            raw.selectedColor,
-            "Product colour",
-            50,
-            1,
-          )
-        : null;
-
-    if (
-      (
-        size &&
-        !product.sizes
-          .map(String)
-          .includes(size)
-      ) ||
-      (
-        color &&
-        !product.colors
-          .map(String)
-          .includes(color)
-      )
-    ) {
+    const size = text(raw.selectedSize, "Product size", 50) || null;
+    const color = text(raw.selectedColor, "Product colour", 80) || null;
+    let sku;
+    try {
+      sku = getVariantSku(product, size, color);
+    } catch {
       throw problem(
         400,
         `Choose an available size and colour for ${product.name}.`,
@@ -1030,11 +1001,7 @@ async function snapshot(body) {
         slug:
           product.slug || "",
 
-        sku: getVariantSku(
-          product,
-          size,
-          color,
-        ),
+        sku,
 
         name: product.name,
         brand:
@@ -1046,21 +1013,7 @@ async function snapshot(body) {
             color,
           ),
 
-        originalPrice:
-          getOriginalPrice(
-            product,
-            size, color,
-          ),
-
-        price:
-          getDiscountedPrice(
-            product,
-            size, color,
-          ),
-
-        discount: Number(
-          product.discount || 0,
-        ),
+        ...getProductPrices(product, size, color),
 
         quantity,
         selectedSize: size,

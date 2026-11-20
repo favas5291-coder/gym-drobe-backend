@@ -73,6 +73,12 @@ function publicProduct(product) {
 
     price: product.price,
     discount: product.discount,
+    ...(Array.isArray(product.variantPrices) && {
+      variantPrices: product.variantPrices.map(({ size, color, customerUnitAmount, mrpUnitAmount }) => ({
+        size, color, customerUnitAmount, mrpUnitAmount,
+      })),
+    }),
+    colorImages: (product.colorImages || []).map(({ color, images }) => ({ color, images })),
 
     sizes: Array.isArray(product.sizes)
       ? product.sizes
@@ -259,7 +265,7 @@ async function getCustomerKit(req, res) {
       kit: safeKit,
       products: eligible.map(publicProduct),
       notice:
-        "Build and estimate your kit. Kit checkout is not enabled yet.",
+        "Choose your kit items. Checkout will confirm current stock, delivery availability and the final price.",
     });
   } catch (error) {
     return sendError(res, error);
@@ -369,7 +375,7 @@ async function quoteCustomerKit(req, res) {
     });
 
     quote.notice =
-      "Kit estimate only. Checkout is not enabled for kits yet. Delivery coverage, fulfillment readiness, shipment charges, prices and stock must be checked again before payment.";
+      "This is a kit estimate. Checkout confirms prices, stock, delivery coverage and shipment charges for your selections and pincode.";
 
     return res.json({
       success: true,

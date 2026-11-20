@@ -536,19 +536,17 @@ const getCustomers = guarded(async (req, res) => {
     "last-order": { lastOrderAt: -1 },
   }[sort];
 
-  pipeline.push({
-    $facet: {
-      rows: [
-        { $sort: { ...sortBy, _id: 1 } },
-        { $skip: (page - 1) * limit },
-        { $limit: limit },
-      ],
-      total: [{ $count: "value" }],
-    },
-  });
+  const pageStages = (number) => [
+    { $sort: { ...sortBy, _id: sort === "newest" ? -1 : 1 } },
+    { $skip: (number - 1) * limit },
+    { $limit: limit },
+  ];
 
   const [result, counts] = await Promise.all([
-    User.aggregate(pipeline).option({
+    User.aggregate([
+      ...pipeline,
+      { $facet: { rows: pageStages(page), total: [{ $count: "value" }] } },
+    ]).option({
       maxTimeMS: TIMEOUT,
       allowDiskUse: true,
     }),
@@ -598,6 +596,14 @@ const getCustomers = guarded(async (req, res) => {
     1,
     Math.ceil(total / limit)
   );
+  const currentPage = Math.min(page, pages);
+  let rows = result[0]?.rows || [];
+  if (total > 0 && currentPage !== page) {
+    rows = await User.aggregate([...pipeline, ...pageStages(currentPage)]).option({
+      maxTimeMS: TIMEOUT,
+      allowDiskUse: true,
+    });
+  }
 
   const global = counts[0] || {
     total: 0,
@@ -608,12 +614,12 @@ const getCustomers = guarded(async (req, res) => {
   return res.json({
     success: true,
 
-    customers: (result[0]?.rows || []).map(
+    customers: rows.map(
       (row) => customer(row, row.orderPhone)
     ),
 
     total,
-    page,
+    page: currentPage,
     pages,
     limit,
 

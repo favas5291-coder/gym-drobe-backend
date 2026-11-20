@@ -11,8 +11,7 @@ const {
 } = require("./kitDefinitions");
 
 const {
-  getOriginalPrice,
-  getDiscountedPrice,
+  getProductPrices,
   resolveCoupon,
   calculateCouponDiscount,
   calculateShipping,
@@ -186,9 +185,7 @@ function snapshotItem(
       color,
     ),
 
-    originalPrice: getOriginalPrice(product),
-    price: getDiscountedPrice(product),
-    discount: Number(product.discount || 0),
+    ...getProductPrices(product, size, color),
 
     quantity,
     selectedSize: size,

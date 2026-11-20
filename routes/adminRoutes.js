@@ -2,9 +2,13 @@ const express = require("express");
 
 const {
   getDashboard,
-  getCustomers,
   setCustomerStatus,
 } = require("../middleware/controllers/adminController");
+
+const {
+  getCustomers,
+  getCustomer,
+} = require("../middleware/controllers/customerAdminController");
 
 const {
   protect,
@@ -27,6 +31,7 @@ router.get("/dashboard", getDashboard);
 
 // Customer list.
 router.get("/customers", getCustomers);
+router.get("/customers/:id", getCustomer);
 
 // Block or unblock a customer.
 router.patch(

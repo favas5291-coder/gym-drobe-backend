@@ -477,12 +477,40 @@ test(
   },
 );
 
+test("the kit builder receives colour photos and customer prices for each size", async (t) => {
+  const KitTemplate = require("../models/KitTemplate");
+  const { getCustomerKit } = require("../middleware/controllers/kitCustomerController");
+  const kit = { ...kitDraft("beginner"), _id: id };
+  kit.slots[0].allowedProducts = [id];
+  const product = fixture().toObject({ transform: false });
+  const price = { size: "L", color: "Blue", customerUnitAmount: 75050, mrpUnitAmount: 85000 };
+  product.variantPrices = [{ ...price, supplierUnitAmount: 45000 }];
+  t.mock.method(KitTemplate, "findOne", () => ({ select: () => ({ lean: async () => kit }) }));
+  t.mock.method(Product, "find", () => ({ lean: async () => [product] }));
+
+  let result;
+  await getCustomerKit({ params: { id: String(id) } }, {
+    set() {},
+    json(body) { result = body; },
+  });
+  assert.equal(result.products.length, 1);
+  assert.deepEqual(result.products[0].variantPrices, [price]);
+  assert.deepEqual(result.products[0].colorImages[1], {
+    color: "Blue", images: ["/blue.jpg", "/blue-back.jpg"],
+  });
+});
+
 test(
-  "kit checkout uses the same colour gallery and underlying size inventory",
+  "kit checkout uses the chosen colour gallery, size price and underlying inventory",
   () => {
     const product = fixture().toObject({
       transform: false,
     });
+
+    product.variantPrices = [
+      { size: "M", color: "Black", customerUnitAmount: 50000, mrpUnitAmount: 60000 },
+      { size: "L", color: "Blue", customerUnitAmount: 75050, mrpUnitAmount: 85000 },
+    ];
 
     const template = {
       ...kitDraft("beginner"),
@@ -544,6 +572,10 @@ test(
       result.items[0].selectedColor,
       "Blue",
     );
+    assert.equal(result.items[0].price, 750.50);
+    assert.equal(result.items[0].originalPrice, 850);
+    assert.equal(result.items[0].priceAllocation.kitDiscountPaise, 7505);
+    assert.equal(result.items[0].priceAllocation.linePaidPaise, 67545);
   },
 );
 
