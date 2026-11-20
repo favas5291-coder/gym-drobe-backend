@@ -35,8 +35,12 @@ function business(value) {
   return out;
 }
 function terms(value) {
-  object(value, ["text", "settlementHoldHours", "dispatchDaysMin", "dispatchDaysMax", "shippingResponsibility", "returnsResponsibility", "gatewayFeeResponsibility"], "Commercial terms");
+  object(value, ["text", "settlementHoldHours", "dispatchDaysMin", "dispatchDaysMax", "dispatchClock", "shippingResponsibility", "returnsResponsibility", "gatewayFeeResponsibility"], "Commercial terms");
   const out = { model: "protected-supplier-amount-v1", text: text(value.text, "agreed terms", 12000, 20), settlementHoldHours: integer(value.settlementHoldHours, "Settlement hold hours", 0, 2160), dispatchDaysMin: integer(value.dispatchDaysMin, "Minimum preparation days", 0, 365), dispatchDaysMax: integer(value.dispatchDaysMax, "Maximum preparation days", 0, 365) };
+  if (value.dispatchClock !== undefined) {
+    if (value.dispatchClock !== "elapsed-days-from-payment-verification") fail("Choose a supported dispatch clock or omit it.");
+    out.dispatchClock = value.dispatchClock;
+  }
   if (out.dispatchDaysMax < out.dispatchDaysMin) fail("Maximum preparation time must follow minimum.");
   for (const key of ["shippingResponsibility", "returnsResponsibility", "gatewayFeeResponsibility"]) out[key] = text(value[key], key, 1000, 2);
   return out;

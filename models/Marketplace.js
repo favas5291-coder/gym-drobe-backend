@@ -31,6 +31,7 @@ const fulfilment = new Schema({
   itemIndices:{type:[Number],required:true,immutable:true,default:undefined}, status:{type:String,enum:["pending","accepted","preparing","shipped","delivered","cancelled"],default:"pending"},
   carrier:String,trackingNumber:String,trackingUrl:String,shippedAt:Date,deliveredAt:Date,history:{type:[Schema.Types.Mixed],default:[]},
 },options);fulfilment.index({order:1,supplier:1},{unique:true});fulfilment.index({supplier:1,status:1,updatedAt:-1});
+fulfilment.index({supplier:1,status:1,_id:1});
 const entitlement = new Schema({
   order:{...ref("Order"),required:true,immutable:true},itemIndex:{type:Number,required:true,immutable:true},supplier:{...ref("MarketplaceAccount"),required:true,immutable:true},
   snapshot:{type:Schema.Types.Mixed,required:true,immutable:true},targetAmount:{...money,default:0},pendingAmount:{...money,default:0},
