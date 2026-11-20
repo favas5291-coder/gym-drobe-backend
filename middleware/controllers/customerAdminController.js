@@ -18,6 +18,16 @@ const CONFIRMED = [
 const FIELDS =
   "_id name email phone role isActive createdAt updatedAt";
 
+const financeFields = [
+  "pricing.currency pricing.finalTotal payment.amountPaid payment.amountDue",
+  "payment.amountsReconciled payment.grossCollected payment.refundedAmount",
+  "payment.status refund.status refund.amount returnRequest.status",
+].join(" ");
+const shippingFields = [
+  "shippingAddress.fullName shippingAddress.phone shippingAddress.addressLine",
+  "shippingAddress.landmark shippingAddress.city shippingAddress.state shippingAddress.pincode",
+].join(" ");
+
 function fail(status, message) {
   throw Object.assign(new Error(message), { status });
 }
@@ -102,7 +112,7 @@ function contact(value) {
     : "";
 }
 
-function customer(value, fallbackPhone = "") {
+function customerContact(value, fallbackPhone = "") {
   const profilePhone = contact(value.phone);
 
   return {
@@ -119,6 +129,12 @@ function customer(value, fallbackPhone = "") {
         : "",
     isActive: value.isActive !== false,
     createdAt: value.createdAt || null,
+  };
+}
+
+function customer(value, fallbackPhone = "") {
+  return {
+    ...customerContact(value, fallbackPhone),
     orderCount: value.orderCount || 0,
     purchaseCount: value.purchaseCount || 0,
     lastOrderAt: value.lastOrderAt || null,
@@ -296,6 +312,47 @@ function guarded(handler) {
       });
     }
   };
+}
+
+async function customerDirectoryStats() {
+  const [counts] = await User.aggregate([
+    { $match: { role: "customer" } },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+
+        blocked: {
+          $sum: {
+            $cond: [
+              { $eq: ["$isActive", false] },
+              1,
+              0,
+            ],
+          },
+        },
+
+        new30Days: {
+          $sum: {
+            $cond: [
+              {
+                $gte: [
+                  "$createdAt",
+                  new Date(
+                    Date.now() - 30 * DAY
+                  ),
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]).option({ maxTimeMS: TIMEOUT });
+  const { total = 0, blocked = 0, new30Days = 0 } = counts || {};
+  return { total, active: total - blocked, blocked, new30Days };
 }
 
 const getCustomers = guarded(async (req, res) => {
@@ -547,48 +604,13 @@ const getCustomers = guarded(async (req, res) => {
     },
   });
 
-  const [result, counts] = await Promise.all([
+  const [result, stats] = await Promise.all([
     User.aggregate(pipeline).option({
       maxTimeMS: TIMEOUT,
       allowDiskUse: true,
     }),
 
-    User.aggregate([
-      { $match: { role: "customer" } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-
-          blocked: {
-            $sum: {
-              $cond: [
-                { $eq: ["$isActive", false] },
-                1,
-                0,
-              ],
-            },
-          },
-
-          new30Days: {
-            $sum: {
-              $cond: [
-                {
-                  $gte: [
-                    "$createdAt",
-                    new Date(
-                      Date.now() - 30 * DAY
-                    ),
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ]).option({ maxTimeMS: TIMEOUT }),
+    customerDirectoryStats(),
   ]);
 
   const total =
@@ -598,12 +620,6 @@ const getCustomers = guarded(async (req, res) => {
     1,
     Math.ceil(total / limit)
   );
-
-  const global = counts[0] || {
-    total: 0,
-    blocked: 0,
-    new30Days: 0,
-  };
 
   return res.json({
     success: true,
@@ -617,12 +633,7 @@ const getCustomers = guarded(async (req, res) => {
     pages,
     limit,
 
-    stats: {
-      total: global.total,
-      active: global.total - global.blocked,
-      blocked: global.blocked,
-      new30Days: global.new30Days,
-    },
+    stats,
 
     generatedAt: new Date(),
   });
@@ -647,7 +658,7 @@ async function finances(filter) {
 
   const cursor = Order.find(filter)
     .select(
-      "status pricing payment refund returnRequest.status"
+      "status " + financeFields
     )
     .lean()
     .maxTimeMS(TIMEOUT)
@@ -818,7 +829,6 @@ function orderRow(order) {
       ? Object.fromEntries(
           [
             "fullName",
-            "email",
             "phone",
             "addressLine",
             "landmark",
@@ -868,7 +878,7 @@ const getCustomer = guarded(async (req, res) => {
 
       Order.find(filter)
         .select(
-          "orderNumber status createdAt items.name items.brand items.sku items.quantity items.selectedSize items.selectedColor items.price shippingAddress pricing payment paymentMethod refund returnRequest.status tracking.carrier tracking.trackingNumber metadata.demo"
+          "orderNumber status createdAt items.name items.brand items.sku items.quantity items.selectedSize items.selectedColor items.price pricing.subtotal pricing.kitDiscount pricing.couponDiscount pricing.shipping payment.method payment.mode payment.razorpayMode paymentMethod tracking.carrier tracking.trackingNumber metadata.demo " + financeFields + " " + shippingFields
         )
         .sort({ createdAt: -1, _id: -1 })
         .skip((page - 1) * limit)
@@ -876,8 +886,8 @@ const getCustomer = guarded(async (req, res) => {
         .lean()
         .maxTimeMS(TIMEOUT),
 
-      Order.findOne({ user: id })
-        .select("customer.phone shippingAddress")
+      Order.findOne(filter)
+        .select("customer.phone " + shippingFields)
         .sort({ createdAt: -1, _id: -1 })
         .lean()
         .maxTimeMS(TIMEOUT),
@@ -895,7 +905,7 @@ const getCustomer = guarded(async (req, res) => {
   return res.json({
     success: true,
 
-    customer: customer(
+    customer: customerContact(
       user,
       contact(latest?.customer?.phone) ||
         contact(latest?.shippingAddress?.phone)
@@ -1027,6 +1037,7 @@ const setCustomerStatus = guarded(async (req, res) => {
 
 module.exports = {
   getCustomers,
+  customerDirectoryStats,
   getCustomer,
   setCustomerStatus,
 };

@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 
 const User = require("../../models/User");
+const { customerDirectoryStats } = require("./customerAdminController");
 const Product = require("../../models/Product");
 const Order = require("../../models/Order");
 const SupportTicket = require("../../models/SupportTicket");
@@ -770,9 +771,10 @@ async function getCustomers(req, res) {
       ];
     }
 
-    const total = await User.countDocuments(
-      filter,
-    ).maxTimeMS(TIMEOUT);
+    const [total, stats] = await Promise.all([
+      User.countDocuments(filter).maxTimeMS(TIMEOUT),
+      customerDirectoryStats(),
+    ]);
 
     const pages = Math.max(
       1,
@@ -846,6 +848,7 @@ async function getCustomers(req, res) {
       limit,
       total,
       pages,
+      stats,
 
       customers: users.map((user) =>
         customer(
