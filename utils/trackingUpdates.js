@@ -89,6 +89,13 @@ function parseTrackingExtras(body) {
 
   const result = {};
 
+  if (own(body, "packingConfirmed")) {
+    if (typeof body.packingConfirmed !== "boolean") {
+      throw invalid("Packing confirmation must be true or false.");
+    }
+    result.packingConfirmed = body.packingConfirmed;
+  }
+
   if (own(body, "courierUrl")) {
     result.courierUrl =
       normalizeCourierUrl(body.courierUrl);

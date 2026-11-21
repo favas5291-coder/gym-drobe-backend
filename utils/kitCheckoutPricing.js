@@ -250,7 +250,7 @@ function buildKitCheckoutPricing({
     !["standard", "express"].includes(
       deliveryMethod,
     ) ||
-    !["razorpay", "cod-partial"].includes(
+    !["razorpay", "cod-partial", "cod"].includes(
       paymentMethod,
     )
   ) {
@@ -804,9 +804,9 @@ function buildKitCheckoutPricing({
   const payNow =
     paymentMethod === "cod-partial"
       ? Math.round(merchandise / 10)
-      : total;
+      : paymentMethod === "cod" ? 0 : total;
 
-  if (payNow < 100) {
+  if (paymentMethod !== "cod" && payNow < 100) {
     fail(
       "The online payment amount must be at least ₹1.",
       "PAYMENT_AMOUNT_TOO_LOW",

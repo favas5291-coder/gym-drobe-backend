@@ -7,6 +7,7 @@ const {
 
 const {
   getCheckoutQuote,
+  createStandardCodOrder,
   createRazorpayOrder,
   verifyRazorpayPayment,
 } = require("../middleware/controllers/paymentController");
@@ -77,6 +78,8 @@ router.post(
   "/checkout/quote",
   getCheckoutQuote,
 );
+
+router.post("/cod/order", customerAccess, createStandardCodOrder);
 
 // POST /api/payments/razorpay/order
 // Full online payment or COD with a 10% advance.

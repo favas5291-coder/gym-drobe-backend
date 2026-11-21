@@ -1,3 +1,4 @@
+const { standardCod } = require("../../utils/standardCod");
 const {
   returnPolicyIssue,
   requestTypes,
@@ -2289,14 +2290,18 @@ const updateAdminOrderStatus = handler(
         }
 
         const payment = paymentState(order);
+        const collectableCod = payment.method === "cod-partial" || standardCod(order);
+        if (collect && standardCod(order) && await require("../../models/Marketplace").Fulfilment.exists({ order: order._id }).session(session)) {
+          throw problem(409, "Record this supplier order's cash receipt in Marketplace collections.", "MARKETPLACE_COLLECTION_REQUIRED");
+        }
 
         if (
           collect &&
-          payment.method !== "cod-partial"
+          !collectableCod
         ) {
           throw problem(
             409,
-            "This collection action is only for configured advance-plus-COD orders.",
+            "This collection action is only for configured cash-on-delivery orders.",
             "INVALID_COD_CONFIRMATION",
           );
         }
@@ -2305,14 +2310,14 @@ const updateAdminOrderStatus = handler(
           status === "delivered" &&
           payment.due > 0 &&
           (
-            payment.method !== "cod-partial" ||
+            !collectableCod ||
             !collect
           )
         ) {
           throw problem(
             409,
 
-            payment.method === "cod-partial"
+            collectableCod
               ? `Confirm that the remaining ₹${(payment.due / 100).toFixed(2)} COD balance was collected before confirming delivery.`
               : "Reconcile the legacy COD balance before confirming delivery.",
 
@@ -2320,7 +2325,7 @@ const updateAdminOrderStatus = handler(
 
             {
               requiresCodBalanceConfirmation:
-                payment.method === "cod-partial",
+                collectableCod,
 
               amountDue: payment.due / 100,
             },
@@ -2431,7 +2436,7 @@ const updateAdminOrderStatus = handler(
 
         const collected =
           status === "delivered" &&
-          payment.method === "cod-partial" &&
+          collectableCod &&
           payment.due > 0 &&
           collect;
 
