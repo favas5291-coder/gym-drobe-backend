@@ -10,6 +10,7 @@ const {
 const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
+router.get("/draft-key", protect, require("../utils/editorDraftKey"));
 
 // Limits are stored in this backend process.
 // Multiple instances require a shared rate-limit store.

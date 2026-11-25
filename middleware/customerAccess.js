@@ -196,7 +196,26 @@ async function checkGuestSession(req, res) {
   }
 }
 
+// Only the holder of the existing guest grant may unlock this device's
+// address draft. Keep the key with the existing TTL-limited session.
+async function guestDraftKey(req, res, next) {
+  const credential = req.get("X-GymDrobe-Guest") || "";
+  res.set("Cache-Control", "private, no-store");
+  if (!TOKEN.test(credential)) return res.status(401).json({success:false,message:"Restore guest access to unlock this draft."});
+  try {
+    const filter = { tokenHash: digest(credential), expiresAt: { $gt: new Date() } };
+    const session = await GuestCheckoutSession.findOneAndUpdate(
+      { ...filter, draftKey: { $exists: false } },
+      { $set: { draftKey: crypto.randomBytes(32).toString("base64") } },
+      { new: true },
+    ).select("+draftKey").lean() || await GuestCheckoutSession.findOne(filter).select("+draftKey").lean();
+    if (!session) return res.status(401).json({success:false,message:"Guest access expired. Restore access before continuing."});
+    return res.json({success:true, owner:String(session._id), key:session.draftKey});
+  } catch (error) { return next(error); }
+}
+
 module.exports = {
+  guestDraftKey,
   customerAccess,
   checkoutRateLimit,
   createGuestSession,

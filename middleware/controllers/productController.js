@@ -1,3 +1,4 @@
+const { createHash } = require("node:crypto");
 const {
   normalizeColorImages,
 } = require("../../utils/productImages");
@@ -1128,6 +1129,7 @@ function serializeProduct(
 
   delete data.isNewArrival;
   delete data.__v;
+  delete data.creationDigest;
   delete data.marketplaceAccount;
   delete data.marketplaceListing;
   delete data.marketplaceCommercial;
@@ -1772,49 +1774,54 @@ async function validateSupply(
   }
 }
 
+const publicReads = new Map();
+const publicProjection = "-supplier -purchaseCost -fulfillment -meeshoProductLink -marketplaceAccount -marketplaceListing -marketplaceCommercial";
+
+async function readPublicCatalogue(page) {
+  const started = performance.now();
+  const filter = { isActive: true };
+  if (page?.after) filter._id = { $gt: new mongoose.Types.ObjectId(page.after) };
+  const query = Product.find(filter, publicProjection);
+  if (page) query.sort({ _id: 1 }).limit(page.size + 1);
+  const rows = await query.lean();
+  const hasMore = Boolean(page && rows.length > page.size);
+  const products = hasMore ? rows.slice(0, page.size) : rows;
+  const productsRead = performance.now();
+  const reviewed = await attachReviews(products);
+  const reviewsRead = performance.now();
+  const body = { success: true, count: reviewed.length, products: reviewed.map(product => serializeProduct(product)) };
+  if (page) body.nextCursor = hasMore ? String(products.at(-1)._id) : null;
+  const timing = [
+    `products;dur=${(productsRead - started).toFixed(1)}`,
+    `reviews;dur=${(reviewsRead - productsRead).toFixed(1)}`,
+    `serialize;dur=${(performance.now() - reviewsRead).toFixed(1)}`,
+  ].join(", ");
+  return { body, timing };
+}
+
 async function getProducts(req, res) {
-  res.set(
-    "Cache-Control",
-    "no-store"
-  );
-
+  res.set("Cache-Control", "no-store");
   try {
-    const started = performance.now();
-    // Public catalogue reads do not mutate documents: skip Mongoose
-    // hydration to reduce CPU and memory on every cold/large listing request.
-    // serializeProduct still removes supplier and purchase-cost fields.
-    const products =
-      await Product.find({
-        isActive: true,
-      }).lean();
-
-    const productsRead = performance.now();
-
-    const reviewed =
-      await attachReviews(products);
-
-    const reviewsRead = performance.now();
-    const publicProducts = reviewed.map((product) => serializeProduct(product));
-    // Public-catalogue durations separate database work from network/host delay.
-    // No query text, credentials, identifiers or customer information is exposed.
-    res.set("Server-Timing", [
-      `products;dur=${(productsRead - started).toFixed(1)}`,
-      `reviews;dur=${(reviewsRead - productsRead).toFixed(1)}`,
-      `serialize;dur=${(performance.now() - reviewsRead).toFixed(1)}`,
-    ].join(", "));
-
-    return res.json({
-      success: true,
-      count: reviewed.length,
-
-      products: publicProducts,
-    });
+    let page = null;
+    if (req.query?.view === "page") {
+      const { after = "", limit = "40" } = req.query;
+      if (typeof after !== "string" || (after && !/^[a-f0-9]{24}$/i.test(after)) ||
+          typeof limit !== "string" || !/^[1-9]\d?$/.test(limit) || Number(limit) > 60) {
+        throw httpError(400, "Invalid catalogue page.");
+      }
+      page = { after, size: Number(limit) };
+    }
+    // Only overlapping public reads are shared. Subsequent requests always
+    // read current inventory and prices. Private requests use separate routes.
+    const key = JSON.stringify(page);
+    if (!publicReads.has(key)) {
+      publicReads.set(key, readPublicCatalogue(page).finally(() => publicReads.delete(key)));
+    }
+    const { body, timing } = await publicReads.get(key);
+    res.set("Server-Timing", timing);
+    return res.json(body);
   } catch (error) {
-    return sendError(
-      res,
-      error,
-      "Unable to load products."
-    );
+    return sendError(res, error, "Unable to load products.");
   }
 }
 
@@ -2260,7 +2267,25 @@ async function createProduct(
     return;
   }
 
+  let retryId;
+  let digest;
+  async function replay() {
+    const saved = await Product.findById(retryId).select("+creationDigest").lean();
+    if (!saved) return false;
+    if (saved.creationDigest !== digest) throw httpError(409, "This request already created a product. Check the product list before editing it.");
+    res.status(200).json({ success: true, product: serializeProduct(saved, true) });
+    return true;
+  }
   try {
+    const key = req.headers?.["idempotency-key"];
+    if (key !== undefined) {
+      if (typeof key !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(key)) throw httpError(400, "Invalid product request identifier.");
+      // The existing _id unique index also arbitrates simultaneous retries.
+      const hex = createHash("sha256").update(JSON.stringify(["admin-product", String(req.user._id), key])).digest("hex");
+      retryId = new mongoose.Types.ObjectId(hex.slice(0, 24));
+      digest = createHash("sha256").update(JSON.stringify(req.body)).digest("hex");
+      if (await replay()) return;
+    }
     const payload =
       normalizePayload(req.body);
 
@@ -2312,7 +2337,7 @@ async function createProduct(
     );
 
     const id =
-      new mongoose.Types.ObjectId();
+      retryId || new mongoose.Types.ObjectId();
 
     if (!payload.slug) {
       payload.slug =
@@ -2327,6 +2352,7 @@ async function createProduct(
         ...payload,
 
         _id: id,
+        creationDigest: digest,
 
         isActive:
           payload.isActive ?? true,
@@ -2352,6 +2378,10 @@ async function createProduct(
         ),
     });
   } catch (error) {
+    if (retryId && error.code === 11000) {
+      try { if (await replay()) return; }
+      catch (replayError) { return sendError(res, replayError, "Unable to verify the previous save."); }
+    }
     return sendError(
       res,
       error,
@@ -2385,6 +2415,18 @@ async function updateProduct(
 
     if (product.marketplaceAccount) {
       throw httpError(409, "Use supplier marketplace review and stock controls for this listing; commercial changes must be audited.");
+    }
+
+    // Bind the browser's field-conflict review to the record this request
+    // actually read. protectSave also compares the snapshot at write time.
+    if (Object.hasOwn(req.body || {}, "expectedUpdatedAt")) {
+      const expected = req.body.expectedUpdatedAt;
+      if (typeof expected !== "string" || !Number.isFinite(Date.parse(expected))) {
+        throw httpError(400, "Use a valid product revision.");
+      }
+      if (!product.updatedAt || product.updatedAt.getTime() !== Date.parse(expected)) {
+        throw httpError(409, "The product changed after review. Reload the latest record. Your draft can be recovered.");
+      }
     }
 
     const payload =

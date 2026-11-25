@@ -15,6 +15,7 @@ profile.index({supplier:1},{unique:true}); profile.index({owner:1},{unique:true,
 profile.index({email:1},{unique:true});profile.index({"invitation.hash":1},{unique:true,partialFilterExpression:{"invitation.hash":{$type:"string"}}});
 profile.index({status:1,updatedAt:-1});
 const listing = new Schema({
+  creationDigest:{type:String,select:false},
   supplier:{...ref("MarketplaceAccount"),required:true,immutable:true}, product:ref("Product"),
   status:{type:String,enum:["draft","submitted","changes-requested","approved","published","paused","archived","rejected"],default:"draft"},
   sourceUrl:{type:String,default:""}, draft:{type:Schema.Types.Mixed,required:true}, live:{type:Schema.Types.Mixed,default:null}, approvedCandidate:{type:Schema.Types.Mixed,default:null},
