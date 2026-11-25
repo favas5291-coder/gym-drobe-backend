@@ -60,6 +60,45 @@ async function run(){
   assert.equal((await write({...body,name:"Changed retry"})).status,409);
   await Product.deleteOne({_id:first.product.id});
  });
+ await pass("bounded catalogue pages contain every public product once and honor current stock",async()=>{
+  const ids=Array.from({length:64},()=>new mongoose.Types.ObjectId());
+  const docs=ids.map((_id,i)=>({_id,name:"Catalogue fixture "+i,slug:"page-"+i,sku:"PAGE-"+i,price:400+i,stock:6,isActive:true}));
+  await Product.collection.insertMany(docs);
+  try {
+   const url=base.replace("/marketplace","/products");
+   const read=async path=>{
+    const response=await fetch(url+path);
+    assert.equal(response.status,200);
+    assert.equal(response.headers.get("cache-control"),"no-store");
+    return response.json();
+   };
+   const first=await read("?view=page&limit=8");
+   assert.equal(first.products.length,8);
+   let page=first,seen=first.products.map(p=>p.id);
+   while(page.nextCursor) {
+    assert.ok(seen.length<=64);
+    page=await read("?view=page&limit=40&after="+page.nextCursor);
+    seen.push(...page.products.map(p=>p.id));
+   }
+   assert.deepEqual(seen,ids.map(String));
+   await Product.collection.updateOne({_id:ids[0]},{$set:{stock:0}});
+   assert.equal((await read("?view=page&limit=8")).products[0].stock,0);
+   const measures=[];
+   for(const pageSize of [null,8]) {
+    const elapsed=[];
+    for(let i=0;i<7;i++){
+     const start=performance.now();
+     await read(pageSize?"?view=page&limit=8":"");
+     elapsed.push(performance.now()-start);
+    }
+    const query=Product.find({isActive:true});
+    if(pageSize)query.sort({_id:1}).limit(pageSize+1);
+    const plan=(await query.explain("executionStats")).executionStats;
+    measures.push({pageSize,medianHttpMs:+elapsed.sort((a,b)=>a-b)[3].toFixed(2),documentsExamined:plan.totalDocsExamined,keysExamined:plan.totalKeysExamined,dbMs:plan.executionTimeMillis});
+   }
+   console.log("CATALOGUE_FIXTURE_MEASUREMENTS",JSON.stringify(measures));
+  } finally {await Product.collection.deleteMany({_id:{$in:ids}});}
+ });
  await pass("supplier draft/submission stays private until explicit admin approval and publication",async()=>{const r=await S.saveDraft(alice,null,{draft:fixture.draft});assert.equal(await Product.countDocuments({isActive:true}),0);const submitted=await S.submit(alice,r.listing.id,{revision:r.listing.revision});const denied=await request(`/admin/listings/${r.listing.id}/review`,{actor:alice,method:"POST",body:{revision:submitted.listing.revision,decision:"published",prices:fixture.prices,reason:"Not allowed"}});assert.equal(denied.status,403);listing=(await S.review(admin,r.listing.id,{revision:submitted.listing.revision,decision:"published",prices:fixture.prices,reason:"Synthetic supplier amount500, customer550, tax0 fixture reviewed."})).listing;product=await Product.findById(listing.productId).select("+marketplaceAccount +marketplaceCommercial +marketplaceListing");assert.equal(product.variantPrices[0].customerUnitAmount,55000);assert.equal(product.marketplaceCommercial.variants[0].supplierUnitAmount,50000);});
  await pass("customer catalogue and model serialization exclude supplier commercial and bank data",async()=>{const r=await fetch(base.replace("/marketplace",`/products/${product._id}`));assert.equal(r.status,200);const text=await r.text();for(const privateKey of ["supplierUnitAmount","marketplaceCommercial","termsDigest","supplierPromotionMaximumPaise","accountNumber"])assert.ok(!text.includes(privateKey),privateKey);assert.ok(!JSON.stringify(product).includes("supplierUnitAmount"));});
  await pass("supplier cannot alter customer selling price, review others or overwrite live content through drafts",async()=>{const r=await request(`/listings/${listing.id}`,{actor:bob});assert.equal(r.status,404);const changed=await S.saveDraft(alice,listing.id,{revision:listing.revision,draft:{...fixture.draft,name:"Proposed identity change",variants:[{...fixture.draft.variants[0],supplierUnitAmount:51000}]}});assert.equal((await Product.findById(product._id)).name,fixture.draft.name);assert.equal((await Product.findById(product._id).select("+marketplaceCommercial")).marketplaceCommercial.variants[0].supplierUnitAmount,50000);listing=changed.listing;});

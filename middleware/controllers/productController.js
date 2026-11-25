@@ -1774,49 +1774,54 @@ async function validateSupply(
   }
 }
 
+const publicReads = new Map();
+const publicProjection = "-supplier -purchaseCost -fulfillment -meeshoProductLink -marketplaceAccount -marketplaceListing -marketplaceCommercial";
+
+async function readPublicCatalogue(page) {
+  const started = performance.now();
+  const filter = { isActive: true };
+  if (page?.after) filter._id = { $gt: new mongoose.Types.ObjectId(page.after) };
+  const query = Product.find(filter, publicProjection);
+  if (page) query.sort({ _id: 1 }).limit(page.size + 1);
+  const rows = await query.lean();
+  const hasMore = Boolean(page && rows.length > page.size);
+  const products = hasMore ? rows.slice(0, page.size) : rows;
+  const productsRead = performance.now();
+  const reviewed = await attachReviews(products);
+  const reviewsRead = performance.now();
+  const body = { success: true, count: reviewed.length, products: reviewed.map(product => serializeProduct(product)) };
+  if (page) body.nextCursor = hasMore ? String(products.at(-1)._id) : null;
+  const timing = [
+    `products;dur=${(productsRead - started).toFixed(1)}`,
+    `reviews;dur=${(reviewsRead - productsRead).toFixed(1)}`,
+    `serialize;dur=${(performance.now() - reviewsRead).toFixed(1)}`,
+  ].join(", ");
+  return { body, timing };
+}
+
 async function getProducts(req, res) {
-  res.set(
-    "Cache-Control",
-    "no-store"
-  );
-
+  res.set("Cache-Control", "no-store");
   try {
-    const started = performance.now();
-    // Public catalogue reads do not mutate documents: skip Mongoose
-    // hydration to reduce CPU and memory on every cold/large listing request.
-    // serializeProduct still removes supplier and purchase-cost fields.
-    const products =
-      await Product.find({
-        isActive: true,
-      }, "-supplier -purchaseCost -fulfillment -meeshoProductLink -marketplaceAccount -marketplaceListing -marketplaceCommercial").lean();
-
-    const productsRead = performance.now();
-
-    const reviewed =
-      await attachReviews(products);
-
-    const reviewsRead = performance.now();
-    const publicProducts = reviewed.map((product) => serializeProduct(product));
-    // Public-catalogue durations separate database work from network/host delay.
-    // No query text, credentials, identifiers or customer information is exposed.
-    res.set("Server-Timing", [
-      `products;dur=${(productsRead - started).toFixed(1)}`,
-      `reviews;dur=${(reviewsRead - productsRead).toFixed(1)}`,
-      `serialize;dur=${(performance.now() - reviewsRead).toFixed(1)}`,
-    ].join(", "));
-
-    return res.json({
-      success: true,
-      count: reviewed.length,
-
-      products: publicProducts,
-    });
+    let page = null;
+    if (req.query?.view === "page") {
+      const { after = "", limit = "40" } = req.query;
+      if (typeof after !== "string" || (after && !/^[a-f0-9]{24}$/i.test(after)) ||
+          typeof limit !== "string" || !/^[1-9]\d?$/.test(limit) || Number(limit) > 60) {
+        throw httpError(400, "Invalid catalogue page.");
+      }
+      page = { after, size: Number(limit) };
+    }
+    // Only overlapping public reads are shared. Subsequent requests always
+    // read current inventory and prices. Private requests use separate routes.
+    const key = JSON.stringify(page);
+    if (!publicReads.has(key)) {
+      publicReads.set(key, readPublicCatalogue(page).finally(() => publicReads.delete(key)));
+    }
+    const { body, timing } = await publicReads.get(key);
+    res.set("Server-Timing", timing);
+    return res.json(body);
   } catch (error) {
-    return sendError(
-      res,
-      error,
-      "Unable to load products."
-    );
+    return sendError(res, error, "Unable to load products.");
   }
 }
 

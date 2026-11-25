@@ -48,3 +48,25 @@ test("public catalogue uses lean read and excludes confidential product fields",
     Review.find=originalReviewFind;
   }
 });
+
+test("overlapping public pages share one bounded read and later visits read fresh stock", async () => {
+  const find = Product.find, reviews = Review.find;
+  let reads = 0;
+  const rows = Array.from({length:3}, (_,n)=>({_id:new mongoose.Types.ObjectId(),name:"Fixture "+n,stock:n+1}));
+  const bodies = [];
+  const res = () => ({set(){},json(body){bodies.push(body);},status(){return this;}});
+  Product.find = filter => {
+    reads++;
+    assert.equal(filter.isActive,true);
+    return {sort(sort){assert.deepEqual(sort,{_id:1});return this;},limit(limit){assert.equal(limit,3);return this;},async lean(){return rows;}};
+  };
+  Review.find = () => ({sort:()=>({lean:async()=>[]})});
+  try {
+    const req = {query:{view:"page",limit:"2"}};
+    await Promise.all([getProducts(req,res()),getProducts(req,res())]);
+    assert.equal(reads,1); assert.equal(bodies[0].count,2); assert.equal(bodies[0].nextCursor,String(rows[1]._id));
+    rows[0].stock=0;
+    await getProducts(req,res());assert.equal(reads,2);assert.equal(bodies[2].products[0].stock,0);
+    await getProducts({query:{view:"page",after:"invalid"}},res());assert.equal(reads,2);assert.equal(bodies.at(-1).success,false);
+  } finally {Product.find=find;Review.find=reviews;}
+});
