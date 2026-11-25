@@ -12,6 +12,8 @@ const guestCheckoutSessionSchema =
         select: false,
       },
 
+      draftKey: { type: String, select: false },
+
       expiresAt: {
         type: Date,
         required: true,

@@ -42,6 +42,18 @@ async function run(){
   const [first,second,other]=await Promise.all([read(alice),read(alice),read(bob)]);
   assert.equal(Buffer.from(first,"base64").length,32);assert.equal(first,second);assert.notEqual(first,other);
  });
+ await pass("guest address keys belong to a single unexpired grant and cannot start a transaction",async()=>{
+  const origin=base.replace("/marketplace","/payments");
+  const create=async()=> (await (await fetch(origin+"/guest-session",{method:"POST"})).json()).guestToken;
+  const read=token=>fetch(origin+"/guest-draft-key",{headers:token?{"X-GymDrobe-Guest":token}:{}});
+  const [one,two]=await Promise.all([create(),create()]);
+  assert.equal((await read(null)).status,401);
+  const [a,b,c]=await Promise.all([one,one,two].map(async key=>{const r=await read(key);assert.equal(r.status,200);assert.match(r.headers.get("cache-control"),/no-store/);return r.json();}));
+  assert.equal(a.key,b.key);assert.notEqual(a.owner,c.owner);assert.notEqual(a.key,c.key);assert.equal(Buffer.from(a.key,"base64").length,32);
+  await require("../../models/GuestCheckoutSession").updateOne({_id:a.owner},{$set:{expiresAt:new Date(0)}});
+  assert.equal((await read(one)).status,401);
+  assert.equal(await Order.countDocuments(),0);
+ });
  await pass("restored supplier create returns the same listing and rejects a changed retry",async()=>{
   const requestId=crypto.randomUUID(),body={requestId,draft:fixture.draft};
   const first=await S.saveDraft(alice,null,body);

@@ -22,6 +22,7 @@ const {
   checkoutRateLimit,
   createGuestSession,
   checkGuestSession,
+  guestDraftKey,
 } = require("../middleware/customerAccess");
 
 const router = express.Router();
@@ -69,6 +70,8 @@ router.get(
   "/guest-session",
   checkGuestSession,
 );
+
+router.get("/guest-draft-key", guestDraftKey);
 
 // POST /api/payments/checkout/quote
 // Login is optional; prices come from backend records.
