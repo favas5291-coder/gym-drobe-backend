@@ -2417,6 +2417,18 @@ async function updateProduct(
       throw httpError(409, "Use supplier marketplace review and stock controls for this listing; commercial changes must be audited.");
     }
 
+    // Bind the browser's field-conflict review to the record this request
+    // actually read. protectSave also compares the snapshot at write time.
+    if (Object.hasOwn(req.body || {}, "expectedUpdatedAt")) {
+      const expected = req.body.expectedUpdatedAt;
+      if (typeof expected !== "string" || !Number.isFinite(Date.parse(expected))) {
+        throw httpError(400, "Use a valid product revision.");
+      }
+      if (!product.updatedAt || product.updatedAt.getTime() !== Date.parse(expected)) {
+        throw httpError(409, "The product changed after review. Reload the latest record. Your draft can be recovered.");
+      }
+    }
+
     const payload =
       normalizePayload(req.body);
 

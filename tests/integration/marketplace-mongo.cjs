@@ -70,6 +70,12 @@ async function run(){
   const [first,second]=await Promise.all(results.map(r=>r.json()));
   assert.equal(first.product.id,second.product.id);assert.equal(first.product.creationDigest,undefined);
   assert.equal((await write({...body,name:"Changed retry"})).status,409);
+  const updatedAt=first.product.updatedAt;
+  assert.ok(updatedAt);
+  const edit=payload=>fetch(url+"/"+first.product.id,{method:"PUT",headers:{Authorization:"Bearer "+token(admin),"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  assert.equal((await edit({price:525,expectedUpdatedAt:updatedAt})).status,200);
+  assert.equal((await edit({price:1,expectedUpdatedAt:updatedAt})).status,409);
+  assert.equal((await Product.findById(first.product.id)).price,525);
   await Product.deleteOne({_id:first.product.id});
  });
  await pass("bounded catalogue pages contain every public product once and honor current stock",async()=>{
