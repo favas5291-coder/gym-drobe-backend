@@ -31,6 +31,35 @@ async function run(){
  let a=await M.Account.findById(aid);await S.setStatus(admin,aid,{revision:a.__v,status:"active",reason:"Synthetic supplier identity, terms and fulfilment verified."});
  const invite=await S.createAccount(admin,{email:"bob@example.test",business:fixture.business("Fixture Supplier B"),terms:fixture.terms});bid=invite.account.id;const activated=await S.activate(null,{code:invite.invitationCode,name:"Fixture Supplier B",password:"Fixture-Supplier-B-123",acceptTerms:true,termsDigest:invite.account.termsDigest});bob=await User.findById(activated.user.id);a=await M.Account.findById(bid);await S.setStatus(admin,bid,{revision:a.__v,status:"active",reason:"Synthetic second supplier approved."});
  await pass("supplier A cannot enumerate or edit supplier B and cannot access admin pricing",async()=>{assert.equal((await request("/admin/suppliers",{actor:alice})).status,403);assert.equal((await request("/overview?supplier="+bid,{actor:alice})).status,404);const me=await request("/me",{actor:alice});assert.equal(me.account.id,aid);assert.ok(!JSON.stringify(me).includes("Admin-private"));});
+ await pass("editor keys require authentication, stay private and are isolated per account",async()=>{
+  const url=base.replace("/marketplace","/auth/draft-key");
+  assert.equal((await fetch(url)).status,401);
+  const read=async user=>{
+    const response=await fetch(url,{headers:{Authorization:"Bearer "+token(user)}});
+    assert.equal(response.status,200);assert.match(response.headers.get("cache-control"),/no-store/);
+    return (await response.json()).key;
+  };
+  const [first,second,other]=await Promise.all([read(alice),read(alice),read(bob)]);
+  assert.equal(Buffer.from(first,"base64").length,32);assert.equal(first,second);assert.notEqual(first,other);
+ });
+ await pass("restored supplier create returns the same listing and rejects a changed retry",async()=>{
+  const requestId=crypto.randomUUID(),body={requestId,draft:fixture.draft};
+  const first=await S.saveDraft(alice,null,body);
+  const again=await S.saveDraft(alice,null,body);
+  assert.equal(first.listing.id,again.listing.id);
+  await assert.rejects(S.saveDraft(alice,null,{...body,draft:{...fixture.draft,name:"A different draft"}}),{status:409});
+ });
+ await pass("concurrent admin product retries commit one product",async()=>{
+  const url=base.replace("/marketplace","/products"),key=crypto.randomUUID();
+  const body={name:"Recovery shaker",category:"Accessories",brand:"Fixture",price:499,stock:12,isActive:false};
+  const write=data=>fetch(url,{method:"POST",headers:{Authorization:"Bearer "+token(admin),"Content-Type":"application/json","Idempotency-Key":key},body:JSON.stringify(data)});
+  const results=await Promise.all([write(body),write(body)]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,201]);
+  const [first,second]=await Promise.all(results.map(r=>r.json()));
+  assert.equal(first.product.id,second.product.id);assert.equal(first.product.creationDigest,undefined);
+  assert.equal((await write({...body,name:"Changed retry"})).status,409);
+  await Product.deleteOne({_id:first.product.id});
+ });
  await pass("supplier draft/submission stays private until explicit admin approval and publication",async()=>{const r=await S.saveDraft(alice,null,{draft:fixture.draft});assert.equal(await Product.countDocuments({isActive:true}),0);const submitted=await S.submit(alice,r.listing.id,{revision:r.listing.revision});const denied=await request(`/admin/listings/${r.listing.id}/review`,{actor:alice,method:"POST",body:{revision:submitted.listing.revision,decision:"published",prices:fixture.prices,reason:"Not allowed"}});assert.equal(denied.status,403);listing=(await S.review(admin,r.listing.id,{revision:submitted.listing.revision,decision:"published",prices:fixture.prices,reason:"Synthetic supplier amount500, customer550, tax0 fixture reviewed."})).listing;product=await Product.findById(listing.productId).select("+marketplaceAccount +marketplaceCommercial +marketplaceListing");assert.equal(product.variantPrices[0].customerUnitAmount,55000);assert.equal(product.marketplaceCommercial.variants[0].supplierUnitAmount,50000);});
  await pass("customer catalogue and model serialization exclude supplier commercial and bank data",async()=>{const r=await fetch(base.replace("/marketplace",`/products/${product._id}`));assert.equal(r.status,200);const text=await r.text();for(const privateKey of ["supplierUnitAmount","marketplaceCommercial","termsDigest","supplierPromotionMaximumPaise","accountNumber"])assert.ok(!text.includes(privateKey),privateKey);assert.ok(!JSON.stringify(product).includes("supplierUnitAmount"));});
  await pass("supplier cannot alter customer selling price, review others or overwrite live content through drafts",async()=>{const r=await request(`/listings/${listing.id}`,{actor:bob});assert.equal(r.status,404);const changed=await S.saveDraft(alice,listing.id,{revision:listing.revision,draft:{...fixture.draft,name:"Proposed identity change",variants:[{...fixture.draft.variants[0],supplierUnitAmount:51000}]}});assert.equal((await Product.findById(product._id)).name,fixture.draft.name);assert.equal((await Product.findById(product._id).select("+marketplaceCommercial")).marketplaceCommercial.variants[0].supplierUnitAmount,50000);listing=changed.listing;});

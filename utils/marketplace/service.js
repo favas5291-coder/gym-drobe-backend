@@ -89,8 +89,37 @@ async function setStatus(actor,aid,input) {
 async function listAccounts(actor,q={}) {actorRequired(actor,true);const filter={};if(q.status)filter.status=D.text(q.status,"status",30);if(q.search){const escaped=D.text(q.search,"search",100).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");filter.$or=[{"business.legalName":new RegExp(escaped,"i")},{email:new RegExp(escaped,"i")}];}const page=Math.max(1,Math.min(10000,Number(q.page)||1));const [rows,total]=await Promise.all([M.Account.find(filter).select("+notes").sort({_id:-1}).skip((page-1)*20).limit(20),M.Account.countDocuments(filter)]);return {accounts:rows.map(a=>safeAccount(a,true)),page,total,pages:Math.max(1,Math.ceil(total/20))};}
 async function listingFor(actor,lid,s,active=false){const l=await M.Listing.findById(D.id(lid)).session(s||null);if(!l)D.fail("Listing not found.",404);const a=await account(actor,String(l.supplier),s,active);return {l,a};}
 async function saveDraft(actor,lid,input) {
-  D.object(input,["revision","draft","sourceUrl"],"Listing save");const d=D.draft(input.draft);
-  return transaction(async s=>{const a=await account(actor,null,s,true);await validateMedia(d,a.owner,s);let l;if(lid){({l}=await listingFor(actor,lid,s,true));expect(l,input.revision);if(l.status==="submitted")D.fail("Withdraw or wait for the current review before editing.",409);l.draft=d;l.status="draft";}else l=new M.Listing({supplier:a._id,draft:d});if(input.sourceUrl!==undefined)l.sourceUrl=require("../meeshoUrl").normalizeMeeshoLink(input.sourceUrl);await l.save({session:s});await audit(actor,a._id,l._id,"listing-draft",null,{revision:revision(l)},"Draft saved; approved live content is unchanged.",s);return {listing:safeListing(l)};});
+  D.object(input,["revision","draft","sourceUrl","requestId"],"Listing save");
+  const d=D.draft(input.draft);
+  if(input.requestId!==undefined && (lid || typeof input.requestId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(input.requestId))) D.fail("Invalid draft request identifier.");
+  return transaction(async session=>{
+    const a=await account(actor,null,session,true);
+    let listing;
+    if(lid) {
+      ({l:listing}=await listingFor(actor,lid,session,true));
+      expect(listing,input.revision);
+      if(listing.status==="submitted") D.fail("Withdraw or wait for the current review before editing.",409);
+      listing.draft=d;
+      listing.status="draft";
+    } else {
+      let id;
+      const digest=crypto.createHash("sha256").update(JSON.stringify([d,input.sourceUrl])).digest("hex");
+      if(input.requestId) {
+        id=new mongoose.Types.ObjectId(crypto.createHash("sha256").update(JSON.stringify([String(a._id),input.requestId])).digest("hex").slice(0,24));
+        const existing=await M.Listing.findById(id).select("+creationDigest").session(session);
+        if(existing) {
+          if(String(existing.supplier)!==String(a._id)||existing.creationDigest!==digest) D.fail("This request already created a different listing. Check your product list.",409);
+          return {listing:safeListing(existing)};
+        }
+      }
+      listing=new M.Listing({...(id?{_id:id,creationDigest:digest}:{}),supplier:a._id,draft:d});
+    }
+    await validateMedia(d,a.owner,session);
+    if(input.sourceUrl!==undefined)listing.sourceUrl=require("../meeshoUrl").normalizeMeeshoLink(input.sourceUrl);
+    await listing.save({session});
+    await audit(actor,a._id,listing._id,"listing-draft",null,{revision:revision(listing)},"Draft saved; approved live content is unchanged.",session);
+    return {listing:safeListing(listing)};
+  });
 }
 async function submit(actor,lid,input){return transaction(async s=>{const {l,a}=await listingFor(actor,lid,s,true);expect(l,input.revision);if(!["draft","changes-requested","rejected"].includes(l.status))D.fail("Save a draft before submission.",409);l.draft=D.draft(l.draft,"submission");if(!a.business.categories.includes(l.draft.category))D.fail("This category is not in the approved business profile.",409);await validateMedia(l.draft,a.owner,s);if(!a.business.brands.includes(l.draft.brand))D.fail("This brand is not in the supplier's approved business profile.",409);l.status="submitted";l.submittedAt=new Date();l.feedback="";await l.save({session:s});await audit(actor,a._id,l._id,"listing-submitted",null,{revision:revision(l)},"Supplier prices and promotion contributions submitted for explicit admin review.",s);return {listing:safeListing(l)};});}
 function stockShape(rows){const colors=[...new Set(rows.map(v=>v.color).filter(Boolean))],sizes=[...new Set(rows.map(v=>v.size).filter(Boolean))];const variants={};for(const v of rows){if(colors.length){if(sizes.length){variants[v.color] ||= {};variants[v.color][v.size]=v.stock;}else variants[v.color]=v.stock;}else if(sizes.length)variants[v.size]=v.stock;}return {colors,sizes,variants,stock:rows.reduce((n,v)=>n+v.stock,0)};}

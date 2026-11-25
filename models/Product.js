@@ -587,6 +587,7 @@ const variantSkuSchema =
 
 const productSchema = new mongoose.Schema(
   {
+    creationDigest: { type: String, select: false },
     legacyId: {
       type: Number,
       default: null,

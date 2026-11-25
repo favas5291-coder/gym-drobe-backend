@@ -12,7 +12,9 @@ test("public catalogue uses lean read and excludes confidential product fields",
   let leanCalls = 0;
   let response = null;
   let cacheHeader = "";
-  Product.find = query => {
+  Product.find = (query, projection) => {
+    assert.match(projection, /-marketplaceCommercial/);
+    assert.match(projection, /-purchaseCost/);
     assert.deepEqual(query, {isActive:true});
     return { lean: async () => {
       leanCalls++;

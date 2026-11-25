@@ -1,3 +1,4 @@
+const { createHash } = require("node:crypto");
 const {
   normalizeColorImages,
 } = require("../../utils/productImages");
@@ -1128,6 +1129,7 @@ function serializeProduct(
 
   delete data.isNewArrival;
   delete data.__v;
+  delete data.creationDigest;
   delete data.marketplaceAccount;
   delete data.marketplaceListing;
   delete data.marketplaceCommercial;
@@ -1786,7 +1788,7 @@ async function getProducts(req, res) {
     const products =
       await Product.find({
         isActive: true,
-      }).lean();
+      }, "-supplier -purchaseCost -fulfillment -meeshoProductLink -marketplaceAccount -marketplaceListing -marketplaceCommercial").lean();
 
     const productsRead = performance.now();
 
@@ -2260,7 +2262,25 @@ async function createProduct(
     return;
   }
 
+  let retryId;
+  let digest;
+  async function replay() {
+    const saved = await Product.findById(retryId).select("+creationDigest").lean();
+    if (!saved) return false;
+    if (saved.creationDigest !== digest) throw httpError(409, "This request already created a product. Check the product list before editing it.");
+    res.status(200).json({ success: true, product: serializeProduct(saved, true) });
+    return true;
+  }
   try {
+    const key = req.headers?.["idempotency-key"];
+    if (key !== undefined) {
+      if (typeof key !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(key)) throw httpError(400, "Invalid product request identifier.");
+      // The existing _id unique index also arbitrates simultaneous retries.
+      const hex = createHash("sha256").update(JSON.stringify(["admin-product", String(req.user._id), key])).digest("hex");
+      retryId = new mongoose.Types.ObjectId(hex.slice(0, 24));
+      digest = createHash("sha256").update(JSON.stringify(req.body)).digest("hex");
+      if (await replay()) return;
+    }
     const payload =
       normalizePayload(req.body);
 
@@ -2312,7 +2332,7 @@ async function createProduct(
     );
 
     const id =
-      new mongoose.Types.ObjectId();
+      retryId || new mongoose.Types.ObjectId();
 
     if (!payload.slug) {
       payload.slug =
@@ -2327,6 +2347,7 @@ async function createProduct(
         ...payload,
 
         _id: id,
+        creationDigest: digest,
 
         isActive:
           payload.isActive ?? true,
@@ -2352,6 +2373,10 @@ async function createProduct(
         ),
     });
   } catch (error) {
+    if (retryId && error.code === 11000) {
+      try { if (await replay()) return; }
+      catch (replayError) { return sendError(res, replayError, "Unable to verify the previous save."); }
+    }
     return sendError(
       res,
       error,
